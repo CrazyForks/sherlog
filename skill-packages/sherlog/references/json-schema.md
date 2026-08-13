@@ -15,9 +15,25 @@ Top-level shape:
   coverage: CoverageStatus;
   coverageBySource?: Array<{ sourceId: "codex" | "claude-code" | "pi"; coverage: CoverageStatus }>;
   nextAction?: QueryNextAction;
+  zeroResults?: ZeroResultsDiagnosis; // 仅零结果时出现
   elapsedMs: number; // 端到端耗时(进程启动到输出),仅 CLI 输出注入,非 query 层字段
 }
 ```
+
+`ZeroResultsDiagnosis`（零结果诊断，只读、不会隐式 sync）:
+
+```ts
+{
+  reason: "fresh_miss" | "stale_or_missing_coverage" | "coverage_not_confirmed";
+  overConstrained: boolean;      // query token 过多或中英混排
+  suggestedQueries: string[];    // 确定性放宽建议(单个独特标识符 / 完整中文词串)
+  hints: string[];
+}
+```
+
+- `fresh_miss`：coverage 新鲜，miss 可信；先按 `suggestedQueries` 放宽再下结论。
+- `stale_or_missing_coverage`：miss 不可信；按 `nextAction` 同范围 sync 后重试。
+- `coverage_not_confirmed`：未确认新鲜度；先 `status` 同 selector。
 
 `scannedMessageCount` 随 selector 范围收窄(全库 vs `--cwd` 子集),可用于「从 ~N 条历史里定位」这类诚实回述,不要据此编造「省 X%」。`elapsedMs` 由 CLI 层在产出输出时用 `performance.now()` 注入,`read-range` / `read-page` 的 JSON 同样带 `elapsedMs`。
 
@@ -41,9 +57,13 @@ Top-level shape:
   matchTimestamp: string | null;
   score: number;
   snippet: string;
+  matchedFields: Array<"message" | "title" | "summary" | "compact" | "reasoningSummary">;
+  sessionMessageCount: number; // 该 session 已索引消息总数 = read-page 成本上限
   evidenceRead: EvidenceReadAction; // 仅 CLI JSON 输出注入；优先执行它读取内容证据
 }
 ```
+
+`matchedFields` 是 best-effort 命中出处：`["message"]` 表示锚在真实 transcript 消息；session-level 命中列出命中的索引字段（title/summary/compact/reasoningSummary），空数组表示无法归因（如 diacritics 折叠命中）。用它判断信任度：message > title/compact > reasoningSummary。`sessionMessageCount` 用于估算读取成本，选择 `read-range` 局部窗口还是 `read-page` 顺序翻页。
 
 `find` defaults to cross-source recall across public indexed sources. Use
 `sourceIds` to see which sources participated. Use each result's `sessionRef`

@@ -103,6 +103,10 @@ SQLite 访问层当前已经按 reader / writer 分流：
 
 CLI 默认 `find` 会对 public sources 执行单源 `findSessions()` fanout，再用 reciprocal-rank fusion 合并候选，避免直接比较不同 source 子集里的 raw FTS 分数。JSON 结果带 `sourceId` 和 `sessionRef`；`sessionRef` 可直接传给 `read-range` / `read-page`，所以 agent 不需要再推断来源。
 
+每个 find 结果还带 additive recall-packet 字段：`matchedFields`（best-effort 命中出处：message 或 title/summary/compact/reasoningSummary）与 `sessionMessageCount`（该 session 已索引消息总数，作为 read-page 成本上限）。零结果时 CLI 附加 `zeroResults` 诊断：`fresh_miss` / `stale_or_missing_coverage` / `coverage_not_confirmed` 三类 reason，加确定性放宽建议（单个独特 ASCII 标识符、完整 CJK 词串——严格宽于自动形态学放宽已重试过的 AND 组合）。只读命令不会因此隐式 sync。
+
+find/status 的 coverage freshness 探测会复用 sync 写入的 `source_file_meta_cache`（内容派生的 cwd/pathDate/accepted fingerprint，按 file_path + mtime + size 校验）：未变更文件跳过 per-file 内容前缀读取，新文件或已变更文件回退到正常内容扫描。缓存只由 `sync` 写入；缓存值来自与 coverage 指纹同一次扫描，因此命中时快照指纹逐字节一致。
+
 `messages` 仍然只代表可回读的真实 transcript。session-level 命中会以 `matchSource = "session"` 返回；如果没有真实 message anchor，`matchSeq` 为 `null`，CLI 会建议先 `read-page`。
 
 ### 4. 排序
@@ -137,6 +141,8 @@ CLI 默认 `find` 会对 public sources 执行单源 `findSessions()` fanout，�
 - explicit sync scope (`--root` / `--cwd` / `--selector`, canonicalized to selector)
 - source inventory
 - complete coverage 记录
+- sync 写入的 source file meta cache（只读 coverage 探测跳过未变更文件的内容读取）
+- find recall-packet 字段（`matchedFields` / `sessionMessageCount`）与零结果 `zeroResults` 诊断
 - manual eval 导出
 - eval batch compare
 - experimental public Claude Code fixed-command support
