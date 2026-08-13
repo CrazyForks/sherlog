@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Changelog — Sherlog</title>
+  <meta name="description" content="Release history for Sherlog, the local agent session search CLI.">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+
+  <!-- Open Graph / Twitter Card -->
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Changelog — Sherlog">
+  <meta property="og:description" content="Release history for Sherlog, the local agent session search CLI.">
+  <meta property="og:url" content="https://sherlog.net/changelog">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="Changelog — Sherlog">
+  <meta name="twitter:description" content="Release history for Sherlog, the local agent session search CLI.">
+
+  <!-- Apply theme + lang before paint to avoid FOUC -->
+  <script>
+    (function () {
+      var t = localStorage.getItem('sherlog-theme');
+      if (t === 'dark' || (!t && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+        document.documentElement.classList.add('dark');
+      }
+      var l = localStorage.getItem('sherlog-lang');
+      if (l) document.documentElement.setAttribute('lang', l);
+    })();
+  </script>
+
+  <style>
+    :root {
+      --bg: #ffffff;
+      --fg: #111111;
+      --muted: #555555;
+      --border: #e5e5e5;
+      --code-bg: #f4f4f4;
+      --code-fg: #111;
+      --accent: #000000;
+
+      --sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", Helvetica, Arial, sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+
+    html.dark {
+      --bg: #0d1117;
+      --fg: #c9d1d9;
+      --muted: #8b949e;
+      --border: #30363d;
+      --code-bg: #161b22;
+      --code-fg: #c9d1d9;
+      --accent: #58a6ff;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: var(--sans);
+      font-size: 16px;
+      line-height: 1.6;
+      max-width: 680px;
+      margin: 0 auto;
+      padding: 40px 24px 80px;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    html[lang="en"] .zh { display: none; }
+    html[lang="zh"] .en { display: none; }
+
+    header { margin-bottom: 48px; }
+
+    .top-controls {
+      display: flex;
+      justify-content: flex-end;
+      gap: 16px;
+      margin-bottom: 40px;
+      font-size: 14px;
+    }
+
+    .top-controls a, .top-controls button {
+      color: var(--muted);
+      text-decoration: none;
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-family: var(--sans);
+    }
+
+    .top-controls a:hover, .top-controls button:hover { color: var(--fg); }
+
+    .lang-toggle {
+      display: inline-flex;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .lang-toggle button { padding: 3px 10px; line-height: 1.4; }
+    .lang-toggle button + button { border-left: 1px solid var(--border); }
+    .lang-toggle button.active { background: var(--fg); color: var(--bg); }
+    .lang-toggle button.active:hover { color: var(--bg); }
+
+    .theme-btn { font-size: 16px; line-height: 1; }
+
+    h1 {
+      font-size: 34px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      margin-bottom: 14px;
+      font-family: var(--mono);
+    }
+
+    .lede {
+      font-size: 18px;
+      color: var(--muted);
+      margin-bottom: 32px;
+      line-height: 1.5;
+      text-wrap: balance;
+    }
+
+    code {
+      background: var(--code-bg);
+      padding: 0.2em 0.4em;
+      border-radius: 4px;
+      font-family: var(--mono);
+      font-size: 0.9em;
+      color: var(--code-fg);
+    }
+
+    section {
+      margin-bottom: 40px;
+      padding-top: 36px;
+      border-top: 1px solid var(--border);
+    }
+
+    section:first-of-type { padding-top: 0; border-top: none; }
+
+    .release-header {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .release-version {
+      font-family: var(--mono);
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .release-date {
+      font-family: var(--mono);
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    ul { margin: 0 0 16px 0; padding-left: 22px; }
+    li { margin-bottom: 8px; color: var(--fg); }
+
+    p { margin-bottom: 16px; color: var(--fg); }
+    strong { font-weight: 600; }
+
+    footer {
+      margin-top: 64px;
+      padding-top: 24px;
+      border-top: 1px solid var(--border);
+      font-size: 14px;
+      color: var(--muted);
+      font-family: var(--mono);
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+  <div class="top-controls">
+    <a href="/">Home</a>
+    <a href="https://github.com/catoncat/sherlog">GitHub</a>
+    <a href="https://www.npmjs.com/package/@act0r/sherlog">npm</a>
+    <span class="lang-toggle">
+      <button onclick="setLang('en')" id="btn-en" aria-label="English">EN</button>
+      <button onclick="setLang('zh')" id="btn-zh" aria-label="中文">中</button>
+    </span>
+    <button onclick="toggleTheme()" id="btn-theme" class="theme-btn" aria-label="Toggle theme">◐</button>
+  </div>
+
+  <header>
+    <h1>changelog</h1>
+    <div class="lede">
+      <span class="en">Release history for <code>@act0r/sherlog</code>. Full commit history lives on <a href="https://github.com/catoncat/sherlog/releases">GitHub Releases</a>.</span>
+      <span class="zh"><code>@act0r/sherlog</code> 的版本历史。完整提交记录见 <a href="https://github.com/catoncat/sherlog/releases">GitHub Releases</a>。</span>
+    </div>
+  </header>
+
+  <main>
+    <section>
+      <div class="release-header">
+        <span class="release-version">v0.4.0</span>
+        <span class="release-date">2026-08</span>
+      </div>
+      <ul class="en">
+        <li><strong>Faster read-only searches on large histories.</strong> <code>find</code> and <code>status</code> coverage probes now reuse file metadata cached at sync time and skip re-reading unchanged session files.</li>
+        <li><strong>Recall packet in <code>find --json</code>.</strong> Each result carries <code>matchedFields</code> (did the hit come from a real message, or from title / summary / compact / reasoning-summary recall) and <code>sessionMessageCount</code> (the read cost ceiling).</li>
+        <li><strong>Structured zero-result diagnosis.</strong> A miss now says whether it is trustworthy (<code>fresh_miss</code>) or unproven (<code>stale_or_missing_coverage</code>), and over-constrained or mixed Chinese/English queries get deterministic broadening suggestions.</li>
+        <li><strong>Eval:</strong> duplicate-transcript-family diversity case with top-result diversity metrics in the acceptance gate.</li>
+        <li>Agent skill updated for the recall-packet loop; <code>read-range</code>/<code>read-page</code> help now uses the <code>sessionRef</code> contract.</li>
+      </ul>
+      <ul class="zh">
+        <li><strong>大历史库上的只读检索更快。</strong><code>find</code> / <code>status</code> 的 coverage 探测复用 sync 时缓存的文件元数据，未变更的 session 文件不再重复读取内容。</li>
+        <li><strong><code>find --json</code> 新增 recall packet。</strong>每条结果带 <code>matchedFields</code>（命中来自真实消息，还是 title / summary / compact / reasoning summary 召回）与 <code>sessionMessageCount</code>（读取成本上限）。</li>
+        <li><strong>结构化零结果诊断。</strong>查不到时明确区分可信 miss（<code>fresh_miss</code>）与 coverage 过期 / 缺失导致的不可信 miss，过长或中英混排 query 会得到确定性放宽建议。</li>
+        <li><strong>Eval：</strong>acceptance gate 新增重复 transcript family 多样性 case 与 top 结果多样性指标。</li>
+        <li>Agent skill 同步更新 recall-packet 工作流；<code>read-range</code>/<code>read-page</code> 帮助文案统一为 <code>sessionRef</code> 口径。</li>
+      </ul>
+    </section>
+
+    <section>
+      <div class="release-header">
+        <span class="release-version">v0.3.22</span>
+        <span class="release-date">2026-07-21</span>
+      </div>
+      <ul class="en"><li>Added the <code>sherlog</code> bin alias so the CLI name matches the skill name.</li></ul>
+      <ul class="zh"><li>新增 <code>sherlog</code> bin alias，命令名与 skill 名不再混淆。</li></ul>
+    </section>
+
+    <section>
+      <div class="release-header">
+        <span class="release-version">v0.3.20 – v0.3.21</span>
+        <span class="release-date">2026-07-13</span>
+      </div>
+      <ul class="en">
+        <li>Cold root registry: <code>shlog cold add/list/remove</code>; <code>sync --prune</code> retains sessions still present in cold storage.</li>
+        <li>Deterministic elision for very large messages in <code>read-range</code>/<code>read-page</code>, with explicit markers and original sizes.</li>
+        <li>Skill: unified retrieval policy plus raw-fallback guidance.</li>
+      </ul>
+      <ul class="zh">
+        <li>Cold root 注册：<code>shlog cold add/list/remove</code>；<code>sync --prune</code> 保留仍在冷存中的会话。</li>
+        <li><code>read-range</code>/<code>read-page</code> 对超大消息做确定性省略，带显式 marker 与原始大小。</li>
+        <li>Skill：统一检索策略并补充 raw fallback 指引。</li>
+      </ul>
+    </section>
+
+    <section>
+      <div class="release-header">
+        <span class="release-version">v0.3.18 – v0.3.19</span>
+        <span class="release-date">2026-07-12</span>
+      </div>
+      <ul class="en">
+        <li>Active Codex session tails no longer abort strict sync: stable sources commit, the appended tail is marked as soft-stale coverage.</li>
+        <li>Coverage reporting aligned with live source freshness.</li>
+        <li>Eval: dogfood answer facets and baseline agent-recall metrics.</li>
+      </ul>
+      <ul class="zh">
+        <li>活跃 Codex 会话追加不再中断 strict sync：稳定 source 正常提交，追加尾部标记为 soft-stale coverage。</li>
+        <li>coverage 汇报与实时 source freshness 对齐。</li>
+        <li>Eval：dogfood answer facets 与 agent recall 基线指标。</li>
+      </ul>
+    </section>
+
+    <section>
+      <div class="release-header">
+        <span class="release-version">v0.3.14 – v0.3.17</span>
+        <span class="release-date">2026-06-30</span>
+      </div>
+      <ul class="en">
+        <li>Deterministic <code>evidenceRead</code> actions in <code>find --json</code>: every hit tells the agent exactly which read command to run next.</li>
+        <li>Evidence-level acceptance eval gate and source-adapter format-drift smoke tests.</li>
+        <li>Removed the ineffective query-profile ranking abstraction after real A/B evidence.</li>
+        <li><code>staleReason</code> surfaced on coverage entries.</li>
+      </ul>
+      <ul class="zh">
+        <li><code>find --json</code> 输出确定性 <code>evidenceRead</code>：每条命中直接告诉 agent 下一步该执行哪条读取命令。</li>
+        <li>新增 evidence 级 acceptance eval gate 与 source adapter 格式漂移烟测。</li>
+        <li>基于真实 A/B 证据移除无效的 query-profile 排序抽象。</li>
+        <li>coverage 条目显式暴露 <code>staleReason</code>。</li>
+      </ul>
+    </section>
+
+    <section>
+      <div class="release-header">
+        <span class="release-version">v0.3.10 – v0.3.13</span>
+        <span class="release-date">2026-06-09 – 2026-06-10</span>
+      </div>
+      <ul class="en">
+        <li>Experimental <strong>Pi</strong> session source support.</li>
+        <li>Concurrent source metadata scanning; coverage freshness scans reuse results.</li>
+        <li>First-install and missing-session recovery guidance hardened.</li>
+      </ul>
+      <ul class="zh">
+        <li>实验性 <strong>Pi</strong> session source 支持。</li>
+        <li>source metadata 并发扫描；coverage freshness 扫描结果复用。</li>
+        <li>首次安装与缺失会话的恢复指引补强。</li>
+      </ul>
+    </section>
+
+    <section>
+      <div class="release-header">
+        <span class="release-version">v0.3.3 – v0.3.9</span>
+        <span class="release-date">2026-05-22 – 2026-06-09</span>
+      </div>
+      <ul class="en">
+        <li>Rebranded from <code>cxs</code> to <strong>Sherlog</strong> (<code>shlog</code>), published as <code>@act0r/sherlog</code>.</li>
+        <li>Experimental <strong>Claude Code</strong> public support; <code>find</code> searches across public sources by default.</li>
+        <li>First-install bootstrap: bare <code>shlog sync</code> initializes the default Codex index.</li>
+      </ul>
+      <ul class="zh">
+        <li>从 <code>cxs</code> 更名为 <strong>Sherlog</strong>（<code>shlog</code>），以 <code>@act0r/sherlog</code> 发布。</li>
+        <li>实验性 <strong>Claude Code</strong> 公开支持；<code>find</code> 默认跨 public source 搜索。</li>
+        <li>首次安装 bootstrap：裸 <code>shlog sync</code> 初始化默认 Codex index。</li>
+      </ul>
+    </section>
+
+    <section>
+      <div class="release-header">
+        <span class="release-version">v0.1.0 – v0.2.2</span>
+        <span class="release-date">2026-04-27</span>
+      </div>
+      <ul class="en">
+        <li>Initial releases: Codex-only progressive retrieval CLI — SQLite FTS index, <code>find</code> / <code>read-range</code> / <code>read-page</code>, CJK-aware tokenization, explicit selector-based sync and coverage records.</li>
+      </ul>
+      <ul class="zh">
+        <li>最初版本：仅支持 Codex 的渐进式检索 CLI —— SQLite FTS 索引、<code>find</code> / <code>read-range</code> / <code>read-page</code>、CJK 兼容分词、显式 selector sync 与 coverage 记录。</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer>
+    Node 22+ &middot; macOS &middot; Linux
+  </footer>
+
+  <script>
+    function setLang(l) {
+      document.documentElement.setAttribute('lang', l);
+      document.getElementById('btn-en').classList.toggle('active', l === 'en');
+      document.getElementById('btn-zh').classList.toggle('active', l === 'zh');
+      localStorage.setItem('sherlog-lang', l);
+    }
+
+    function toggleTheme() {
+      const isDark = document.documentElement.classList.toggle('dark');
+      localStorage.setItem('sherlog-theme', isDark ? 'dark' : 'light');
+    }
+
+    const savedLang = localStorage.getItem('sherlog-lang') || 'en';
+    setLang(savedLang);
+    // Theme class is already applied pre-paint by the inline <head> script.
+  </script>
+</body>
+</html>
