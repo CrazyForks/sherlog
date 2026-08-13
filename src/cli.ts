@@ -15,7 +15,14 @@ import {
   listColdRootEntries,
   removeColdRoot,
 } from "./cold-roots";
-import { IndexSchemaUpgradeRequiredError, IndexUnavailableError, listCoverageRecords, withReadDb } from "./db";
+import {
+  buildSourceFileMetaResolver,
+  IndexSchemaUpgradeRequiredError,
+  IndexUnavailableError,
+  listCoverageRecords,
+  loadSourceFileMetaCache,
+  withReadDb,
+} from "./db";
 import { evaluateCoverageRecord, evaluateRequestedCoverage } from "./coverage-freshness";
 import { buildEvidenceReadAction } from "./evidence-read";
 import { getSessionSourceAdapter, listSessionSourceAdapters } from "./sources";
@@ -693,9 +700,14 @@ async function assessFindCoverage(
 
   const sourceId = selectorSource(selector);
   const source = getSessionSourceAdapter(sourceId);
-  const files = await source.collectFiles(selector.root);
+  // Load the sync-written file-meta cache alongside coverage records so the
+  // freshness probe can skip content prefix reads for unchanged files.
+  const { coverageRecords, metaResolver } = withReadDb(dbPath, (db) => ({
+    coverageRecords: listCoverageRecords(db, sourceId),
+    metaResolver: buildSourceFileMetaResolver(loadSourceFileMetaCache(db, sourceId)),
+  }));
+  const files = await source.collectFiles(selector.root, { metaResolver });
   const snapshot = await source.snapshotFromFiles(selector, files);
-  const coverageRecords = withReadDb(dbPath, (db) => listCoverageRecords(db, sourceId));
   const coverageInventory = [];
   for (const entry of coverageRecords) {
     const entrySnapshot = await source.snapshotFromFiles(entry.selector, files);

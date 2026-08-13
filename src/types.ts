@@ -89,6 +89,37 @@ export interface SourceFileMeta {
   size: number;
 }
 
+/**
+ * Content-derived file metadata cached at sync time. Read-only commands use
+ * it to skip per-file content prefix reads while re-checking coverage
+ * freshness; cached values are exactly what the sync-time inventory scan
+ * produced, so snapshot fingerprints stay byte-identical.
+ */
+export interface CachedSourceFileMeta {
+  cwd: string;
+  pathDate: string | null;
+  /** Source-specific content fingerprint (e.g. claude-code/pi acceptedFingerprint). */
+  extraFingerprint: string;
+}
+
+/**
+ * Resolver injected into source file collection. Returns cached metadata for
+ * a file only when it can prove the cache entry still matches the on-disk
+ * file (same mtime and size); otherwise returns null and the source adapter
+ * falls back to its normal content scan.
+ */
+export type SourceFileMetaResolver = (
+  filePath: string,
+  mtimeMs: number,
+  size: number,
+) => CachedSourceFileMeta | null;
+
+export interface CollectSourceFilesOptions {
+  strict?: boolean;
+  requireCwdMetadata?: boolean;
+  metaResolver?: SourceFileMetaResolver;
+}
+
 export interface SourceSnapshot {
   selector: Selector;
   fingerprint: string;

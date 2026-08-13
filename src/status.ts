@@ -1,6 +1,13 @@
 import { existsSync, statSync } from "node:fs";
 import { INDEX_VERSION, DEFAULT_DB_PATH } from "./env";
-import { getStatsCounts, listCoverageRecords, withReadDb, type Db } from "./db";
+import {
+  buildSourceFileMetaResolver,
+  getStatsCounts,
+  listCoverageRecords,
+  loadSourceFileMetaCache,
+  withReadDb,
+  type Db,
+} from "./db";
 import { evaluateCoverageRecord, evaluateRequestedCoverage } from "./coverage-freshness";
 import { selectorSource } from "./selector";
 import { getSessionSourceAdapter } from "./sources";
@@ -12,6 +19,7 @@ import type {
   Selector,
   SessionSourceId,
   SourceFileMeta,
+  SourceFileMetaResolver,
   SourceInventory,
   StatusSummary,
 } from "./types";
@@ -21,8 +29,21 @@ export async function collectStatus(options: { sourceId?: SessionSourceId; rootD
   const root = source.resolveRoot(options.rootDir);
   const dbPath = options.dbPath ?? DEFAULT_DB_PATH;
   const contextCache = new Map<string, Promise<StatusSourceContext>>();
+  const metaResolvers = new Map<SessionSourceId, SourceFileMetaResolver | undefined>();
+  // Reuse the sync-written file-meta cache so status scans avoid per-file
+  // content reads for files whose mtime+size are unchanged since last sync.
+  const metaResolverFor = (sourceId: SessionSourceId): SourceFileMetaResolver | undefined => {
+    if (!existsSync(dbPath)) return undefined;
+    if (!metaResolvers.has(sourceId)) {
+      metaResolvers.set(
+        sourceId,
+        buildSourceFileMetaResolver(withReadDb(dbPath, (db) => loadSourceFileMetaCache(db, sourceId))),
+      );
+    }
+    return metaResolvers.get(sourceId);
+  };
   const getContext = (sourceId: SessionSourceId, rootDir: string) =>
-    getStatusSourceContext(contextCache, sourceId, rootDir);
+    getStatusSourceContext(contextCache, sourceId, rootDir, metaResolverFor);
   const sourceInventory = (await getContext(source.id, root)).inventory;
   const index = collectIndexStatus(dbPath);
   const coverage = existsSync(dbPath) ? withReadDb(dbPath, (db) => listCoverageRecordsForStatus(db, source.id)) : [];
@@ -65,6 +86,7 @@ function getStatusSourceContext(
   cache: Map<string, Promise<StatusSourceContext>>,
   sourceId: SessionSourceId,
   rootDir: string,
+  metaResolverFor: (sourceId: SessionSourceId) => SourceFileMetaResolver | undefined,
 ): Promise<StatusSourceContext> {
   const source = getSessionSourceAdapter(sourceId);
   const root = source.resolveRoot(rootDir);
@@ -72,7 +94,7 @@ function getStatusSourceContext(
   let context = cache.get(key);
   if (!context) {
     context = (async () => {
-      const files = await source.collectFiles(root);
+      const files = await source.collectFiles(root, { metaResolver: metaResolverFor(source.id) });
       return {
         source,
         files,

@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import type { Selector, SourceFileMeta } from "../types";
-import type { SessionSourceAdapter, SourceSnapshotOptions } from "./types";
+import type { CollectFilesOptions, SessionSourceAdapter, SourceSnapshotOptions } from "./types";
 
 export const piSourceAdapter: SessionSourceAdapter = {
   id: "pi",
@@ -13,9 +13,9 @@ export const piSourceAdapter: SessionSourceAdapter = {
   resolveRoot(override?: string) {
     return resolve(override ?? this.defaultRoot());
   },
-  async collectFiles(root: string) {
+  async collectFiles(root: string, options?: CollectFilesOptions) {
     const { collectPiSourceFiles } = await import("./pi-inventory");
-    return collectPiSourceFiles(root);
+    return collectPiSourceFiles(root, options);
   },
   async inventoryFromFiles(root: string, files: SourceFileMeta[]) {
     const { piSourceInventoryFromFiles } = await import("./pi-inventory");

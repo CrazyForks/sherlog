@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import type { Selector, SourceFileMeta } from "../types";
-import type { SessionSourceAdapter, SourceSnapshotOptions } from "./types";
+import type { CollectFilesOptions, SessionSourceAdapter, SourceSnapshotOptions } from "./types";
 
 export const claudeCodeSourceAdapter: SessionSourceAdapter = {
   id: "claude-code",
@@ -13,9 +13,9 @@ export const claudeCodeSourceAdapter: SessionSourceAdapter = {
   resolveRoot(override?: string) {
     return resolve(override ?? this.defaultRoot());
   },
-  async collectFiles(root: string) {
+  async collectFiles(root: string, options?: CollectFilesOptions) {
     const { collectClaudeCodeSourceFiles } = await import("./claude-code-inventory");
-    return collectClaudeCodeSourceFiles(root);
+    return collectClaudeCodeSourceFiles(root, options);
   },
   async inventoryFromFiles(root: string, files: SourceFileMeta[]) {
     const { claudeCodeSourceInventoryFromFiles } = await import("./claude-code-inventory");
