@@ -4,7 +4,7 @@ import { appendFileSync, chmodSync, existsSync, mkdtempSync, mkdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
-import { openWriteDb, replaceSession } from "./db";
+import { openWriteDb, replaceCoverage, replaceSession } from "./db";
 import { INDEX_VERSION } from "./env";
 import { syncSessions } from "./indexer";
 
@@ -131,11 +131,28 @@ describe("shlog cli", { timeout: 20_000 }, () => {
         cwdGroups: Array<{ cwd: string; fileCount: number; pathDateRange: { from: string | null; to: string | null } }>;
       };
       index: { exists: boolean };
+      coverage: unknown[];
     };
     expect(payload.index.exists).toBe(false);
     expect(payload.sourceInventory.totalFiles).toBe(1);
     expect(payload.sourceInventory.pathDateRange).toEqual({ from: "2026-04-20", to: "2026-04-20" });
-    expect(payload.sourceInventory.cwdGroups).toEqual([
+    expect(payload.sourceInventory.cwdGroups).toEqual([]);
+    expect(payload.coverage).toEqual([]);
+
+    const inventory = await runCli([
+      "status",
+      "--root",
+      join(base, "sessions"),
+      "--db",
+      join(base, "missing.sqlite"),
+      "--inventory",
+      "--json",
+    ]);
+    expect(inventory.exitCode).toBe(0);
+    const inventoryPayload = JSON.parse(inventory.stdout) as {
+      sourceInventory: { cwdGroups: Array<{ cwd: string; fileCount: number; pathDateRange: { from: string | null; to: string | null } }> };
+    };
+    expect(inventoryPayload.sourceInventory.cwdGroups).toEqual([
       { cwd: "/tmp/alpha", fileCount: 1, pathDateRange: { from: "2026-04-20", to: "2026-04-20" } },
     ]);
   });
@@ -297,16 +314,32 @@ describe("shlog cli", { timeout: 20_000 }, () => {
     const syncPayload = JSON.parse(synced.stdout) as { coverage: { selector: { source: string; kind: string; root: string } } };
     expect(syncPayload.coverage.selector).toEqual({ source: "codex", kind: "all", root });
 
-    const status = await runCli(["status", "--source", "codex", "--root", root, "--db", dbPath, "--json"]);
+    const status = await runCli([
+      "status",
+      "--source",
+      "codex",
+      "--root",
+      root,
+      "--selector",
+      JSON.stringify({ kind: "all" }),
+      "--db",
+      dbPath,
+      "--json",
+    ]);
     expect(status.exitCode).toBe(0);
     const statusPayload = JSON.parse(status.stdout) as {
       context: { root: string };
-      sourceInventory: { totalFiles: number };
-      coverage: Array<{ selector: { source: string } }>;
+      sourceInventory: { totalFiles: number; cwdGroups: unknown[] };
+      coverage: unknown[];
+      coverageCount: number;
+      requestedCoverage: { coveringSelectors: Array<{ selector: { source: string } }> };
     };
     expect(statusPayload.context.root).toBe(root);
     expect(statusPayload.sourceInventory.totalFiles).toBe(1);
-    expect(statusPayload.coverage[0]?.selector.source).toBe("codex");
+    expect(statusPayload.sourceInventory.cwdGroups).toEqual([]);
+    expect(statusPayload.coverage).toEqual([]);
+    expect(statusPayload.coverageCount).toBe(1);
+    expect(statusPayload.requestedCoverage.coveringSelectors[0]?.selector.source).toBe("codex");
 
     const defaultFind = await runCli(["find", "source codex needle", "--db", dbPath, "--json"]);
     const explicitFind = await runCli(["find", "source codex needle", "--source", "codex", "--db", dbPath, "--json"]);
@@ -563,16 +596,29 @@ describe("shlog cli", { timeout: 20_000 }, () => {
     const syncPayload = JSON.parse(synced.stdout) as { coverage: { selector: { source: string; kind: string; root: string } } };
     expect(syncPayload.coverage.selector).toEqual({ source: "claude-code", kind: "all", root });
 
-    const status = await runCli(["status", "--source", "claude-code", "--root", root, "--db", dbPath, "--json"]);
+    const status = await runCli([
+      "status",
+      "--source",
+      "claude-code",
+      "--root",
+      root,
+      "--selector",
+      JSON.stringify({ kind: "all" }),
+      "--db",
+      dbPath,
+      "--json",
+    ]);
     expect(status.exitCode).toBe(0);
     const statusPayload = JSON.parse(status.stdout) as {
       context: { root: string };
       sourceInventory: { totalFiles: number };
-      coverage: Array<{ selector: { source: string } }>;
+      coverage: unknown[];
+      requestedCoverage: { coveringSelectors: Array<{ selector: { source: string } }> };
     };
     expect(statusPayload.context.root).toBe(root);
     expect(statusPayload.sourceInventory.totalFiles).toBe(1);
-    expect(statusPayload.coverage[0]?.selector.source).toBe("claude-code");
+    expect(statusPayload.coverage).toEqual([]);
+    expect(statusPayload.requestedCoverage.coveringSelectors[0]?.selector.source).toBe("claude-code");
 
     const found = await runCli(["find", "source claude needle", "--source", "claude-code", "--db", dbPath, "--json"]);
     expect(found.exitCode).toBe(0);
@@ -1202,10 +1248,14 @@ describe("shlog cli", { timeout: 20_000 }, () => {
       ].join("\n"),
     );
 
-    const status = await runCli(["status", "--root", root, "--db", dbPath, "--json"]);
+    const status = await runCli(["status", "--root", root, "--selector", selector, "--db", dbPath, "--json"]);
     expect(status.exitCode).toBe(0);
-    const payload = JSON.parse(status.stdout) as { coverage: Array<{ freshness: string }> };
-    expect(payload.coverage[0]?.freshness).toBe("stale");
+    const payload = JSON.parse(status.stdout) as {
+      coverage: unknown[];
+      requestedCoverage: { freshness: string };
+    };
+    expect(payload.coverage).toEqual([]);
+    expect(payload.requestedCoverage.freshness).toBe("stale");
   });
 
   test("find reports stale default coverage even when stale index returns results", async () => {
@@ -1372,6 +1422,101 @@ describe("shlog cli", { timeout: 20_000 }, () => {
     expect(payload.requestedCoverage.freshness).toBe("fresh");
     expect(payload.requestedCoverage.recommendedAction).toBe("query");
     expect(payload.requestedCoverage.coveringSelectors[0]?.selector.kind).toBe("all");
+  });
+
+  test("status --inventory restores historical coverage audit and cwdGroups", async () => {
+    const base = mkdtempSync(join(tmpdir(), "cxs-cli-status-inventory-"));
+    tempDirs.push(base);
+    const root = join(base, "sessions");
+    const day = join(root, "2026", "04", "21");
+    mkdirSync(day, { recursive: true });
+    writeFileSync(
+      join(day, "rollout-2026-04-21T10-00-00-15151515-1515-4515-8515-151515151515.jsonl"),
+      [
+        line("session_meta", { id: "15151515-1515-4515-8515-151515151515", cwd: "/tmp/inventory-audit" }),
+        line("event_msg", { type: "user_message", message: "inventory audit" }),
+      ].join("\n"),
+    );
+    const dbPath = join(base, "index.sqlite");
+    await syncSessions({ dbPath, selector: { kind: "all", root } });
+
+    const compact = await runCli(["status", "--root", root, "--selector", JSON.stringify({ kind: "all" }), "--db", dbPath, "--json"]);
+    const compactPayload = JSON.parse(compact.stdout) as {
+      coverage: unknown[];
+      coverageCount: number;
+      sourceInventory: { cwdGroups: unknown[] };
+    };
+    expect(compactPayload.coverage).toEqual([]);
+    expect(compactPayload.coverageCount).toBe(1);
+    expect(compactPayload.sourceInventory.cwdGroups).toEqual([]);
+
+    const inventory = await runCli([
+      "status",
+      "--root",
+      root,
+      "--selector",
+      JSON.stringify({ kind: "all" }),
+      "--inventory",
+      "--db",
+      dbPath,
+      "--json",
+    ]);
+    const inventoryPayload = JSON.parse(inventory.stdout) as {
+      coverage: Array<{ selector: { kind: string }; freshness: string }>;
+      sourceInventory: { cwdGroups: Array<{ cwd: string }> };
+    };
+    expect(inventoryPayload.coverage).toHaveLength(1);
+    expect(inventoryPayload.coverage[0]?.selector.kind).toBe("all");
+    expect(inventoryPayload.coverage[0]?.freshness).toBe("fresh");
+    expect(inventoryPayload.sourceInventory.cwdGroups[0]?.cwd).toBe("/tmp/inventory-audit");
+  });
+
+  test("find coverage probe does not replay historical cwd rows", async () => {
+    const base = mkdtempSync(join(tmpdir(), "cxs-cli-find-coverage-probe-"));
+    tempDirs.push(base);
+    const root = join(base, "sessions");
+    const day = join(root, "2026", "04", "21");
+    mkdirSync(day, { recursive: true });
+    writeFileSync(
+      join(day, "rollout-2026-04-21T10-00-00-16161616-1616-4616-8616-161616161616.jsonl"),
+      [
+        line("session_meta", { id: "16161616-1616-4616-8616-161616161616", cwd: "/tmp/find-probe" }),
+        line("event_msg", { type: "user_message", message: "find probe needle" }),
+      ].join("\n"),
+    );
+    const dbPath = join(base, "index.sqlite");
+    await syncSessions({ dbPath, selector: { kind: "all", root } });
+
+    const db = openWriteDb(dbPath);
+    for (let index = 0; index < 12; index += 1) {
+      replaceCoverage(
+        db,
+        { kind: "cwd", root, cwd: `/tmp/historical-find-${index}` },
+        `cwd-fp-${index}`,
+        `cwd-set-${index}`,
+        1,
+        1,
+        INDEX_VERSION,
+      );
+    }
+    db.close();
+
+    const found = await runCli(
+      ["find", "find probe needle", "--source", "codex", "--root", root, "--db", dbPath, "--json"],
+      { env: { SHLOG_DEBUG_TIMING: "1" } },
+    );
+    expect(found.exitCode).toBe(0);
+    const payload = JSON.parse(found.stdout) as {
+      results: Array<{ sessionUuid: string }>;
+      coverage: { freshness: string; coveringSelectors: Array<{ selector: { kind: string } }> };
+    };
+    expect(payload.results).toHaveLength(1);
+    expect(payload.coverage.freshness).toBe("fresh");
+    expect(payload.coverage.coveringSelectors).toHaveLength(1);
+    expect(payload.coverage.coveringSelectors[0]?.selector.kind).toBe("all");
+    expect(found.stderr).toMatch(/snapshotCalls=1\b/);
+    expect(found.stdout).not.toContain("snapshotCalls");
+    expect(found.stdout).not.toContain("dbOpens");
   });
 
   test("find text output points to read-range", async () => {

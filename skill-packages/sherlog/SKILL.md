@@ -18,7 +18,7 @@ description: "Use proactively for local agent-session history and prior setup ar
 | metadata projection：最早/最新、数量、分布、cwd/session 清单、大 session | 只读 SQLite 查询 index 的 `sessions` 表；必要时 `list` | metadata 候选完整；涉及内容时已再用 `read-*` 验证 |
 | semantic recall：主题、关键词、历史配置考古 | `find <query> --json`；按需加 `--cwd/--root/--selector` | 已执行结果的 `evidenceRead.argv`，不只看 title/snippet |
 | context reading：已知 `sessionRef` / seq | `read-range` 或 `read-page` | 已读足够上下文回答问题 |
-| coverage / freshness / index availability | `status --json` / `--cwd` / `--selector` | 已按 `recommendedAction` 决定 query 或同范围 sync |
+| coverage / freshness / index availability | `status --selector/--cwd --json` | 已按 `requestedCoverage.recommendedAction` 决定 query 或同范围 sync。默认不要读 `coverage[]` / `cwdGroups`；审计才用 `--inventory` |
 | mutation：建索引或更新 coverage | bare `sync`（first-install Codex bootstrap）或 scoped `sync` | sync 无未解决 error；cold 迁移已注册 cold root |
 
 ## Canonical policy

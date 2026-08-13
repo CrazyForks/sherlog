@@ -46,7 +46,7 @@ Codex adapter 会把原有 `sessionUuid` 映射为 source-aware identity：
 
 ### 1. 同步
 
-[status.ts](../src/status.ts) 返回执行上下文、source inventory、index 状态与 coverage 状态。它可以扫描 raw sessions 的 metadata，但不回答内容问题。
+[status.ts](../src/status.ts) 返回执行上下文、compact source inventory、index 状态，以及 `--selector`/`--cwd` 时的 `requestedCoverage` 证明。默认不 dump 历史 `coverage[]` 或 `cwdGroups`（`--inventory` 才做逐行审计）。它可以扫描 raw sessions 的 metadata，但不回答内容问题。一次调用只打开一次 SQLite，并且只对 covering selector 做 snapshot，不重放历史 cwd/date_range 行。
 
 [indexer.ts](../src/indexer.ts) 按显式 selector 扫描选定 source 的 session snapshot。当前公开 source 可以是 Codex、Claude Code 或 Pi；增量判断仍基于文件 `mtime`、`size` 和 `indexVersion`。
 
@@ -105,7 +105,7 @@ CLI 默认 `find` 会对 public sources 执行单源 `findSessions()` fanout，�
 
 每个 find 结果还带 additive recall-packet 字段：`matchedFields`（best-effort 命中出处：message 或 title/summary/compact/reasoningSummary）与 `sessionMessageCount`（该 session 已索引消息总数，作为 read-page 成本上限）。零结果时 CLI 附加 `zeroResults` 诊断：`fresh_miss` / `stale_or_missing_coverage` / `coverage_not_confirmed` 三类 reason，加确定性放宽建议（单个独特 ASCII 标识符、完整 CJK 词串——严格宽于自动形态学放宽已重试过的 AND 组合）。只读命令不会因此隐式 sync。
 
-find/status 的 coverage freshness 探测会复用 sync 写入的 `source_file_meta_cache`（内容派生的 cwd/pathDate/accepted fingerprint，按 file_path + mtime + size 校验）：未变更文件跳过 per-file 内容前缀读取，新文件或已变更文件回退到正常内容扫描。缓存只由 `sync` 写入；缓存值来自与 coverage 指纹同一次扫描，因此命中时快照指纹逐字节一致。
+find/status 的 coverage freshness 探测会复用 sync 写入的 `source_file_meta_cache`（内容派生的 cwd/pathDate/accepted fingerprint，按 file_path + mtime + size 校验）：未变更文件跳过 per-file 内容前缀读取，新文件或已变更文件回退到正常内容扫描。缓存只由 `sync` 写入；缓存值来自与 coverage 指纹同一次扫描，因此命中时快照指纹逐字节一致。探测只对 requested selector 的 covering records（`selectorImplies`）做 snapshot，不把历史 cwd/date_range coverage 行当成审计日志重放。
 
 `messages` 仍然只代表可回读的真实 transcript。session-level 命中会以 `matchSource = "session"` 返回；如果没有真实 message anchor，`matchSeq` 为 `null`，CLI 会建议先 `read-page`。
 

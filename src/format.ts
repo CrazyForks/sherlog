@@ -184,7 +184,7 @@ export function printStatus(status: StatusSummary): void {
   console.log(`index_exists:   ${status.index.exists}`);
   console.log(`sessions:       ${status.index.sessionCount}`);
   console.log(`messages:       ${status.index.messageCount}`);
-  console.log(`coverage_count: ${status.coverage.length}`);
+  console.log(`coverage_count: ${status.coverageCount}`);
   if (status.requestedCoverage) {
     console.log(`requested_coverage: ${status.requestedCoverage.freshness}`);
     console.log(`stale_reason:       ${status.requestedCoverage.staleReason}`);

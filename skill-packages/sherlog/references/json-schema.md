@@ -240,6 +240,8 @@ errors in `--json` mode for expected index setup and read failures:
 
 ## status
 
+Default JSON is a compact coverage proof, not a historical audit dump:
+
 ```ts
 {
   context: {
@@ -248,7 +250,12 @@ errors in `--json` mode for expected index setup and read failures:
     dbPath: string;
     indexVersion: string;
   };
-  sourceInventory: SourceInventory;
+  sourceInventory: {
+    root: string;
+    totalFiles: number;
+    pathDateRange: { from: string | null; to: string | null };
+    cwdGroups: SourceInventoryCwdGroup[]; // empty unless --inventory
+  };
   index: {
     exists: boolean;
     sessionCount: number;
@@ -258,10 +265,15 @@ errors in `--json` mode for expected index setup and read failures:
     dbSizeBytes: number;
     lastSyncAt: string | null;
   };
-  coverage: CoverageInventoryStatus[];
-  requestedCoverage?: RequestedCoverageStatus;
+  coverageCount: number; // stored coverage rows for this source; not a freshness proof
+  coverage: CoverageInventoryStatus[]; // empty unless --inventory
+  requestedCoverage?: RequestedCoverageStatus; // present when --selector / --cwd
 }
 ```
+
+Use `requestedCoverage` (from `--selector` / `--cwd`) as the freshness proof. `fresh all(root)` still covers narrower same-root selectors via `selectorImplies`. Do not iterate default `coverage[]` or `sourceInventory.cwdGroups` — they are omitted unless you pass `--inventory`. `coverageCount` is only a stored-row count.
+
+`--inventory` restores the old per-row freshness audit (`coverage[]`) and `cwdGroups`. It re-fingerprints historical cwd/date_range selectors and is for debugging, not the agent common path.
 
 ## sync
 
