@@ -308,8 +308,3 @@ function containsBoundedPhrase(haystack: string, phrase: string): boolean {
 function isPhraseBoundary(char: string | undefined): boolean {
   return !char || !/[\p{Letter}\p{Number}_./-]/u.test(char);
 }
-
-function getTimestamp(iso: string): number {
-  const timestamp = Date.parse(iso);
-  return Number.isNaN(timestamp) ? 0 : timestamp;
-}

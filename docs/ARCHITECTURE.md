@@ -46,13 +46,13 @@ Codex adapter 会把原有 `sessionUuid` 映射为 source-aware identity：
 
 ### 1. 同步
 
-[status.ts](/Users/envvar/work/repos/cxs/src/status.ts) 返回执行上下文、source inventory、index 状态与 coverage 状态。它可以扫描 raw sessions 的 metadata，但不回答内容问题。
+[status.ts](../src/status.ts) 返回执行上下文、source inventory、index 状态与 coverage 状态。它可以扫描 raw sessions 的 metadata，但不回答内容问题。
 
-[indexer.ts](/Users/envvar/work/repos/cxs/src/indexer.ts) 按显式 selector 扫描选定 source 的 session snapshot。当前公开 source 可以是 Codex、Claude Code 或 Pi；增量判断仍基于文件 `mtime`、`size` 和 `indexVersion`。
+[indexer.ts](../src/indexer.ts) 按显式 selector 扫描选定 source 的 session snapshot。当前公开 source 可以是 Codex、Claude Code 或 Pi；增量判断仍基于文件 `mtime`、`size` 和 `indexVersion`。
 
 strict sync 默认只更新当前 source snapshot 中仍可见的文件，并保留已经进入 SQLite 的旧 session。Codex adapter 的读取固定在本轮捕获的 byte 边界；若相同 file set 中某个活跃 JSONL 在读后只追加，indexer 校验已读前缀摘要与既有投影后允许提交起始边界，并把 coverage 标为 `source_content_changed` soft stale。尚未索引的新文件若在 parser 打开前已变化，无法证明 snapshot 前缀安全，indexer 会延后该文件和 complete coverage（`active_source_deferred`），但在同一事务提交其他稳定 operation。截断、可证明的前缀改写/替换、file set 变化和其他 source 的中途变化仍阻断事务。这样既不会因当前对话增长阻塞稳定 source，也不会把未读或未证明的尾部发布成 fresh coverage。只有显式传 `--prune` 时，sync 才会删除同一 source 中 **hot snapshot 与已注册 cold root 都不存在** 的旧 index row；cold-present 会话（Codex `rollout-*<uuid>.jsonl(.zst)` 文件名可识别）保留。cold root 配置在 index 旁的 `cold-roots.json`（`shlog cold add/list/remove`）。一个 source 的 sync/prune 不会删除另一个 source 的数据。当前 source 中仍存在但被过滤或不能解析成 session 的文件仍按当前状态处理。检索始终读 SQLite，不依赖 hot raw 仍在磁盘上。
 
-[parser.ts](/Users/envvar/work/repos/cxs/src/parser.ts) 只抽取 `event_msg` 里的：
+[parser.ts](../src/parser.ts) 只抽取 `event_msg` 里的：
 
 - `user_message`
 - `agent_message`
@@ -61,7 +61,7 @@ strict sync 默认只更新当前 source snapshot 中仍可见的文件，并保
 
 ### 2. 持久化
 
-[db.ts](/Users/envvar/work/repos/cxs/src/db.ts) 是 SQLite 访问 facade；`src/db/` 下的 schema / store / coverage 模块维护两层主数据：
+[db.ts](../src/db.ts) 是 SQLite 访问 facade；`src/db/` 下的 schema / store / coverage 模块维护两层主数据：
 
 - `sessions`
 - `messages`
@@ -88,7 +88,7 @@ SQLite 访问层当前已经按 reader / writer 分流：
 
 ### 3. 查询
 
-[query.ts](/Users/envvar/work/repos/cxs/src/query.ts) 是查询 facade；`src/query/` 下的 find / read / list / stats / search 模块提供三类读取：
+[query.ts](../src/query.ts) 是查询 facade；`src/query/` 下的 find / read / list / stats / search 模块提供三类读取：
 
 - `findSessions()`
 - `getMessageRange()`
@@ -99,7 +99,7 @@ SQLite 访问层当前已经按 reader / writer 分流：
 1. 从 `messages_fts` 做原文证据召回
 2. 从 `sessions_fts` 做 session-level 字段召回
 3. 极少数零 token CJK query 在 message 侧回退到 LIKE
-4. 把 raw hits 合并后交给 [ranking.ts](/Users/envvar/work/repos/cxs/src/ranking.ts) 做 session 级排序
+4. 把 raw hits 合并后交给 [ranking.ts](../src/ranking.ts) 做 session 级排序
 
 CLI 默认 `find` 会对 public sources 执行单源 `findSessions()` fanout，再用 reciprocal-rank fusion 合并候选，避免直接比较不同 source 子集里的 raw FTS 分数。JSON 结果带 `sourceId` 和 `sessionRef`；`sessionRef` 可直接传给 `read-range` / `read-page`，所以 agent 不需要再推断来源。
 
@@ -107,7 +107,7 @@ CLI 默认 `find` 会对 public sources 执行单源 `findSessions()` fanout，�
 
 ### 4. 排序
 
-[ranking.ts](/Users/envvar/work/repos/cxs/src/ranking.ts) 当前是 heuristic rerank，不是独立的 resource-level reranker。
+[ranking.ts](../src/ranking.ts) 当前是 heuristic rerank，不是独立的 resource-level reranker。
 
 主要信号包括：
 
@@ -161,4 +161,4 @@ CLI 默认 `find` 会对 public sources 执行单源 `findSessions()` fanout，�
 - 目标态建议
 - 外部调研结论
 
-这种写法会误导后续 agent 把“建议”当成“现状”。这里保留的只有当前代码真相；后续计划单独放到 [docs/ROADMAP.md](/Users/envvar/work/repos/cxs/docs/ROADMAP.md)。
+这种写法会误导后续 agent 把“建议”当成“现状”。这里保留的只有当前代码真相；后续计划单独放到 [docs/ROADMAP.md](ROADMAP.md)。

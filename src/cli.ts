@@ -315,8 +315,8 @@ program
   });
 
 program
-  .command("read-range <sessionUuid>")
-  .description("围绕命中点读取局部上下文；必须显式传 session_uuid")
+  .command("read-range <sessionRef>")
+  .description("围绕命中点读取局部上下文；接受裸 Codex UUID 或 source-qualified sessionRef（如 claude-code:<id>）")
   .option("--source <id>", `session source (public: ${publicSourceLabel()})`)
   .option("--seq <n>", "显式指定锚点 seq")
   .option("--query <query>", "用 query 在该 session 内重新定位命中点")
@@ -325,10 +325,10 @@ program
   .option("--max-message-chars <n>", "单条超大消息最多保留的字符数；0 表示不省略", String(DEFAULT_MAX_MESSAGE_CHARS))
   .option("--db <path>", "覆盖默认数据库路径", DEFAULT_DB_PATH)
   .option("--json", "输出 JSON")
-  .action((sessionUuid, options) => {
+  .action((sessionRef, options) => {
     runReadCommand(Boolean(options.json), () => {
-      const sourceId = publicReadSource(options.source, sessionUuid);
-      const result = getMessageRange(options.db, sessionRefForSource(sessionUuid, sourceId), {
+      const sourceId = publicReadSource(options.source, sessionRef);
+      const result = getMessageRange(options.db, sessionRefForSource(sessionRef, sourceId), {
         seq: optionalInt(options.seq),
         query: options.query,
         before: parsePositiveInt(options.before, 2),
@@ -356,20 +356,20 @@ program
   });
 
 program
-  .command("read-page <sessionUuid>")
-  .description("顺序分页读取某个 session 的消息")
+  .command("read-page <sessionRef>")
+  .description("顺序分页读取某个 session 的消息；接受裸 Codex UUID 或 source-qualified sessionRef")
   .option("--source <id>", `session source (public: ${publicSourceLabel()})`)
   .option("--offset <n>", "起始 offset", "0")
   .option("--limit <n>", "页大小", "20")
   .option("--max-message-chars <n>", "单条超大消息最多保留的字符数；0 表示不省略", String(DEFAULT_MAX_MESSAGE_CHARS))
   .option("--db <path>", "覆盖默认数据库路径", DEFAULT_DB_PATH)
   .option("--json", "输出 JSON")
-  .action((sessionUuid, options) => {
+  .action((sessionRef, options) => {
     runReadCommand(Boolean(options.json), () => {
-      const sourceId = publicReadSource(options.source, sessionUuid);
+      const sourceId = publicReadSource(options.source, sessionRef);
       const result = getMessagePage(
         options.db,
-        sessionRefForSource(sessionUuid, sourceId),
+        sessionRefForSource(sessionRef, sourceId),
         parseNonNegativeInt(options.offset, 0),
         parsePositiveInt(options.limit, 20),
         { maxMessageChars: parseNonNegativeInt(options.maxMessageChars, DEFAULT_MAX_MESSAGE_CHARS) },
@@ -1100,4 +1100,4 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-program.parse();
+await program.parseAsync(process.argv);

@@ -35,17 +35,17 @@
 
 ## 代码地图
 
-- [cli.ts](/Users/envvar/work/repos/cxs/src/cli.ts): CLI 命令面
-- [indexer.ts](/Users/envvar/work/repos/cxs/src/indexer.ts): sync 与索引更新
-- [parser.ts](/Users/envvar/work/repos/cxs/src/parser.ts): Codex JSONL 解析 facade；source-specific parser 在 `src/sources/`
-- [db.ts](/Users/envvar/work/repos/cxs/src/db.ts): SQLite facade；具体 schema / store / coverage 模块在 `src/db/`
-- [query.ts](/Users/envvar/work/repos/cxs/src/query.ts): 查询 facade；find / read / list / stats / search / snippet 模块在 `src/query/`
-- [status.ts](/Users/envvar/work/repos/cxs/src/status.ts): status 输出编排
-- [selector.ts](/Users/envvar/work/repos/cxs/src/selector.ts): selector 解析与覆盖蕴含规则
-- [source-inventory.ts](/Users/envvar/work/repos/cxs/src/source-inventory.ts): raw sessions metadata inventory
-- [types.ts](/Users/envvar/work/repos/cxs/src/types.ts): CLI JSON contract 与核心类型
-- [ranking.ts](/Users/envvar/work/repos/cxs/src/ranking.ts): session heuristic rerank
-- [eval/](/Users/envvar/work/repos/cxs/eval): manual eval、batch compare
+- [cli.ts](src/cli.ts): CLI 命令面
+- [indexer.ts](src/indexer.ts): sync 与索引更新
+- [parser.ts](src/parser.ts): Codex JSONL 解析 facade；source-specific parser 在 `src/sources/`
+- [db.ts](src/db.ts): SQLite facade；具体 schema / store / coverage 模块在 `src/db/`
+- [query.ts](src/query.ts): 查询 facade；find / read / list / stats / search / snippet 模块在 `src/query/`
+- [status.ts](src/status.ts): status 输出编排
+- [selector.ts](src/selector.ts): selector 解析与覆盖蕴含规则
+- [source-inventory.ts](src/source-inventory.ts): raw sessions metadata inventory
+- [types.ts](src/types.ts): CLI JSON contract 与核心类型
+- [ranking.ts](src/ranking.ts): session heuristic rerank
+- [eval/](eval): manual eval、batch compare
 
 ## 文档规则
 
@@ -149,7 +149,7 @@ Dogfood golden 是开发者本机的真实历史检索验收集，不是普通�
 2. 继续观察 session-level 字段召回是否引入排序噪音，并补 eval 覆盖
 3. 更重的 reranker / projection / diversity 控制放后面
 
-具体 roadmap 见 [docs/ROADMAP.md](/Users/envvar/work/repos/cxs/docs/ROADMAP.md)。
+具体 roadmap 见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
 <!-- mainline:agents:start version=12 checksum=sha256:62ee66d15a420f45eb3c1403cffe332072b56e14044597a18ddcc71fa14a0d83 -->
 ## Mainline
