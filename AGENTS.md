@@ -107,7 +107,7 @@ CLI 改动需要对外生效时，走正式发布流程：bump `package.json` �
 Dogfood golden 是开发者本机的真实历史检索验收集，不是普通用户功能。
 
 - 通用 runner / schema 可以维护在 `eval/`，例如 `npm run eval:dogfood -- <goldens.local.jsonl>`
-- 私有 golden 默认放在 ignored 路径：`data/sherlog-dogfood/goldens.local.jsonl`
+- 私有 golden 默认放在 ignored 路径：`data/cxs-dogfood/goldens.local.jsonl`
 - 添加 / promote dogfood golden 只能在用户显式触发 dev-only skill 时进行
 - dev-only skill 源码在仓库内：`dev/skills/sherlog-dogfood/source.md`；本机安装路径 `~/.agents/skills/sherlog-dogfood/SKILL.md` 应通过 `scripts/install-dev-skills.sh` 指向该源码文件
 - 不要把 dogfood capture 流程或私有 golden 放进 `skill-packages/sherlog`
@@ -121,7 +121,7 @@ Dogfood golden 是开发者本机的真实历史检索验收集，不是普通�
 
 用户让 agent 根据 dogfood test 改进 Sherlog 时，先复现和分层，不要直接改实现：
 
-1. 运行 `npm run eval:dogfood -- data/sherlog-dogfood/goldens.local.jsonl`
+1. 运行 `npm run eval:dogfood -- data/cxs-dogfood/goldens.local.jsonl`
 2. 对失败 case 用 `npm run shlog -- find ... --json`、`npm run shlog -- read-range ... --json` 或 `npm run shlog -- read-page ... --json` 复现
 3. 先判断问题层级：
    - index/coverage stale → 修同步/selector 使用流程，不改排序代码
