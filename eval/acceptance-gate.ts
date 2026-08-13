@@ -11,6 +11,14 @@ const MESSAGE_HIT_SESSION = "11111111-1111-4111-8111-111111111111";
 const SESSION_HIT_SESSION = "22222222-2222-4222-8222-222222222222";
 const CJK_HIT_SESSION = "33333333-3333-4333-8333-333333333333";
 const NOISE_SESSION = "44444444-4444-4444-8444-444444444444";
+// Duplicate transcript family (resume/fork-like near copies) plus one
+// distinct session sharing the same needle: the diversity case (#92).
+const DUP_FAMILY_SESSIONS = [
+  "55555555-5555-4555-8555-555555555551",
+  "55555555-5555-4555-8555-555555555552",
+  "55555555-5555-4555-8555-555555555553",
+] as const;
+const DIVERSE_HIT_SESSION = "66666666-6666-4666-8666-666666666666";
 const CLAUDE_CODE_HIT_SESSION = "claude-code:claude-eval-session";
 const PI_HIT_SESSION = "pi:pi-eval-session";
 
@@ -20,6 +28,20 @@ export type AcceptanceFixtureRoots = Record<AcceptanceSourceId, string>;
 
 export interface AcceptanceGateOptions {
   keepTemp?: boolean;
+}
+
+/**
+ * Top-result diversity metrics (#92). Sherlog already returns one row per
+ * session, so diversity failures show up as duplicate transcript *families*
+ * (near-identical title/cwd) crowding out distinct sessions. The runner
+ * reports the observable spread; it does not (yet) drive ranking changes.
+ */
+export interface TopResultDiversity {
+  topK: number;
+  resultCount: number;
+  distinctSessions: number;
+  distinctTitles: number;
+  distinctCwds: number;
 }
 
 export interface AcceptanceGateRow {
@@ -37,6 +59,7 @@ export interface AcceptanceGateRow {
   facetMark: DogfoodEvaluation["facetMark"];
   failureClasses: DogfoodEvaluation["failureClasses"];
   predicates: DogfoodEvaluation["predicateResults"];
+  diversity: TopResultDiversity;
 }
 
 export interface AcceptanceGateResult {
@@ -115,8 +138,20 @@ function evaluateAcceptanceItems(dbPath: string, items: DogfoodGolden[]): Accept
       facetMark: evaluation.facetMark,
       failureClasses: evaluation.failureClasses,
       predicates: evaluation.predicateResults,
+      diversity: topResultDiversity(summary.results, item.expected.topK ?? limit),
     };
   });
+}
+
+function topResultDiversity(results: FindResult[], topK: number): TopResultDiversity {
+  const top = results.slice(0, topK);
+  return {
+    topK,
+    resultCount: top.length,
+    distinctSessions: new Set(top.map((result) => `${result.sourceId}\0${result.sessionRef}`)).size,
+    distinctTitles: new Set(top.map((result) => result.title.trim().toLowerCase())).size,
+    distinctCwds: new Set(top.map((result) => result.cwd)).size,
+  };
 }
 
 function readContextIfNeeded(
@@ -225,6 +260,23 @@ function acceptanceGoldens(roots: AcceptanceFixtureRoots): DogfoodGolden[] {
       },
     },
     {
+      id: "duplicate-family-diversity",
+      query: "familyneedle staging cutover",
+      intent: "a duplicated transcript family should not crowd the distinct session out of the top results",
+      // Candidate (non-blocking): ranking currently has no family collapse;
+      // this case exists to keep the diversity metric observable so any
+      // future ranking change is justified by a failing-before/passing-after
+      // eval rather than intuition.
+      status: "candidate",
+      expected: {
+        topK: 4,
+        sourceId: "codex",
+        acceptableSessionUuids: [DIVERSE_HIT_SESSION, ...DUP_FAMILY_SESSIONS],
+        cwdContains: "/tmp/sherlog-acceptance",
+        matchSource: "message",
+      },
+    },
+    {
       id: "claude-code-message-range-context",
       query: "claude adapter needle",
       intent: "Claude Code source recall should preserve source-qualified session refs and readable range context",
@@ -304,6 +356,18 @@ function writeCodexAcceptanceFixtures(root: string): void {
   writeCodexSession(day, NOISE_SESSION, "/tmp/sherlog-acceptance/noise", [
     event("user_message", "Refactor parser docs"),
     event("agent_message", "No deploy or handoff evidence here."),
+  ]);
+  // Near-identical resume/fork family: same cwd, same opening message, the
+  // needle repeated across every member.
+  for (const uuid of DUP_FAMILY_SESSIONS) {
+    writeCodexSession(day, uuid, "/tmp/sherlog-acceptance/family", [
+      event("user_message", "familyneedle staging cutover checklist"),
+      event("agent_message", "familyneedle staging cutover repeated boilerplate from the duplicated transcript."),
+    ]);
+  }
+  writeCodexSession(day, DIVERSE_HIT_SESSION, "/tmp/sherlog-acceptance/diverse", [
+    event("user_message", "familyneedle staging cutover decision record"),
+    event("agent_message", "The distinct session captures the actual cutover decision evidence."),
   ]);
 }
 
