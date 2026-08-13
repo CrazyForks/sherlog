@@ -16,15 +16,18 @@
 
 ## status
 
-Purpose：执行上下文、source inventory、index 与 coverage 状态。不回答内容，不写状态。
+Purpose：执行上下文、compact source inventory、index 与 coverage proof。不回答内容，不写状态。默认 JSON 是小证明（`requestedCoverage` + compact index/inventory），不是历史 `coverage[]` / `cwdGroups` 审计。
 
 ```bash
 "${SHLOG_BIN:-${CXS_BIN:-shlog}}" status --json
 "${SHLOG_BIN:-${CXS_BIN:-shlog}}" status --cwd <repo-cwd> --json
 "${SHLOG_BIN:-${CXS_BIN:-shlog}}" status --root <sessions-root> --selector '{"kind":"all"}' --json
+"${SHLOG_BIN:-${CXS_BIN:-shlog}}" status --inventory --json
 ```
 
-Options：`--source`、`--root`、`--selector`、`--cwd`、`--db`、`--json`。
+Options：`--source`、`--root`、`--selector`、`--cwd`、`--db`、`--inventory`、`--json`。
+
+`--selector` / `--cwd` 回答：当前 selector 是否仍被 fresh `all(root)`（或同等 covering selector）覆盖。`--inventory` 才输出历史 `coverage[]` 新鲜度审计和 `sourceInventory.cwdGroups`。
 
 Selector shapes：
 

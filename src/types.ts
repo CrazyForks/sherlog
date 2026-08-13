@@ -377,6 +377,12 @@ export interface StatusSummary {
     dbSizeBytes: number;
     lastSyncAt: string | null;
   };
+  /** Stored coverage row count for this source; not a freshness proof. */
+  coverageCount: number;
+  /**
+   * Historical per-row freshness audit. Empty on the default path; populated
+   * only when `status --inventory` re-fingerprints stored coverage selectors.
+   */
   coverage: CoverageInventoryStatus[];
   requestedCoverage?: RequestedCoverageStatus;
 }

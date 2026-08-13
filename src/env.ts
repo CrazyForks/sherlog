@@ -59,6 +59,14 @@ export function statsReadoutEnabled(): boolean {
   return value !== "0" && value !== "off" && value !== "false" && value !== "no";
 }
 
+// Probe-only timing for coverage freshness work (status/find). Writes a
+// single stderr line; never injected into default CLI JSON. Used to prove
+// that historical coverage rows are not re-snapshotted on the common path.
+export function coverageDebugTimingEnabled(): boolean {
+  const value = (process.env.SHLOG_DEBUG_TIMING ?? "").trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
 export function ensureDataDir(): void {
   migrateLegacyDataDirIfNeeded();
   if (!existsSync(DATA_DIR)) {

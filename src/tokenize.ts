@@ -59,8 +59,10 @@ export function tokenize(text: string): string[] {
 
 /**
  * Produce the whitespace-joined representation of a text that gets
- * stored in the FTS virtual column. Indexing and query pipelines must
- * both go through tokenize() to stay in sync.
+ * indexed into contentless FTS. The inverted index stores tokens; the
+ * original text stays in `messages.content_text` / session fields.
+ * Indexing and query pipelines must both go through tokenize() to stay
+ * in sync.
  */
 export function tokenizedText(text: string): string {
   return tokenize(text).join(" ");

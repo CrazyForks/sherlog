@@ -39,7 +39,7 @@ export function searchMessageHits(
     return [];
   }
 
-  return searchByFts(db, terms, limit, sessionId, selector, options);
+  return searchByFts(db, normalized, terms, limit, sessionId, selector, options);
 }
 
 export function searchSessionHits(
@@ -63,6 +63,7 @@ export function searchSessionHits(
 
 function searchByFts(
   db: Db,
+  query: string,
   terms: string[],
   limit: number,
   sessionId?: number,
@@ -90,7 +91,7 @@ function searchByFts(
 
   const orderBy = orderBySql(options.sort, "score", "s", "m");
 
-  return db
+  const rows = db
     .prepare<typeof params, RawHitRow>(`
       SELECT
         s.source_id AS sourceId,
@@ -107,7 +108,6 @@ function searchByFts(
         m.role AS matchRole,
         m.timestamp AS matchTimestamp,
         m.content_text AS contentText,
-        snippet(messages_fts, 0, '<mark>', '</mark>', '…', 16) AS snippet,
         bm25(messages_fts) AS score
       FROM messages_fts
       JOIN messages m ON m.id = messages_fts.rowid
@@ -116,7 +116,12 @@ function searchByFts(
       ORDER BY ${orderBy}
       LIMIT ?
     `)
-    .all(...params) as RawHitRow[];
+    .all(...params) as Array<RawHitRow & { contentText: string }>;
+
+  return rows.map((row) => ({
+    ...row,
+    snippet: makeRawSnippet(row.contentText, query, terms),
+  }));
 }
 
 function searchSessionsByFts(

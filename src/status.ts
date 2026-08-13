@@ -1,4 +1,5 @@
 import { existsSync, statSync } from "node:fs";
+import { performance } from "node:perf_hooks";
 import { INDEX_VERSION, DEFAULT_DB_PATH } from "./env";
 import {
   buildSourceFileMetaResolver,
@@ -8,51 +9,78 @@ import {
   withReadDb,
   type Db,
 } from "./db";
-import { evaluateCoverageRecord, evaluateRequestedCoverage } from "./coverage-freshness";
+import {
+  createCachedSnapshotter,
+  emptyCoverageProbeStats,
+  evaluateCoverageRecord,
+  finishCoverageProbe,
+  proveRequestedCoverage,
+  type CoverageProbeStats,
+} from "./coverage-freshness";
 import { selectorSource } from "./selector";
 import { getSessionSourceAdapter } from "./sources";
 import type { SessionSourceAdapter } from "./sources/types";
 import type {
   CoverageInventoryStatus,
   CoverageRecord,
-  RequestedCoverageStatus,
   Selector,
   SessionSourceId,
   SourceFileMeta,
   SourceFileMetaResolver,
   SourceInventory,
+  SourceSnapshot,
   StatusSummary,
 } from "./types";
 
-export async function collectStatus(options: { sourceId?: SessionSourceId; rootDir?: string; dbPath?: string; cwd?: string; selector?: Selector } = {}): Promise<StatusSummary> {
+export async function collectStatus(options: {
+  sourceId?: SessionSourceId;
+  rootDir?: string;
+  dbPath?: string;
+  cwd?: string;
+  selector?: Selector;
+  inventory?: boolean;
+} = {}): Promise<StatusSummary> {
   const source = getSessionSourceAdapter(options.sourceId ?? "codex");
   const root = source.resolveRoot(options.rootDir);
   const dbPath = options.dbPath ?? DEFAULT_DB_PATH;
+  const stats = emptyCoverageProbeStats();
+  const dbStarted = performance.now();
+  const dbState = loadStatusDbState(dbPath, source.id);
+  stats.dbMs = performance.now() - dbStarted;
+  stats.dbOpens = dbState.opened ? 1 : 0;
+
   const contextCache = new Map<string, Promise<StatusSourceContext>>();
-  const metaResolvers = new Map<SessionSourceId, SourceFileMetaResolver | undefined>();
-  // Reuse the sync-written file-meta cache so status scans avoid per-file
-  // content reads for files whose mtime+size are unchanged since last sync.
-  const metaResolverFor = (sourceId: SessionSourceId): SourceFileMetaResolver | undefined => {
-    if (!existsSync(dbPath)) return undefined;
-    if (!metaResolvers.has(sourceId)) {
-      metaResolvers.set(
-        sourceId,
-        buildSourceFileMetaResolver(withReadDb(dbPath, (db) => loadSourceFileMetaCache(db, sourceId))),
-      );
-    }
-    return metaResolvers.get(sourceId);
-  };
+  const snapshotters = new Map<string, (selector: Selector) => Promise<SourceSnapshot>>();
   const getContext = (sourceId: SessionSourceId, rootDir: string) =>
-    getStatusSourceContext(contextCache, sourceId, rootDir, metaResolverFor);
-  const sourceInventory = (await getContext(source.id, root)).inventory;
-  const index = collectIndexStatus(dbPath);
-  const coverage = existsSync(dbPath) ? withReadDb(dbPath, (db) => listCoverageRecordsForStatus(db, source.id)) : [];
+    getStatusSourceContext(contextCache, sourceId, rootDir, dbState.metaResolver, stats);
+  const snapshotterFor = (context: StatusSourceContext) => {
+    const key = statusSourceCacheKey(context.source.id, context.inventory.root);
+    let snapshotFor = snapshotters.get(key);
+    if (!snapshotFor) {
+      snapshotFor = createCachedSnapshotter(
+        (selector, files) => context.source.snapshotFromFiles(selector, files),
+        context.files,
+        stats,
+      );
+      snapshotters.set(key, snapshotFor);
+    }
+    return snapshotFor;
+  };
+
+  const context = await getContext(source.id, root);
+  const sourceInventory = options.inventory
+    ? context.inventory
+    : compactSourceInventory(context.inventory);
+
   const coverageStatus: CoverageInventoryStatus[] = [];
-  for (const record of coverage) {
-    const context = await getContext(selectorSource(record.selector), record.selector.root);
-    const snapshot = await context.source.snapshotFromFiles(record.selector, context.files);
-    coverageStatus.push(evaluateCoverageRecord(record, snapshot));
+  if (options.inventory) {
+    for (const record of dbState.coverageRecords) {
+      const recordContext = await getContext(selectorSource(record.selector), record.selector.root);
+      const snapshot = await snapshotterFor(recordContext)(record.selector);
+      coverageStatus.push(evaluateCoverageRecord(record, snapshot));
+    }
   }
+
   const summary: StatusSummary = {
     context: {
       cwd: options.cwd ?? process.cwd(),
@@ -61,21 +89,51 @@ export async function collectStatus(options: { sourceId?: SessionSourceId; rootD
       indexVersion: INDEX_VERSION,
     },
     sourceInventory,
-    index,
+    index: dbState.index,
+    coverageCount: dbState.coverageRecords.length,
     coverage: coverageStatus,
   };
   if (options.selector) {
-    const context = await getContext(selectorSource(options.selector), options.selector.root);
-    const snapshot = await context.source.snapshotFromFiles(options.selector, context.files);
-    summary.requestedCoverage = evaluateRequestedCoverage(snapshot, coverageStatus);
+    const requestedContext = await getContext(selectorSource(options.selector), options.selector.root);
+    const requestedSnapshot = await snapshotterFor(requestedContext)(options.selector);
+    summary.requestedCoverage = await proveRequestedCoverage(
+      requestedSnapshot,
+      dbState.coverageRecords,
+      snapshotterFor(requestedContext),
+    );
   }
+  finishCoverageProbe("status", stats);
   return summary;
+}
+
+interface StatusDbState {
+  opened: boolean;
+  coverageRecords: CoverageRecord[];
+  metaResolver?: SourceFileMetaResolver;
+  index: StatusSummary["index"];
 }
 
 interface StatusSourceContext {
   source: SessionSourceAdapter;
   files: SourceFileMeta[];
   inventory: SourceInventory;
+}
+
+function loadStatusDbState(dbPath: string, sourceId: SessionSourceId): StatusDbState {
+  if (!existsSync(dbPath)) {
+    return {
+      opened: false,
+      coverageRecords: [],
+      index: emptyIndexStatus(),
+    };
+  }
+
+  return withReadDb(dbPath, (db) => ({
+    opened: true,
+    coverageRecords: listCoverageRecordsForStatus(db, sourceId),
+    metaResolver: buildSourceFileMetaResolver(loadSourceFileMetaCache(db, sourceId)),
+    index: readIndexStatus(db, dbPath),
+  }));
 }
 
 function statusSourceCacheKey(sourceId: SessionSourceId, root: string): string {
@@ -86,7 +144,8 @@ function getStatusSourceContext(
   cache: Map<string, Promise<StatusSourceContext>>,
   sourceId: SessionSourceId,
   rootDir: string,
-  metaResolverFor: (sourceId: SessionSourceId) => SourceFileMetaResolver | undefined,
+  metaResolver: SourceFileMetaResolver | undefined,
+  stats: CoverageProbeStats,
 ): Promise<StatusSourceContext> {
   const source = getSessionSourceAdapter(sourceId);
   const root = source.resolveRoot(rootDir);
@@ -94,7 +153,9 @@ function getStatusSourceContext(
   let context = cache.get(key);
   if (!context) {
     context = (async () => {
-      const files = await source.collectFiles(root, { metaResolver: metaResolverFor(source.id) });
+      const collectStarted = performance.now();
+      const files = await source.collectFiles(root, { metaResolver });
+      stats.collectFilesMs += performance.now() - collectStarted;
       return {
         source,
         files,
@@ -106,24 +167,33 @@ function getStatusSourceContext(
   return context;
 }
 
-function collectIndexStatus(dbPath: string): StatusSummary["index"] {
-  if (!existsSync(dbPath)) {
-    return {
-      exists: false,
-      sessionCount: 0,
-      messageCount: 0,
-      earliestStartedAt: null,
-      latestEndedAt: null,
-      dbSizeBytes: 0,
-      lastSyncAt: null,
-    };
-  }
+function compactSourceInventory(inventory: SourceInventory): SourceInventory {
+  return {
+    root: inventory.root,
+    totalFiles: inventory.totalFiles,
+    pathDateRange: inventory.pathDateRange,
+    cwdGroups: [],
+  };
+}
 
-  const counts = withReadDb(dbPath, (db) => {
-    if (!tableExists(db, "sessions")) return emptyIndexCounts();
-    if (!tableColumnExists(db, "sessions", "source_id")) return getLegacyCodexStatsCounts(db);
-    return getStatsCounts(db);
-  });
+function emptyIndexStatus(): StatusSummary["index"] {
+  return {
+    exists: false,
+    sessionCount: 0,
+    messageCount: 0,
+    earliestStartedAt: null,
+    latestEndedAt: null,
+    dbSizeBytes: 0,
+    lastSyncAt: null,
+  };
+}
+
+function readIndexStatus(db: Db, dbPath: string): StatusSummary["index"] {
+  const counts = !tableExists(db, "sessions")
+    ? emptyIndexCounts()
+    : !tableColumnExists(db, "sessions", "source_id")
+      ? getLegacyCodexStatsCounts(db)
+      : getStatsCounts(db);
   let dbSizeBytes = 0;
   try {
     dbSizeBytes = statSync(dbPath).size;

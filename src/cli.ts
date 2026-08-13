@@ -23,7 +23,12 @@ import {
   loadSourceFileMetaCache,
   withReadDb,
 } from "./db";
-import { evaluateCoverageRecord, evaluateRequestedCoverage } from "./coverage-freshness";
+import {
+  createCachedSnapshotter,
+  emptyCoverageProbeStats,
+  finishCoverageProbe,
+  proveRequestedCoverage,
+} from "./coverage-freshness";
 import { buildEvidenceReadAction } from "./evidence-read";
 import { getSessionSourceAdapter, listSessionSourceAdapters } from "./sources";
 
@@ -76,18 +81,26 @@ program
 
 program
   .command("status")
-  .description("返回执行上下文、source inventory、index 与 coverage 状态")
+  .description("返回执行上下文、index 与 coverage proof；默认不 dump 历史 coverage 审计")
   .option("--source <id>", `session source (public: ${publicSourceLabel()})`)
   .option("--root <dir>", "覆盖默认 sessions 根目录，也作为 selector 默认 root")
   .option("--selector <json>", "检查指定 selector 的 coverage/freshness（只读，不同步）")
   .option("--cwd <path>", "检查指定 cwd selector 的 coverage/freshness")
   .option("--db <path>", "覆盖默认数据库路径", DEFAULT_DB_PATH)
+  .option("--inventory", "输出历史 coverage[] 新鲜度审计与 sourceInventory.cwdGroups")
   .option("--json", "输出 JSON")
   .action(async (options) => {
     try {
       const sourceId = publicSource(options.source);
       const selector = optionalSelector({ ...options, source: sourceId });
-      const status = await collectStatus({ sourceId, rootDir: options.root, dbPath: options.db, cwd: process.cwd(), selector: selector ?? undefined });
+      const status = await collectStatus({
+        sourceId,
+        rootDir: options.root,
+        dbPath: options.db,
+        cwd: process.cwd(),
+        selector: selector ?? undefined,
+        inventory: Boolean(options.inventory),
+      });
       if (options.json) {
         console.log(JSON.stringify(status, null, 2));
         return;
@@ -731,20 +744,27 @@ async function assessFindCoverage(
 
   const sourceId = selectorSource(selector);
   const source = getSessionSourceAdapter(sourceId);
+  const stats = emptyCoverageProbeStats();
+  const dbStarted = performance.now();
   // Load the sync-written file-meta cache alongside coverage records so the
   // freshness probe can skip content prefix reads for unchanged files.
   const { coverageRecords, metaResolver } = withReadDb(dbPath, (db) => ({
     coverageRecords: listCoverageRecords(db, sourceId),
     metaResolver: buildSourceFileMetaResolver(loadSourceFileMetaCache(db, sourceId)),
   }));
+  stats.dbOpens = 1;
+  stats.dbMs = performance.now() - dbStarted;
+  const collectStarted = performance.now();
   const files = await source.collectFiles(selector.root, { metaResolver });
-  const snapshot = await source.snapshotFromFiles(selector, files);
-  const coverageInventory = [];
-  for (const entry of coverageRecords) {
-    const entrySnapshot = await source.snapshotFromFiles(entry.selector, files);
-    coverageInventory.push(evaluateCoverageRecord(entry, entrySnapshot));
-  }
-  const requestedCoverage = evaluateRequestedCoverage(snapshot, coverageInventory);
+  stats.collectFilesMs = performance.now() - collectStarted;
+  const snapshotFor = createCachedSnapshotter(
+    (entrySelector, entryFiles) => source.snapshotFromFiles(entrySelector, entryFiles),
+    files,
+    stats,
+  );
+  const snapshot = await snapshotFor(selector);
+  const requestedCoverage = await proveRequestedCoverage(snapshot, coverageRecords, snapshotFor);
+  finishCoverageProbe("find-coverage", stats);
   const staleReason = requestedCoverage.staleReason;
   const coverage: CoverageStatus = {
     requested: requestedCoverage.requested,

@@ -104,9 +104,6 @@ describe("source file meta cache", () => {
       selector: { kind: "all", root },
     });
     expect(status.requestedCoverage?.freshness).toBe("fresh");
-    expect(status.sourceInventory.cwdGroups).toEqual([
-      { cwd: "/tmp/fresh-probe", fileCount: 1, pathDateRange: { from: "2026-04-22", to: "2026-04-22" } },
-    ]);
   });
 
   test("changed files bypass the cache and surface as stale coverage", async () => {
@@ -132,7 +129,6 @@ describe("source file meta cache", () => {
       selector: { kind: "all", root },
     });
     expect(status.requestedCoverage?.freshness).toBe("stale");
-    expect(status.sourceInventory.cwdGroups[0]?.cwd).toBe("/tmp/stale-probe-changed");
   });
 });
 

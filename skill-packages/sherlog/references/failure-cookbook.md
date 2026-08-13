@@ -12,6 +12,7 @@ Apply `SKILL.md` **Canonical policy**. This file maps failures to recovery actio
 | 旧 CLI `selector_required` | 更新 CLI，或补 `--root/--cwd/--selector` | 当前裸 `sync` 可 first-install bootstrap |
 | `index_unavailable` | bare `sync` 或 scoped `sync --cwd <repo-cwd>` | 索引未建立 |
 | `index_schema_upgrade_required` | 原范围 `sync --source codex ...` | 只读命令不迁移 |
+| 升级后第一次 `sync` 很慢 | 等它结束；看 stderr `rebuilding contentless FTS` | 从已存行重建 FTS 并 VACUUM，不重解析 transcript |
 | `session_not_found` | 看 `nextAction` + 同 source `status` | 当前 index 无此 ref；可能未同步 / source 错 / coverage 问题 |
 | 冷迁后担心历史丢了 | `find/list/read-*` | 默认 retain；确认 cold 已注册。完整 raw 细节走 progressive raw fallback |
 | `database is locked` | 重试一次 | 仍忙则跳过 `stats`，稍后重试读命令 |
@@ -60,6 +61,8 @@ Apply `SKILL.md` **Canonical policy**. This file maps failures to recovery actio
 ## index_schema_upgrade_required
 
 用同一目标范围跑 `sync --source codex --root/--cwd/--selector`；不要用只读 SQLite 手写迁移。
+
+升级到 contentless FTS 之后，第一次 write/`sync` 会从已存 `messages` / `sessions` 行重建倒排索引并 VACUUM。大库可能要等一段时间；这不是 transcript 重解析，也不截断 `content_text`。只读命令在这次 migrate 完成前仍可读旧的 contentful FTS。
 
 ## Database is locked or SQLITE_BUSY
 

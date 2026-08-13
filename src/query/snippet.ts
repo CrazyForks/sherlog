@@ -8,8 +8,8 @@ export function makeLikeSnippet(content: string, query: string): string {
   const prefix = start > 0 ? "…" : "";
   const suffix = end < content.length ? "…" : "";
   const snippet = content.slice(start, end);
-  // Re-scan the snippet slice and wrap every occurrence so the returned
-  // snippet agrees with FTS5's snippet() which highlights all matches.
+  // Re-scan the snippet slice and wrap every occurrence so LIKE and
+  // contentless-FTS snippets both highlight all matches in the raw text.
   const highlighted = wrapAllOccurrences(snippet, target);
   return `${prefix}${highlighted}${suffix}`;
 }
