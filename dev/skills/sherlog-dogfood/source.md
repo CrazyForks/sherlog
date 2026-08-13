@@ -90,7 +90,7 @@ Repo: /Users/envvar/work/repos/cxs
 Case: <id> (<status>)
 Symptom: <recall-miss|ranking-wrong|context-wrong|selector-coverage|skill-guidance>
 Original ask/query: <verbatim or derived query>
-Eval command: npm run eval:dogfood -- data/sherlog-dogfood/goldens.local.jsonl
+Eval command: npm run eval:dogfood -- data/cxs-dogfood/goldens.local.jsonl
 Focused repro (in-dev CLI from repo checkout):
 - npm run shlog -- find "<query>" --limit 10 --json
 - npm run shlog -- read-range/read-page ...
@@ -120,7 +120,7 @@ If the user says to fix in the same chat, switch to the repo workflow:
 - Normal coding agents may run existing dogfood gates, but must not add new golden cases unless this skill was explicitly triggered.
 - New cases default to `status: "candidate"`.
 - Promote to `status: "hard"` only when the user explicitly asks to promote that case.
-- Store private examples in ignored local data, normally `/Users/envvar/work/repos/cxs/data/sherlog-dogfood/goldens.local.jsonl`.
+- Store private examples in ignored local data, normally `/Users/envvar/work/repos/cxs/data/cxs-dogfood/goldens.local.jsonl`.
 - Never commit private dogfood examples. Never place them in `skill-packages/sherlog` or repo-local `.agents/skills`.
 - Do not add a dogfood case for an agent mistake if the underlying shlog CLI behaved correctly; record it as a skill-guidance note or ask whether the user wants a skill/doc fix instead.
 
@@ -161,7 +161,7 @@ If the user says to fix in the same chat, switch to the repo workflow:
 5. Append one JSON object per line to:
 
    ```text
-   data/sherlog-dogfood/goldens.local.jsonl
+   data/cxs-dogfood/goldens.local.jsonl
    ```
 
    Candidate template:
@@ -173,7 +173,7 @@ If the user says to fix in the same chat, switch to the repo workflow:
 6. Verify immediately:
 
    ```bash
-   npm run eval:dogfood -- data/sherlog-dogfood/goldens.local.jsonl
+   npm run eval:dogfood -- data/cxs-dogfood/goldens.local.jsonl
    ```
 
    Candidate failures are reported but should not block normal development. Hard failures are blocking.
@@ -188,7 +188,7 @@ Only run when the user explicitly asks to promote a specific case.
 4. Re-run:
 
    ```bash
-   npm run eval:dogfood -- data/sherlog-dogfood/goldens.local.jsonl
+   npm run eval:dogfood -- data/cxs-dogfood/goldens.local.jsonl
    ```
 
 5. Report the case id, selected session, context mode, and final pass/fail.

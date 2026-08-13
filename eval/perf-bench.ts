@@ -176,6 +176,7 @@ interface CliArgs {
   runsPerQuery: number;
   readRunsPerProbe: number;
   dogfoodPath: string | null;
+  bestEffortSync: boolean;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -186,6 +187,7 @@ function parseArgs(argv: string[]): CliArgs {
   let runsPerQuery = DEFAULT_RUNS_PER_QUERY;
   let readRunsPerProbe = DEFAULT_READ_RUNS_PER_PROBE;
   let dogfoodPath: string | null = null;
+  let bestEffortSync = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--root") {
@@ -200,14 +202,16 @@ function parseArgs(argv: string[]): CliArgs {
       readRunsPerProbe = parsePositiveInt(argv[++i], DEFAULT_READ_RUNS_PER_PROBE);
     } else if (a === "--dogfood") {
       dogfoodPath = resolve(argv[++i] ?? "");
+    } else if (a === "--best-effort") {
+      bestEffortSync = true;
     } else if (a === "--json-only") {
       jsonOnly = true;
     } else if (a === "--help" || a === "-h") {
-      console.log("Usage: npm run eval:perf -- [--source <id>] [--root <dir>] [--db <path>] [--runs <n>] [--read-runs <n>] [--dogfood <goldens.jsonl>] [--json-only]");
+      console.log("Usage: npm run eval:perf -- [--source <id>] [--root <dir>] [--db <path>] [--runs <n>] [--read-runs <n>] [--dogfood <goldens.jsonl>] [--best-effort] [--json-only]");
       process.exit(0);
     }
   }
-  return { root, db, source, jsonOnly, runsPerQuery, readRunsPerProbe, dogfoodPath };
+  return { root, db, source, jsonOnly, runsPerQuery, readRunsPerProbe, dogfoodPath, bestEffortSync };
 }
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
@@ -339,7 +343,13 @@ if (!args.jsonOnly) {
 }
 
 // 1. sync
-const syncRun = await runOrThrow(cliCommand("sync", "--source", args.source, "--db", args.db, "--root", args.root, "--best-effort", "--json"));
+// Default to strict sync so coverage is actually written and the status
+// probe below measures the fresh path (the one agents hit in practice).
+// --best-effort used to be hardcoded here, which made the bench manufacture
+// its own stale coverage and permanently report the stale-probe cost.
+const syncCmd = ["sync", "--source", args.source, "--db", args.db, "--root", args.root];
+if (args.bestEffortSync) syncCmd.push("--best-effort");
+const syncRun = await runOrThrow(cliCommand(...syncCmd, "--json"));
 const syncMs = syncRun.ms;
 let sessionCount = 0;
 try {
