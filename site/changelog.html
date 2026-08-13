@@ -199,6 +199,21 @@
   <main>
     <section>
       <div class="release-header">
+        <span class="release-version">v0.4.1</span>
+        <span class="release-date">2026-08-14</span>
+      </div>
+      <ul class="en">
+        <li><strong>Faster coverage proof.</strong> <code>status --selector</code> and <code>find</code> prove the requested selector against covering coverage only, instead of replaying every historical cwd/date-range row. Default <code>status --json</code> is a compact proof; pass <code>--inventory</code> for the old audit dump.</li>
+        <li><strong>Smaller index.</strong> <code>messages_fts</code> / <code>sessions_fts</code> are contentless FTS5: the inverted index stays, tokenized text is no longer stored twice. The first <code>sync</code> after upgrade rebuilds FTS from already-indexed rows (no transcript re-parse) and may take a while on a large history.</li>
+      </ul>
+      <ul class="zh">
+        <li><strong>更快的 coverage 证明。</strong><code>status --selector</code> / <code>find</code> 只对能覆盖当前 selector 的 coverage 做 freshness 证明，不再重放每一条历史 cwd/date-range 行。默认 <code>status --json</code> 是紧凑证明；需要旧审计清单时加 <code>--inventory</code>。</li>
+        <li><strong>更小的 index。</strong><code>messages_fts</code> / <code>sessions_fts</code> 改为 contentless FTS5：倒排索引保留，不再把分词文本再存一份。升级后第一次 <code>sync</code> 会从已索引行重建 FTS（不重新解析 transcript），大库可能要等一会儿。</li>
+      </ul>
+    </section>
+
+    <section>
+      <div class="release-header">
         <span class="release-version">v0.4.0</span>
         <span class="release-date">2026-08</span>
       </div>
