@@ -76,6 +76,8 @@ strict sync 默认只更新当前 source snapshot 中仍可见的文件，并保
 - `messages_fts`
 - `sessions_fts`
 
+两者都是 contentless FTS5（`content=''` + `contentless_delete=1`）。倒排索引仍按 `tokenize()` 后的 bigram/词写入；`messages.content_text` 与 session 字段仍存原文，FTS 不再另存一份 tokenized 文本。`find` snippet 从 JOIN 后的原文生成，不调用 FTS5 `snippet()`。升级后第一次打开 write 连接（通常是 `sync`）会从已存 `messages` / `sessions` 行重建 FTS 并 VACUUM，不重新解析 transcript。
+
 `messages_fts` 只索引真实消息，`sessions_fts` 索引 `title + summary_text + compact_text + reasoning_summary_text`。这样可以让生成标题、派生摘要、compact handoff、reasoning summary 参与召回，同时不把这些 session-level 信号伪装成 `seq = -1` 的消息。
 
 SQLite 访问层当前已经按 reader / writer 分流：

@@ -228,7 +228,11 @@ describe("cleanupMismatchedMessagesForSelector", () => {
       sessionUuid: string;
       contentText: string;
     }>;
-    const ftsRows = readDb.prepare("SELECT session_uuid AS sessionUuid FROM messages_fts").all() as Array<{ sessionUuid: string }>;
+    const ftsRows = readDb.prepare(`
+      SELECT m.session_uuid AS sessionUuid
+      FROM messages_fts
+      JOIN messages m ON m.id = messages_fts.rowid
+    `).all() as Array<{ sessionUuid: string }>;
     readDb.close();
 
     expect(removed).toBe(1);

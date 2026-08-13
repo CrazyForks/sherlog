@@ -1,16 +1,47 @@
+import { tokenizedText } from "../tokenize";
 import { ensureSourceFileMetaCacheTable } from "./file-meta-cache";
 import type { Db } from "./shared";
+
+const MESSAGES_FTS_DDL = `
+    CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+      content_text,
+      session_uuid UNINDEXED,
+      seq UNINDEXED,
+      role UNINDEXED,
+      timestamp UNINDEXED,
+      content='',
+      contentless_delete=1,
+      tokenize='unicode61 remove_diacritics 1'
+    )
+`;
+
+const SESSIONS_FTS_DDL = `
+    CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(
+      title,
+      summary_text,
+      compact_text,
+      reasoning_summary_text,
+      session_uuid UNINDEXED,
+      content='',
+      contentless_delete=1,
+      tokenize='unicode61 remove_diacritics 1'
+    )
+`;
 
 export function ensureSchema(db: Db): void {
   ensureSessionsTable(db);
   ensureMessagesTable(db);
-  ensureMessagesFtsTable(db);
-  ensureSessionsFtsTable(db);
+  const rebuiltMessagesFts = ensureMessagesFtsTable(db);
+  const rebuiltSessionsFts = ensureSessionsFtsTable(db);
   ensureCoverageTable(db);
   ensureSourceFileMetaCacheTable(db);
 
   dropLegacyTrigramTable(db);
   db.pragma("foreign_keys = ON");
+
+  if (rebuiltMessagesFts || rebuiltSessionsFts) {
+    db.exec("VACUUM");
+  }
 }
 
 function ensureSessionsTable(db: Db): void {
@@ -85,17 +116,13 @@ function ensureMessagesTable(db: Db): void {
   db.exec("CREATE INDEX IF NOT EXISTS idx_messages_session_uuid ON messages(session_uuid)");
 }
 
-function ensureMessagesFtsTable(db: Db): void {
-  db.exec(`
-    CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
-      content_text,
-      session_uuid UNINDEXED,
-      seq UNINDEXED,
-      role UNINDEXED,
-      timestamp UNINDEXED,
-      tokenize='unicode61 remove_diacritics 1'
-    )
-  `);
+function ensureMessagesFtsTable(db: Db): boolean {
+  if (ftsNeedsRebuild(db, "messages_fts")) {
+    rebuildMessagesFts(db);
+    return true;
+  }
+  db.exec(MESSAGES_FTS_DDL);
+  return false;
 }
 
 function ensureCoverageTable(db: Db): void {
@@ -138,31 +165,118 @@ function dropLegacyTrigramTable(db: Db): void {
   db.exec("DROP TABLE IF EXISTS messages_fts_trigram");
 }
 
-function ensureSessionsFtsTable(db: Db): void {
-  const existing = db
-    .prepare("SELECT 1 FROM sqlite_master WHERE name = 'sessions_fts' LIMIT 1")
-    .get();
+function ensureSessionsFtsTable(db: Db): boolean {
+  if (ftsNeedsRebuild(db, "sessions_fts", ["compact_text", "reasoning_summary_text"])) {
+    rebuildSessionsFts(db);
+    return true;
+  }
+  db.exec(SESSIONS_FTS_DDL);
+  return false;
+}
 
-  if (existing) {
-    const columns = db
-      .prepare("PRAGMA table_info(sessions_fts)")
-      .all() as Array<{ name: string }>;
-    const names = new Set(columns.map((column) => column.name));
-    if (!names.has("compact_text") || !names.has("reasoning_summary_text")) {
-      db.exec("DROP TABLE sessions_fts");
-    }
+function ftsNeedsRebuild(db: Db, tableName: string, requiredColumns: string[] = []): boolean {
+  const sql = tableSql(db, tableName);
+  if (!sql) return false;
+  if (!isContentlessDeleteFts(sql)) return true;
+  if (requiredColumns.length === 0) return false;
+  const names = columnNames(db, tableName);
+  return requiredColumns.some((column) => !names.has(column));
+}
+
+function isContentlessDeleteFts(sql: string): boolean {
+  return /content\s*=\s*(?:''|"")/i.test(sql) && /contentless_delete\s*=\s*1/i.test(sql);
+}
+
+function rebuildMessagesFts(db: Db): void {
+  const messageCount = (
+    db.prepare("SELECT COUNT(*) AS count FROM messages").get() as { count: number }
+  ).count;
+  if (messageCount >= 10_000) {
+    process.stderr.write(
+      `shlog: rebuilding contentless FTS from ${messageCount} messages (one-time schema migrate; transcript files are not re-parsed)\n`,
+    );
   }
 
-  db.exec(`
-    CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(
-      title,
-      summary_text,
-      compact_text,
-      reasoning_summary_text,
-      session_uuid UNINDEXED,
-      tokenize='unicode61 remove_diacritics 1'
-    )
-  `);
+  db.transaction(() => {
+    db.exec("DROP TABLE IF EXISTS messages_fts");
+    db.exec(MESSAGES_FTS_DDL);
+    const insert = db.prepare(`
+      INSERT INTO messages_fts(rowid, content_text, session_uuid, seq, role, timestamp)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    const selectBatch = db.prepare(`
+      SELECT id, content_text AS contentText, session_uuid AS sessionUuid, seq, role, timestamp
+      FROM messages
+      WHERE id > ?
+      ORDER BY id
+      LIMIT 256
+    `);
+    let lastId = 0;
+    for (;;) {
+      const batch = selectBatch.all(lastId) as Array<{
+        id: number;
+        contentText: string;
+        sessionUuid: string;
+        seq: number;
+        role: string;
+        timestamp: string;
+      }>;
+      if (batch.length === 0) break;
+      for (const row of batch) {
+        insert.run(
+          row.id,
+          tokenizedText(row.contentText),
+          row.sessionUuid,
+          row.seq,
+          row.role,
+          row.timestamp,
+        );
+        lastId = row.id;
+      }
+    }
+  })();
+}
+
+function rebuildSessionsFts(db: Db): void {
+  db.transaction(() => {
+    db.exec("DROP TABLE IF EXISTS sessions_fts");
+    db.exec(SESSIONS_FTS_DDL);
+    const insert = db.prepare(`
+      INSERT INTO sessions_fts(rowid, title, summary_text, compact_text, reasoning_summary_text, session_uuid)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    const selectBatch = db.prepare(`
+      SELECT id, title, summary_text AS summaryText, compact_text AS compactText,
+             reasoning_summary_text AS reasoningSummaryText, session_uuid AS sessionUuid
+      FROM sessions
+      WHERE id > ?
+      ORDER BY id
+      LIMIT 256
+    `);
+    let lastId = 0;
+    for (;;) {
+      const batch = selectBatch.all(lastId) as Array<{
+        id: number;
+        title: string;
+        summaryText: string;
+        compactText: string;
+        reasoningSummaryText: string;
+        sessionUuid: string;
+      }>;
+      if (batch.length === 0) break;
+      for (const row of batch) {
+        insert.run(
+          row.id,
+          tokenizedText(row.title),
+          tokenizedText(row.summaryText),
+          tokenizedText(row.compactText),
+          tokenizedText(row.reasoningSummaryText),
+          row.sessionUuid,
+        );
+        lastId = row.id;
+      }
+    }
+  })();
 }
 
 function ensureTextColumn(db: Db, tableName: string, columnName: string, defaultSql = "''"): void {

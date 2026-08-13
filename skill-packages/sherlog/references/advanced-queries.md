@@ -140,7 +140,8 @@ Codex resume/fork 可能产生多个 title 很像、但 `sessionUuid` 不同的 
 
 ## `snippet` 高亮
 
-- FTS path 的 `snippet` 会带 `<mark>...</mark>`
+- message 与 session FTS 命中的 `snippet` 都从 JOIN 后的原文（`messages.content_text` / session 字段）生成，带 `<mark>...</mark>`
+- 不要读 FTS content 列：当前 `messages_fts` / `sessions_fts` 是 contentless 的，那些列是空的
 - LIKE fallback 也会自己补 `<mark>...</mark>`
 - 如果下游需要纯文本，自己 strip
 - 如果你在回答里要引用命中词，高亮保留也可以

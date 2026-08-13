@@ -21,6 +21,7 @@
 - 查找前不要求无条件 sync；只有目标 selector coverage 缺失或 stale 时才同步。fresh `all(root)` coverage 可以覆盖同 root 下更窄 selector
 - `find` 默认按 relevance 排序；“最新/最近 + 关键词”应使用 `find <query> --sort ended`，必要时 `--exclude-session` 排除当前会话/self-hit
 - 候选召回来自 `messages_fts` 与 `sessions_fts(title + summary_text + compact_text + reasoning_summary_text)`；极少数零 token CJK query 在 message 侧回退到 LIKE
+- `messages_fts` / `sessions_fts` 是 contentless FTS5（`content=''` + `contentless_delete=1`）：倒排索引保留，不再把 `tokenize()` 后的文本复制进 `*_fts_content`。snippet 来自 JOIN 后的 `messages.content_text` / session 字段，不读 FTS content 列。升级后第一次 write/`sync` 会从已存行重建 FTS，不重新解析 transcript；这次 migrate 可能较慢并伴随 VACUUM
 - `summary_text`、`compact_text`、`reasoning_summary_text` 已持久化，也会通过 `sessions_fts` 参与 session-level recall
 - session-level FTS 使用显式字段权重：title 8.0、compact 4.0、summary 3.0、reasoning summary 1.2
 - `classifyQueryProfile()` 仍存在，但当前评分没有按 `broad/exact` 做显式分权

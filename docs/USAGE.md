@@ -132,6 +132,8 @@ Pass `--best-effort` only when you explicitly want successful files written desp
 
 Indexes created before `shlog-v7-source-identity` should be refreshed with `sync --root`, `sync --cwd`, or `sync --selector` so selector coverage and reads use source-aware identity, current `path_date`, and source-root provenance fields. Existing `cxs-v7-source-identity` indexes remain readable as a compatibility path. Source-aware read commands do not migrate old indexes because they are read-only; they return `index_schema_upgrade_required` with a `shlog sync` hint when the index needs this refresh.
 
+The first write/`sync` after upgrading to a contentless-FTS build rebuilds `messages_fts` and `sessions_fts` from already-stored `messages` / `sessions` rows (no transcript re-parse) and VACUUMs the file. That pass can take a while on a large index; message bodies are not truncated. Read-only commands keep using the old contentful FTS until that write migrate runs.
+
 Older `Sherlog <= 0.2.0` indexes stored under `~/.cache/cxs/` and state dirs under `~/.local/state/cxs/` are migrated automatically on first run when the new state directory is empty. If the new directory already has data, migration is skipped and the old location is left in place.
 
 ## Agent Skill Package
