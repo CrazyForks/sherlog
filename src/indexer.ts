@@ -17,6 +17,7 @@ import {
   openWriteDb,
   replaceCoverage,
   replaceSession,
+  upsertSourceFileMetaCache,
 } from "./db";
 import { canonicalizeSelector, selectorSource } from "./selector";
 import { getSessionSourceAdapter } from "./sources";
@@ -166,6 +167,22 @@ export async function syncSessions(options: SyncOptions = {}): Promise<SyncSumma
       }
       if (summary.errors > 0 && !options.bestEffort) {
         throw new SyncError(summary);
+      }
+
+      // Persist content-derived file metadata (cwd/pathDate/accepted
+      // fingerprints) from this sync's snapshot so read-only coverage probes
+      // (find/status) can skip per-file content reads for unchanged files.
+      // Best-effort: a cache write failure must never fail a completed sync.
+      try {
+        upsertSourceFileMetaCache(
+          db,
+          source.id,
+          sourceSnapshot.files,
+          selector.kind === "all" ? { root: selector.root } : undefined,
+        );
+      } catch {
+        // Ignore: the cache is a pure read-path accelerator; probes fall back
+        // to full content scans when rows are missing.
       }
 
       return summary;

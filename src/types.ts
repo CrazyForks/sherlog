@@ -89,6 +89,37 @@ export interface SourceFileMeta {
   size: number;
 }
 
+/**
+ * Content-derived file metadata cached at sync time. Read-only commands use
+ * it to skip per-file content prefix reads while re-checking coverage
+ * freshness; cached values are exactly what the sync-time inventory scan
+ * produced, so snapshot fingerprints stay byte-identical.
+ */
+export interface CachedSourceFileMeta {
+  cwd: string;
+  pathDate: string | null;
+  /** Source-specific content fingerprint (e.g. claude-code/pi acceptedFingerprint). */
+  extraFingerprint: string;
+}
+
+/**
+ * Resolver injected into source file collection. Returns cached metadata for
+ * a file only when it can prove the cache entry still matches the on-disk
+ * file (same mtime and size); otherwise returns null and the source adapter
+ * falls back to its normal content scan.
+ */
+export type SourceFileMetaResolver = (
+  filePath: string,
+  mtimeMs: number,
+  size: number,
+) => CachedSourceFileMeta | null;
+
+export interface CollectSourceFilesOptions {
+  strict?: boolean;
+  requireCwdMetadata?: boolean;
+  metaResolver?: SourceFileMetaResolver;
+}
+
 export interface SourceSnapshot {
   selector: Selector;
   fingerprint: string;
@@ -202,6 +233,15 @@ export interface MessageElision {
   hint: string;
 }
 
+/**
+ * Best-effort provenance for a find hit. "message" means the displayed hit
+ * anchors on a real transcript message; the session-level values name which
+ * indexed session field(s) the query terms were found in. An empty array on
+ * a session-level hit means the match could not be attributed to a single
+ * field (e.g. diacritic-folded FTS matches).
+ */
+export type FindMatchedField = "message" | "title" | "summary" | "compact" | "reasoningSummary";
+
 export interface FindResult {
   rank: number;
   sourceId: SessionSourceId;
@@ -219,6 +259,26 @@ export interface FindResult {
   matchTimestamp: string | null;
   score: number;
   snippet: string;
+  // Additive recall-packet fields (issue #90): match provenance plus a
+  // context-cost hint so agents can pick the next read without scraping
+  // text output. Existing consumers can ignore both.
+  matchedFields: FindMatchedField[];
+  /** Total indexed messages in the session — the read-page cost ceiling. */
+  sessionMessageCount: number;
+}
+
+/**
+ * Structured zero-result diagnosis (issue #91). Distinguishes a trustworthy
+ * miss over fresh coverage from a miss that may just mean stale/missing
+ * coverage, and carries deterministic broadening suggestions for
+ * over-constrained natural-language queries. Purely informational: read-only
+ * commands never sync implicitly.
+ */
+export interface ZeroResultsDiagnosis {
+  reason: "fresh_miss" | "stale_or_missing_coverage" | "coverage_not_confirmed";
+  overConstrained: boolean;
+  suggestedQueries: string[];
+  hints: string[];
 }
 
 export interface FindSummary {
@@ -233,6 +293,8 @@ export interface FindSummary {
   coverage: CoverageStatus;
   coverageBySource?: Array<{ sourceId: SessionSourceId; coverage: CoverageStatus }>;
   nextAction?: QueryNextAction;
+  /** Present only when results is empty (additive, issue #91). */
+  zeroResults?: ZeroResultsDiagnosis;
 }
 
 export interface SyncSummary {

@@ -15,7 +15,14 @@ import {
   listColdRootEntries,
   removeColdRoot,
 } from "./cold-roots";
-import { IndexSchemaUpgradeRequiredError, IndexUnavailableError, listCoverageRecords, withReadDb } from "./db";
+import {
+  buildSourceFileMetaResolver,
+  IndexSchemaUpgradeRequiredError,
+  IndexUnavailableError,
+  listCoverageRecords,
+  loadSourceFileMetaCache,
+  withReadDb,
+} from "./db";
 import { evaluateCoverageRecord, evaluateRequestedCoverage } from "./coverage-freshness";
 import { buildEvidenceReadAction } from "./evidence-read";
 import { getSessionSourceAdapter, listSessionSourceAdapters } from "./sources";
@@ -35,6 +42,7 @@ import {
 } from "./format";
 import { SyncError, syncSessions } from "./indexer";
 import {
+  buildZeroResultRefinement,
   collectStats,
   findSessions,
   getMessagePage,
@@ -56,6 +64,7 @@ import type {
   Selector,
   SessionListSort,
   SessionSourceId,
+  ZeroResultsDiagnosis,
 } from "./types";
 
 const program = new Command();
@@ -288,7 +297,10 @@ program
           nextAction: coverageAssessment.nextAction,
         };
       }));
-      const result = mergeFindSummaries(query, sort, options.excludeSession ?? [], summaries, limit);
+      const merged = mergeFindSummaries(query, sort, options.excludeSession ?? [], summaries, limit);
+      const result = merged.results.length === 0
+        ? { ...merged, zeroResults: buildZeroResultsDiagnosis(query, merged.coverage) }
+        : merged;
       // performance.now() 自 timeOrigin(进程启动)起算 ≈ 本次端到端耗时,
       // 含 better-sqlite3 模块加载;shlog 是一次性进程,所以这就是诚实的端到端。
       const elapsedMs = Math.round(performance.now());
@@ -308,8 +320,8 @@ program
   });
 
 program
-  .command("read-range <sessionUuid>")
-  .description("围绕命中点读取局部上下文；必须显式传 session_uuid")
+  .command("read-range <sessionRef>")
+  .description("围绕命中点读取局部上下文；接受裸 Codex UUID 或 source-qualified sessionRef（如 claude-code:<id>）")
   .option("--source <id>", `session source (public: ${publicSourceLabel()})`)
   .option("--seq <n>", "显式指定锚点 seq")
   .option("--query <query>", "用 query 在该 session 内重新定位命中点")
@@ -318,10 +330,10 @@ program
   .option("--max-message-chars <n>", "单条超大消息最多保留的字符数；0 表示不省略", String(DEFAULT_MAX_MESSAGE_CHARS))
   .option("--db <path>", "覆盖默认数据库路径", DEFAULT_DB_PATH)
   .option("--json", "输出 JSON")
-  .action((sessionUuid, options) => {
+  .action((sessionRef, options) => {
     runReadCommand(Boolean(options.json), () => {
-      const sourceId = publicReadSource(options.source, sessionUuid);
-      const result = getMessageRange(options.db, sessionRefForSource(sessionUuid, sourceId), {
+      const sourceId = publicReadSource(options.source, sessionRef);
+      const result = getMessageRange(options.db, sessionRefForSource(sessionRef, sourceId), {
         seq: optionalInt(options.seq),
         query: options.query,
         before: parsePositiveInt(options.before, 2),
@@ -349,20 +361,20 @@ program
   });
 
 program
-  .command("read-page <sessionUuid>")
-  .description("顺序分页读取某个 session 的消息")
+  .command("read-page <sessionRef>")
+  .description("顺序分页读取某个 session 的消息；接受裸 Codex UUID 或 source-qualified sessionRef")
   .option("--source <id>", `session source (public: ${publicSourceLabel()})`)
   .option("--offset <n>", "起始 offset", "0")
   .option("--limit <n>", "页大小", "20")
   .option("--max-message-chars <n>", "单条超大消息最多保留的字符数；0 表示不省略", String(DEFAULT_MAX_MESSAGE_CHARS))
   .option("--db <path>", "覆盖默认数据库路径", DEFAULT_DB_PATH)
   .option("--json", "输出 JSON")
-  .action((sessionUuid, options) => {
+  .action((sessionRef, options) => {
     runReadCommand(Boolean(options.json), () => {
-      const sourceId = publicReadSource(options.source, sessionUuid);
+      const sourceId = publicReadSource(options.source, sessionRef);
       const result = getMessagePage(
         options.db,
-        sessionRefForSource(sessionUuid, sourceId),
+        sessionRefForSource(sessionRef, sourceId),
         parseNonNegativeInt(options.offset, 0),
         parsePositiveInt(options.limit, 20),
         { maxMessageChars: parseNonNegativeInt(options.maxMessageChars, DEFAULT_MAX_MESSAGE_CHARS) },
@@ -682,6 +694,32 @@ function buildCrossSourceZeroResultsNextAction(): QueryNextAction {
   };
 }
 
+/**
+ * Structured zero-result diagnosis (#91): tells the agent whether a miss is
+ * trustworthy (fresh coverage) or unproven (stale/missing coverage), and
+ * offers deterministic broadening probes for over-constrained queries.
+ * Informational only — read-only commands never sync implicitly.
+ */
+function buildZeroResultsDiagnosis(query: string, coverage: CoverageStatus): ZeroResultsDiagnosis {
+  const refinement = buildZeroResultRefinement(query);
+  const reason: ZeroResultsDiagnosis["reason"] = coverage.freshness === "fresh"
+    ? "fresh_miss"
+    : coverage.freshness === "stale" || coverage.freshness === "missing"
+      ? "stale_or_missing_coverage"
+      : "coverage_not_confirmed";
+  const leadHint = reason === "fresh_miss"
+    ? "Coverage for the searched scope is fresh: this miss is trustworthy for indexed history."
+    : reason === "stale_or_missing_coverage"
+      ? "Coverage is stale or missing: do not treat this miss as proof of absence; refresh the same scope (see nextAction) and retry."
+      : "Coverage freshness was not confirmed for this scope; check status before trusting the miss.";
+  return {
+    reason,
+    overConstrained: refinement.overConstrained,
+    suggestedQueries: refinement.suggestedQueries,
+    hints: [leadHint, ...refinement.hints],
+  };
+}
+
 async function assessFindCoverage(
   dbPath: string,
   selector: Selector,
@@ -693,9 +731,14 @@ async function assessFindCoverage(
 
   const sourceId = selectorSource(selector);
   const source = getSessionSourceAdapter(sourceId);
-  const files = await source.collectFiles(selector.root);
+  // Load the sync-written file-meta cache alongside coverage records so the
+  // freshness probe can skip content prefix reads for unchanged files.
+  const { coverageRecords, metaResolver } = withReadDb(dbPath, (db) => ({
+    coverageRecords: listCoverageRecords(db, sourceId),
+    metaResolver: buildSourceFileMetaResolver(loadSourceFileMetaCache(db, sourceId)),
+  }));
+  const files = await source.collectFiles(selector.root, { metaResolver });
   const snapshot = await source.snapshotFromFiles(selector, files);
-  const coverageRecords = withReadDb(dbPath, (db) => listCoverageRecords(db, sourceId));
   const coverageInventory = [];
   for (const entry of coverageRecords) {
     const entrySnapshot = await source.snapshotFromFiles(entry.selector, files);
@@ -1088,4 +1131,4 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-program.parse();
+await program.parseAsync(process.argv);

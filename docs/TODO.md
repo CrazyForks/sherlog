@@ -6,8 +6,8 @@
 
 现状：
 
-- [eval/manual-queries.json](/Users/envvar/work/repos/cxs/eval/manual-queries.json) 只有 18 条 seed query
-- [eval/manual-eval-core.ts](/Users/envvar/work/repos/cxs/eval/manual-eval-core.ts) 只支持 `title_or_summary`、`cwd`、`snippet` 这几类弱断言
+- [eval/manual-queries.json](../eval/manual-queries.json) 只有 18 条 seed query
+- [eval/manual-eval-core.ts](../eval/manual-eval-core.ts) 只支持 `title_or_summary`、`cwd`、`snippet` 这几类弱断言
 
 下一步应该优先补：
 

@@ -4,6 +4,7 @@ import { resolve, sep } from "node:path";
 import { canonicalizeSelector, selectorContainsFile, selectorSource } from "../selector";
 import { mapWithConcurrency } from "./concurrency";
 import type {
+  CollectSourceFilesOptions,
   DateRange,
   Selector,
   SourceFileMeta,
@@ -19,10 +20,6 @@ const SOURCE_FILE_METADATA_CONCURRENCY = 32;
 
 interface ClaudeSourceFileMeta extends SourceFileMeta {
   acceptedFingerprint: string;
-}
-
-interface CollectSourceFilesOptions {
-  strict?: boolean;
 }
 
 export async function collectClaudeCodeSourceInventory(root: string): Promise<SourceInventory> {
@@ -100,9 +97,23 @@ async function collectSourceFilePaths(currentDir: string, filePaths: string[], o
 
 async function readSourceFileMeta(filePath: string, options: CollectSourceFilesOptions): Promise<ClaudeSourceFileMeta | null> {
   try {
+    const stats = await stat(filePath);
+    // Sync-time cache hit: only accepted files enter the cached snapshot, so
+    // an unchanged (mtime+size) hit both proves acceptance and reproduces the
+    // exact cwd/pathDate/acceptedFingerprint the sync-time scan computed.
+    const cached = options.metaResolver?.(filePath, stats.mtimeMs, stats.size) ?? null;
+    if (cached && cached.extraFingerprint) {
+      return {
+        filePath,
+        pathDate: cached.pathDate,
+        cwd: cached.cwd,
+        mtimeMs: stats.mtimeMs,
+        size: stats.size,
+        acceptedFingerprint: cached.extraFingerprint,
+      };
+    }
     const metadata = await readAcceptedMetadataAsync(filePath);
     if (!metadata) return null;
-    const stats = await stat(filePath);
     return {
       filePath,
       pathDate: metadata.pathDate,

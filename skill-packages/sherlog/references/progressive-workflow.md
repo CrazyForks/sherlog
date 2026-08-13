@@ -27,7 +27,7 @@ sqlite3 -readonly "$DB_PATH" \
 "${SHLOG_BIN:-${CXS_BIN:-shlog}}" find "cf tunnel" --json -n 5
 ```
 
-对候选始终执行 `evidenceRead.argv`；不要根据 `matchSeq` 自己重建命令。示例形状可能是：
+选候选时用 `matchedFields`（命中出处：message 证据强于 title/compact/reasoningSummary）和 `sessionMessageCount`（读取成本上限）辅助判断；零结果时按 `zeroResults.reason` 分流（见 failure-cookbook）。对候选始终执行 `evidenceRead.argv`；不要根据 `matchSeq` 自己重建命令。示例形状可能是：
 
 ```bash
 "${SHLOG_BIN:-${CXS_BIN:-shlog}}" read-range <sessionRef> --seq <matchSeq> --query "cf tunnel" --before 2 --after 2 --json

@@ -1,4 +1,4 @@
-import { DEFAULT_SESSION_SOURCE_ID, type FindMatchRole, type FindResult, type MatchSource, type SessionSourceId } from "./types";
+import { DEFAULT_SESSION_SOURCE_ID, type FindMatchedField, type FindMatchRole, type FindResult, type MatchSource, type SessionSourceId } from "./types";
 import { queryTerms, tokenize } from "./tokenize";
 
 export interface RawHitRow {
@@ -16,6 +16,10 @@ export interface RawHitRow {
   matchTimestamp: string | null;
   contentText: string;
   snippet: string;
+  /** Session-level hits carry the indexed fields the query matched (#90). */
+  matchedFields?: FindMatchedField[];
+  /** Total indexed messages of the owning session (context-cost hint). */
+  sessionMessageCount?: number;
   // FTS path: negative bm25(). LIKE path: a small negative ordinal. Either
   // way, lower is "better" from the SQL side; we flip the sign during
   // rerank so all bonuses stay positive and additive.
@@ -167,8 +171,15 @@ function rankAggregates(grouped: Map<string, SessionAggregate>, limit: number): 
       matchTimestamp: aggregate.bestDisplayRow.matchTimestamp,
       score: sessionScore,
       snippet: aggregate.bestDisplayRow.snippet,
+      matchedFields: matchedFieldsForDisplayRow(aggregate.bestDisplayRow),
+      sessionMessageCount: aggregate.row.sessionMessageCount ?? 0,
     };
   });
+}
+
+function matchedFieldsForDisplayRow(row: RawHitRow): FindMatchedField[] {
+  if (row.matchSource === "message") return ["message"];
+  return row.matchedFields ?? [];
 }
 
 function sessionRefForResult(sourceId: SessionSourceId, sessionUuid: string, sessionKey?: string): string {
@@ -307,9 +318,4 @@ function containsBoundedPhrase(haystack: string, phrase: string): boolean {
 
 function isPhraseBoundary(char: string | undefined): boolean {
   return !char || !/[\p{Letter}\p{Number}_./-]/u.test(char);
-}
-
-function getTimestamp(iso: string): number {
-  const timestamp = Date.parse(iso);
-  return Number.isNaN(timestamp) ? 0 : timestamp;
 }

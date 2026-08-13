@@ -109,7 +109,7 @@ function resolveAnchorSeq(
     return 0;
   }
 
-  throw new Error("read-range requires explicit session_uuid plus either --seq or --query");
+  throw new Error("read-range requires an explicit sessionRef plus either --seq or --query");
 }
 
 function searchTopHitInSession(db: Db, session: SessionRecord, query: string): FindResult | null {

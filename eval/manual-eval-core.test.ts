@@ -79,5 +79,7 @@ function findResult(
     matchTimestamp: "2026-04-22T00:00:00.000Z",
     score: 100,
     snippet: overrides.snippet ?? overrides.title ?? "title",
+    matchedFields: ["message"],
+    sessionMessageCount: 4,
   };
 }

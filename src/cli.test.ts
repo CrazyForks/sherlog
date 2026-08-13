@@ -40,6 +40,68 @@ describe("shlog cli", { timeout: 20_000 }, () => {
     expect(result.stdout).not.toContain("\n  session ");
   });
 
+  test("find zero results carry a structured diagnosis with refine hints", async () => {
+    const base = mkdtempSync(join(tmpdir(), "cxs-cli-zero-results-"));
+    tempDirs.push(base);
+    const root = join(base, "sessions");
+    const day = join(root, "2026", "04", "20");
+    mkdirSync(day, { recursive: true });
+    const filePath = join(day, "rollout-2026-04-20T10-00-00-77777777-7777-4777-8777-777777777777.jsonl");
+    writeFileSync(
+      filePath,
+      [
+        line("session_meta", { id: "77777777-7777-4777-8777-777777777777", cwd: "/tmp/zero-results" }),
+        line("event_msg", { type: "user_message", message: "ordinary indexed content" }),
+      ].join("\n"),
+    );
+    const dbPath = join(base, "index.sqlite");
+    const synced = await runCli(["sync", "--root", root, "--db", dbPath, "--json"]);
+    expect(synced.exitCode).toBe(0);
+
+    // Fresh coverage + miss => trustworthy fresh_miss without a sync nextAction.
+    const freshMiss = await runCli(["find", "zzznonexistentneedle", "--source", "codex", "--root", root, "--db", dbPath, "--json"]);
+    expect(freshMiss.exitCode).toBe(0);
+    const freshPayload = JSON.parse(freshMiss.stdout) as {
+      results: unknown[];
+      zeroResults?: { reason: string; overConstrained: boolean; suggestedQueries: string[]; hints: string[] };
+      nextAction?: { reason: string };
+    };
+    expect(freshPayload.results).toHaveLength(0);
+    expect(freshPayload.zeroResults?.reason).toBe("fresh_miss");
+    expect(freshPayload.nextAction?.reason).not.toBe("stale_or_missing_coverage");
+
+    // Over-constrained mixed-script query => deterministic broadening hints.
+    const overConstrained = await runCli([
+      "find",
+      "部署 zzznonexistent healthcheck retry timeout",
+      "--source",
+      "codex",
+      "--root",
+      root,
+      "--db",
+      dbPath,
+      "--json",
+    ]);
+    expect(overConstrained.exitCode).toBe(0);
+    const overPayload = JSON.parse(overConstrained.stdout) as {
+      zeroResults?: { reason: string; overConstrained: boolean; suggestedQueries: string[] };
+    };
+    expect(overPayload.zeroResults?.overConstrained).toBe(true);
+    expect(overPayload.zeroResults?.suggestedQueries).toContain("zzznonexistent");
+    expect(overPayload.zeroResults?.suggestedQueries).toContain("部署");
+
+    // Changed source after sync => the miss is explicitly not trustworthy.
+    appendFileSync(filePath, `\n${line("event_msg", { type: "agent_message", message: "appended tail after sync" })}`);
+    const staleMiss = await runCli(["find", "zzznonexistentneedle", "--source", "codex", "--root", root, "--db", dbPath, "--json"]);
+    expect(staleMiss.exitCode).toBe(0);
+    const stalePayload = JSON.parse(staleMiss.stdout) as {
+      zeroResults?: { reason: string };
+      nextAction?: { reason: string };
+    };
+    expect(stalePayload.zeroResults?.reason).toBe("stale_or_missing_coverage");
+    expect(stalePayload.nextAction?.reason).toBe("stale_or_missing_coverage");
+  });
+
   test("status returns source inventory without an index", async () => {
     const base = mkdtempSync(join(tmpdir(), "cxs-cli-status-"));
     tempDirs.push(base);

@@ -4,3 +4,4 @@ export { getMessagePage, getMessageRange, SessionNotFoundError } from "./query/r
 export { listSessionSummaries } from "./query/list";
 export { collectStats } from "./query/stats";
 export { isCjkTerm } from "./query/cjk";
+export { buildZeroResultRefinement } from "./query/relaxed-recall";

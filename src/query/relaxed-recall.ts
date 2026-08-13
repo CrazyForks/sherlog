@@ -51,6 +51,48 @@ const ENGLISH_STOPWORDS = new Set([
   "why",
 ]);
 
+/**
+ * Deterministic zero-result refinement (#91). By the time this runs, find has
+ * already retried the morphologically relaxed AND-queries, so suggesting them
+ * again would be useless. Instead suggest strictly broader probes: single
+ * distinctive ASCII identifiers and whole CJK runs, which are supersets of
+ * any AND-combination that already returned nothing.
+ */
+export function buildZeroResultRefinement(query: string): { overConstrained: boolean; suggestedQueries: string[]; hints: string[] } {
+  const terms = queryTerms(query);
+  const asciiTerms = [...new Set(
+    terms.filter((term) => ASCII_TERM.test(term) && !ENGLISH_STOPWORDS.has(term)),
+  )].sort((left, right) => right.length - left.length || left.localeCompare(right));
+  const cjkRuns = extractCjkRuns(query);
+  const mixedScript = asciiTerms.length > 0 && cjkRuns.length > 0;
+  const overConstrained = terms.length >= 4 || mixedScript;
+
+  const normalizedQuery = query.trim().toLowerCase();
+  const suggestions: string[] = [];
+  for (const candidate of [...asciiTerms.slice(0, 2), ...cjkRuns.slice(0, 2)]) {
+    if (candidate.toLowerCase() === normalizedQuery) continue;
+    if (!suggestions.includes(candidate)) suggestions.push(candidate);
+    if (suggestions.length >= 3) break;
+  }
+
+  const hints: string[] = [];
+  if (terms.length >= 4) {
+    hints.push(`This query AND-combines ${terms.length} tokens; retry one distinctive term at a time.`);
+  }
+  if (mixedScript) {
+    hints.push("Mixed Chinese/English query: retry the English identifier and the Chinese phrase as separate finds.");
+  }
+  if (suggestions.length > 0) {
+    hints.push("Automatic morphological relaxation already ran and found nothing; broaden with the suggested queries instead of retrying the same phrase.");
+  }
+  return { overConstrained, suggestedQueries: suggestions, hints };
+}
+
+function extractCjkRuns(query: string): string[] {
+  const runs = query.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]{2,}/gu) ?? [];
+  return [...new Set(runs)].sort((left, right) => right.length - left.length || left.localeCompare(right));
+}
+
 export function buildRelaxedRecallQueries(query: string): string[] {
   const terms = queryTerms(query);
   if (terms.length < 2) return [];

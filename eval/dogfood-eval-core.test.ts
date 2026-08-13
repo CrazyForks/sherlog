@@ -212,5 +212,7 @@ function findResult(
     matchTimestamp: "2026-04-22T00:00:00.000Z",
     score: 100,
     snippet: "title",
+    matchedFields: overrides.matchSource === "session" ? ["title"] : ["message"],
+    sessionMessageCount: 4,
   };
 }

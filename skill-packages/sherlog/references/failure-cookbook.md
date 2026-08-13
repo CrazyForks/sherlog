@@ -7,7 +7,7 @@ Apply `SKILL.md` **Canonical policy**. This file maps failures to recovery actio
 | 症状 | 先跑 | 处理 |
 | --- | --- | --- |
 | `find` 有结果且仍返回 coverage `nextAction` | 读 `nextAction` | 按 canonical Coverage policy 判断是否需要完整结论与 scoped sync |
-| `find` 零结果但用户坚持存在 | `status --source <id> --cwd <repo-cwd> --json` 或同 selector status | coverage 不足才 sync；同范围重查 |
+| `find` 零结果但用户坚持存在 | 先读 `zeroResults.reason` | `fresh_miss` → 按 `suggestedQueries` 放宽；`stale_or_missing_coverage` → 同范围 sync 后重查；`coverage_not_confirmed` → 同 selector `status` |
 | `sync` 非零 + per-file errors | 原范围 `sync ... --json 2>&1` | 看 `errorDetails[]`；仅用户接受 partial 时 `--best-effort` |
 | 旧 CLI `selector_required` | 更新 CLI，或补 `--root/--cwd/--selector` | 当前裸 `sync` 可 first-install bootstrap |
 | `index_unavailable` | bare `sync` 或 scoped `sync --cwd <repo-cwd>` | 索引未建立 |
@@ -23,8 +23,11 @@ Apply `SKILL.md` **Canonical policy**. This file maps failures to recovery actio
 
 ## Find zero results but user insists it exists
 
-1. 看 `find --json` / `list --json` 的 `nextAction`。
-2. 检查同一目标范围：
+1. 先读 `find --json` 的 `zeroResults.reason`：
+   - `fresh_miss`：coverage 新鲜，miss 对已索引历史可信；改用 `zeroResults.suggestedQueries` 或更短的独特标识符重查，不要原样重试同一长 query（自动形态学放宽已经跑过）。
+   - `stale_or_missing_coverage`：miss 不可信；按 `nextAction` 同范围 sync 后重查。
+   - `coverage_not_confirmed`：先同 selector `status` 确认。
+2. 需要时检查同一目标范围：
 
 ```bash
 "${SHLOG_BIN:-${CXS_BIN:-shlog}}" status --source codex --cwd <repo-cwd> --json

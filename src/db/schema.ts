@@ -1,3 +1,4 @@
+import { ensureSourceFileMetaCacheTable } from "./file-meta-cache";
 import type { Db } from "./shared";
 
 export function ensureSchema(db: Db): void {
@@ -6,6 +7,7 @@ export function ensureSchema(db: Db): void {
   ensureMessagesFtsTable(db);
   ensureSessionsFtsTable(db);
   ensureCoverageTable(db);
+  ensureSourceFileMetaCacheTable(db);
 
   dropLegacyTrigramTable(db);
   db.pragma("foreign_keys = ON");

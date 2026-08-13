@@ -27,4 +27,9 @@ export {
   listCoverageRecords,
   replaceCoverage,
 } from "./db/coverage-store";
+export {
+  buildSourceFileMetaResolver,
+  loadSourceFileMetaCache,
+  upsertSourceFileMetaCache,
+} from "./db/file-meta-cache";
 export { selectorWhereSql } from "./db/sql";

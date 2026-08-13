@@ -28,7 +28,9 @@ description: "Use proactively for local agent-session history and prior setup ar
 | policy | rule |
 | --- | --- |
 | Evidence | `find/list` 只定位候选；内容先执行 `evidenceRead.argv` / `read-*`。只有 index projection 明确缺少完整 tool call、patch、长代码或原始事件时，才在定位 session 后走 agent-side raw fallback。 |
+| Provenance | 读结果时先看 `matchedFields`（命中出处）与 `sessionMessageCount`（读取成本上限）再决定 read 策略：message 锚点走 `read-range`，session-level 命中信 `evidenceRead`，大 session 避免盲目全量 `read-page`。 |
 | Sort | `find` 默认 relevance；用户问最新/最近时用 `--sort ended`，必要时 `--exclude-session` 排除 self-hit。 |
+| Zero results | 先读 `zeroResults.reason`：`fresh_miss` 可信，按 `suggestedQueries` 放宽后再下结论；`stale_or_missing_coverage` 不可信，按 `nextAction` 同范围 sync 再重试；`coverage_not_confirmed` 先 `status`。不要对同一过长 query 原样重试。 |
 | Coverage | 跟随同范围 `nextAction`。Codex `source_content_changed` + `recommendedAction: "query"` 是 soft stale：先 query/read；只有答案依赖最新活跃尾部时才 sync。 |
 | Cold | `cold add` 只注册 presence 供 prune 保留。`sync` 只摄取 plain `*.jsonl`；不会从 cold `*.jsonl.zst` 重建 index。 |
 | Prune | 普通维护不用 `--prune`。只有用户明确要丢掉 hot 与已注册 cold 都不存在的历史时才 prune。 |

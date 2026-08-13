@@ -8,7 +8,7 @@ import {
   collectCodexSourceSnapshot,
 } from "./codex-inventory";
 import { parseCodexSession } from "./codex-parser";
-import type { SessionSourceAdapter, SourceSnapshotOptions } from "./types";
+import type { CollectFilesOptions, SessionSourceAdapter, SourceSnapshotOptions } from "./types";
 
 export const codexSourceAdapter: SessionSourceAdapter = {
   id: "codex",
@@ -20,8 +20,8 @@ export const codexSourceAdapter: SessionSourceAdapter = {
   resolveRoot(override?: string) {
     return resolveCodexDir(override);
   },
-  collectFiles(root: string) {
-    return collectCodexSourceFiles(root);
+  collectFiles(root: string, options?: CollectFilesOptions) {
+    return collectCodexSourceFiles(root, options);
   },
   inventoryFromFiles(root: string, files: SourceFileMeta[]) {
     return codexSourceInventoryFromFiles(root, files);

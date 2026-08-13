@@ -14,12 +14,12 @@
 
 当前现状：
 
-- [eval/manual-queries.json](/Users/envvar/work/repos/cxs/eval/manual-queries.json) 只有 18 条 seed query
-- [eval/manual-eval-core.ts](/Users/envvar/work/repos/cxs/eval/manual-eval-core.ts) 只支持弱谓词：
+- [eval/manual-queries.json](../eval/manual-queries.json) 只有 18 条 seed query
+- [eval/manual-eval-core.ts](../eval/manual-eval-core.ts) 只支持弱谓词：
   - `title_or_summary`
   - `cwd`
   - `snippet`
-- [eval/run-dogfood-eval.ts](/Users/envvar/work/repos/cxs/eval/run-dogfood-eval.ts) 已提供本机 dogfood golden runner：
+- [eval/run-dogfood-eval.ts](../eval/run-dogfood-eval.ts) 已提供本机 dogfood golden runner：
   - 读取 ignored JSONL golden 文件
   - 支持为单个 golden 描述真实检索 workflow：多 query attempt、`sort`、cwd/selector scope、排除 self-hit session
   - 检查 expected session / cwd / matchSource / context key phrase

@@ -4,6 +4,7 @@ import { resolve, sep } from "node:path";
 import { canonicalizeSelector, selectorContainsFile } from "../selector";
 import { mapWithConcurrency } from "./concurrency";
 import type {
+  CollectSourceFilesOptions,
   DateRange,
   Selector,
   SourceFileMeta,
@@ -14,11 +15,6 @@ import type {
 
 const CWD_SCAN_BYTES = 64 * 1024;
 const SOURCE_FILE_METADATA_CONCURRENCY = 32;
-
-interface CollectSourceFilesOptions {
-  strict?: boolean;
-  requireCwdMetadata?: boolean;
-}
 
 export class SourceInventoryError extends Error {
   readonly path: string;
@@ -112,7 +108,11 @@ async function collectSourceFilePaths(currentDir: string, filePaths: string[], o
 async function readSourceFileMeta(filePath: string, options: CollectSourceFilesOptions): Promise<SourceFileMeta | null> {
   try {
     const stats = await stat(filePath);
-    const cwd = await readCwdMetadataAsync(filePath, options);
+    // Sync-time cache hit: the cached cwd came from this exact scan at the
+    // last sync, so reusing it keeps snapshot fingerprints byte-identical
+    // while skipping the per-file content prefix read.
+    const cached = options.metaResolver?.(filePath, stats.mtimeMs, stats.size) ?? null;
+    const cwd = cached ? cached.cwd : await readCwdMetadataAsync(filePath, options);
     return {
       filePath,
       pathDate: extractCodexPathDate(filePath),
