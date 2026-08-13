@@ -267,6 +267,20 @@ export interface FindResult {
   sessionMessageCount: number;
 }
 
+/**
+ * Structured zero-result diagnosis (issue #91). Distinguishes a trustworthy
+ * miss over fresh coverage from a miss that may just mean stale/missing
+ * coverage, and carries deterministic broadening suggestions for
+ * over-constrained natural-language queries. Purely informational: read-only
+ * commands never sync implicitly.
+ */
+export interface ZeroResultsDiagnosis {
+  reason: "fresh_miss" | "stale_or_missing_coverage" | "coverage_not_confirmed";
+  overConstrained: boolean;
+  suggestedQueries: string[];
+  hints: string[];
+}
+
 export interface FindSummary {
   query: string;
   sourceIds: SessionSourceId[];
@@ -279,6 +293,8 @@ export interface FindSummary {
   coverage: CoverageStatus;
   coverageBySource?: Array<{ sourceId: SessionSourceId; coverage: CoverageStatus }>;
   nextAction?: QueryNextAction;
+  /** Present only when results is empty (additive, issue #91). */
+  zeroResults?: ZeroResultsDiagnosis;
 }
 
 export interface SyncSummary {

@@ -42,6 +42,7 @@ import {
 } from "./format";
 import { SyncError, syncSessions } from "./indexer";
 import {
+  buildZeroResultRefinement,
   collectStats,
   findSessions,
   getMessagePage,
@@ -63,6 +64,7 @@ import type {
   Selector,
   SessionListSort,
   SessionSourceId,
+  ZeroResultsDiagnosis,
 } from "./types";
 
 const program = new Command();
@@ -295,7 +297,10 @@ program
           nextAction: coverageAssessment.nextAction,
         };
       }));
-      const result = mergeFindSummaries(query, sort, options.excludeSession ?? [], summaries, limit);
+      const merged = mergeFindSummaries(query, sort, options.excludeSession ?? [], summaries, limit);
+      const result = merged.results.length === 0
+        ? { ...merged, zeroResults: buildZeroResultsDiagnosis(query, merged.coverage) }
+        : merged;
       // performance.now() 自 timeOrigin(进程启动)起算 ≈ 本次端到端耗时,
       // 含 better-sqlite3 模块加载;shlog 是一次性进程,所以这就是诚实的端到端。
       const elapsedMs = Math.round(performance.now());
@@ -686,6 +691,32 @@ function buildCrossSourceZeroResultsNextAction(): QueryNextAction {
       `If any source reports requestedCoverage.recommendedAction as sync, run ${PROGRAM_NAME} sync --source <id> for that source and selector.`,
       "Retry this find before concluding nothing exists.",
     ],
+  };
+}
+
+/**
+ * Structured zero-result diagnosis (#91): tells the agent whether a miss is
+ * trustworthy (fresh coverage) or unproven (stale/missing coverage), and
+ * offers deterministic broadening probes for over-constrained queries.
+ * Informational only — read-only commands never sync implicitly.
+ */
+function buildZeroResultsDiagnosis(query: string, coverage: CoverageStatus): ZeroResultsDiagnosis {
+  const refinement = buildZeroResultRefinement(query);
+  const reason: ZeroResultsDiagnosis["reason"] = coverage.freshness === "fresh"
+    ? "fresh_miss"
+    : coverage.freshness === "stale" || coverage.freshness === "missing"
+      ? "stale_or_missing_coverage"
+      : "coverage_not_confirmed";
+  const leadHint = reason === "fresh_miss"
+    ? "Coverage for the searched scope is fresh: this miss is trustworthy for indexed history."
+    : reason === "stale_or_missing_coverage"
+      ? "Coverage is stale or missing: do not treat this miss as proof of absence; refresh the same scope (see nextAction) and retry."
+      : "Coverage freshness was not confirmed for this scope; check status before trusting the miss.";
+  return {
+    reason,
+    overConstrained: refinement.overConstrained,
+    suggestedQueries: refinement.suggestedQueries,
+    hints: [leadHint, ...refinement.hints],
   };
 }
 
