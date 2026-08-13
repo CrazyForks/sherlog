@@ -233,6 +233,15 @@ export interface MessageElision {
   hint: string;
 }
 
+/**
+ * Best-effort provenance for a find hit. "message" means the displayed hit
+ * anchors on a real transcript message; the session-level values name which
+ * indexed session field(s) the query terms were found in. An empty array on
+ * a session-level hit means the match could not be attributed to a single
+ * field (e.g. diacritic-folded FTS matches).
+ */
+export type FindMatchedField = "message" | "title" | "summary" | "compact" | "reasoningSummary";
+
 export interface FindResult {
   rank: number;
   sourceId: SessionSourceId;
@@ -250,6 +259,12 @@ export interface FindResult {
   matchTimestamp: string | null;
   score: number;
   snippet: string;
+  // Additive recall-packet fields (issue #90): match provenance plus a
+  // context-cost hint so agents can pick the next read without scraping
+  // text output. Existing consumers can ignore both.
+  matchedFields: FindMatchedField[];
+  /** Total indexed messages in the session — the read-page cost ceiling. */
+  sessionMessageCount: number;
 }
 
 export interface FindSummary {

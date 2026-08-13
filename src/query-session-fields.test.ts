@@ -67,6 +67,69 @@ describe("cxs session-level fields", () => {
     expect(singleCharFound.results[0]?.snippet).toContain("<mark>设</mark>");
   });
 
+  test("find results carry recall-packet provenance and context-cost fields", () => {
+    const base = mkdtempSync(join(tmpdir(), "cxs-recall-packet-"));
+    tempDirs.push(base);
+    const dbPath = join(base, "index.sqlite");
+    const db = openWriteDb(dbPath);
+    replaceSession(
+      db,
+      {
+        sessionUuid: "cdcdcdcd-cdcd-4cdc-8cdc-cdcdcdcdcdcd",
+        filePath: join(base, "rollout.jsonl"),
+        title: "packetneedle configuration session",
+        summaryText: "",
+        compactText: "packetneedle compact handoff",
+        reasoningSummaryText: "",
+        cwd: "/tmp/recall-packet",
+        model: "gpt-5.4",
+        startedAt: "2026-04-24T01:00:00.000Z",
+        endedAt: "2026-04-24T01:02:00.000Z",
+        messages: [
+          {
+            role: "user",
+            contentText: "please set up the messageneedle probe",
+            timestamp: "2026-04-24T01:00:00.000Z",
+            seq: 0,
+            sourceKind: "event_msg",
+          },
+          {
+            role: "assistant",
+            contentText: "done, probe configured",
+            timestamp: "2026-04-24T01:01:00.000Z",
+            seq: 1,
+            sourceKind: "event_msg",
+          },
+          {
+            role: "user",
+            contentText: "thanks",
+            timestamp: "2026-04-24T01:02:00.000Z",
+            seq: 2,
+            sourceKind: "event_msg",
+          },
+        ],
+      },
+      1,
+      1,
+      INDEX_VERSION,
+      "",
+    );
+    db.close();
+
+    // Message-level hit: provenance is the transcript message itself.
+    const messageHit = findSessions(dbPath, "messageneedle", 5).results[0];
+    expect(messageHit?.matchSource).toBe("message");
+    expect(messageHit?.matchedFields).toEqual(["message"]);
+    expect(messageHit?.sessionMessageCount).toBe(3);
+
+    // Session-level hit: provenance names the indexed fields that matched.
+    const sessionHit = findSessions(dbPath, "packetneedle", 5).results[0];
+    expect(sessionHit?.matchSource).toBe("session");
+    expect(sessionHit?.matchSeq).toBeNull();
+    expect(sessionHit?.matchedFields).toEqual(["title", "compact"]);
+    expect(sessionHit?.sessionMessageCount).toBe(3);
+  });
+
   test("session-level fields have explicit ranking weights", () => {
     const base = mkdtempSync(join(tmpdir(), "cxs-session-field-weights-"));
     tempDirs.push(base);

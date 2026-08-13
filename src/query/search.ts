@@ -1,9 +1,16 @@
 import { selectorWhereSql } from "../db";
 import type { RawHitRow } from "../ranking";
 import { hasCjk, queryTerms } from "../tokenize";
-import { DEFAULT_SESSION_SOURCE_ID, type FindSort, type Selector, type SessionSourceId } from "../types";
+import { DEFAULT_SESSION_SOURCE_ID, type FindMatchedField, type FindSort, type Selector, type SessionSourceId } from "../types";
 import type { Db, SqlParams } from "../db";
 import { makeLikeSnippet, makeRawSnippet } from "./snippet";
+
+interface SessionFieldTexts {
+  title: string;
+  summaryText: string;
+  compactText: string;
+  reasoningSummaryText: string;
+}
 
 export interface SearchOptions {
   sourceId?: SessionSourceId;
@@ -94,6 +101,7 @@ function searchByFts(
         s.cwd AS cwd,
         s.started_at AS startedAt,
         s.ended_at AS endedAt,
+        s.message_count AS sessionMessageCount,
         'message' AS matchSource,
         m.seq AS matchSeq,
         m.role AS matchRole,
@@ -144,11 +152,14 @@ function searchSessionsByFts(
         s.cwd AS cwd,
         s.started_at AS startedAt,
         s.ended_at AS endedAt,
+        s.message_count AS sessionMessageCount,
         'session' AS matchSource,
         NULL AS matchSeq,
         'session' AS matchRole,
         NULL AS matchTimestamp,
         s.title || char(10) || s.summary_text || char(10) || s.compact_text || char(10) || s.reasoning_summary_text AS contentText,
+        s.compact_text AS compactText,
+        s.reasoning_summary_text AS reasoningSummaryText,
         '' AS snippet,
         bm25(sessions_fts, 8.0, 3.0, 4.0, 1.2) AS score
       FROM sessions_fts
@@ -157,12 +168,43 @@ function searchSessionsByFts(
       ORDER BY ${orderBy}
       LIMIT ?
     `)
-    .all(...params) as RawHitRow[];
+    .all(...params) as Array<RawHitRow & SessionFieldTexts>;
 
   return rows.map((row) => ({
     ...row,
     snippet: makeRawSnippet(row.contentText, query, terms),
+    matchedFields: matchedSessionFields(row, query, terms),
   }));
+}
+
+/**
+ * Best-effort attribution of a session-level hit to the indexed fields that
+ * actually contain the query terms. Mirrors the substring heuristics the
+ * reranker uses; a term list match means every heuristic signal downstream
+ * sees the same evidence the agent will read.
+ */
+function matchedSessionFields(
+  fields: SessionFieldTexts,
+  query: string,
+  terms: string[],
+): FindMatchedField[] {
+  const normalizedQuery = query.trim().toLowerCase();
+  const candidates: Array<[FindMatchedField, string]> = [
+    ["title", fields.title],
+    ["summary", fields.summaryText],
+    ["compact", fields.compactText],
+    ["reasoningSummary", fields.reasoningSummaryText],
+  ];
+  const matched: FindMatchedField[] = [];
+  for (const [name, text] of candidates) {
+    if (!text) continue;
+    const lower = text.toLowerCase();
+    const termHit = terms.some((term) => lower.includes(term));
+    if (termHit || (normalizedQuery.length > 0 && lower.includes(normalizedQuery))) {
+      matched.push(name);
+    }
+  }
+  return matched;
 }
 
 function searchSessionsByLike(
@@ -205,22 +247,26 @@ function searchSessionsByLike(
         s.cwd AS cwd,
         s.started_at AS startedAt,
         s.ended_at AS endedAt,
+        s.message_count AS sessionMessageCount,
         'session' AS matchSource,
         NULL AS matchSeq,
         'session' AS matchRole,
         NULL AS matchTimestamp,
-        s.title || char(10) || s.summary_text || char(10) || s.compact_text || char(10) || s.reasoning_summary_text AS contentText
+        s.title || char(10) || s.summary_text || char(10) || s.compact_text || char(10) || s.reasoning_summary_text AS contentText,
+        s.compact_text AS compactText,
+        s.reasoning_summary_text AS reasoningSummaryText
       FROM sessions s
       WHERE ${conditions.join(" AND ")}
       ORDER BY ${orderBy}
       LIMIT ?
     `)
-    .all(...params) as Array<RawHitRow & { contentText: string }>;
+    .all(...params) as Array<RawHitRow & SessionFieldTexts & { contentText: string }>;
 
   return rows.map((row, index) => ({
     ...row,
     snippet: makeRawSnippet(row.contentText, query, []),
     score: -(index + 1),
+    matchedFields: matchedSessionFields(row, query, []),
   }));
 }
 
@@ -261,6 +307,7 @@ function searchByLike(
         s.cwd AS cwd,
         s.started_at AS startedAt,
         s.ended_at AS endedAt,
+        s.message_count AS sessionMessageCount,
         'message' AS matchSource,
         m.seq AS matchSeq,
         m.role AS matchRole,

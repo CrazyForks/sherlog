@@ -27,6 +27,8 @@ function makeFindResult(overrides: Partial<FindResult> = {}): FindResult {
     matchTimestamp: "2026-04-21T10:05:00.000Z",
     score: -1,
     snippet: "health check 还是 500",
+    matchedFields: ["message"],
+    sessionMessageCount: 4,
     ...overrides,
   };
 }
