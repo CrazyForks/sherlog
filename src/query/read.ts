@@ -1,24 +1,12 @@
 import { coverageEntriesForSession, getMessagesForPage, getMessagesForRange, getSessionRecord, withSourceAwareReadDb } from "../db";
 import { rerankHits } from "../ranking";
-import { DEFAULT_SESSION_SOURCE_ID, isSessionSourceId, type FindResult, type SessionRecord, type SessionSourceId } from "../types";
+import type { FindResult, SessionRecord } from "../types";
 import type { Db } from "../db";
 import { elideMessages } from "./message-elision";
 import { searchMessageHits } from "./search";
+import { SessionNotFoundError } from "./session-not-found";
 
-export class SessionNotFoundError extends Error {
-  sessionRef: string;
-  sourceId: SessionSourceId;
-  nativeSessionId: string;
-
-  constructor(sessionRef: string) {
-    const identity = parseSessionRef(sessionRef);
-    super(`session not found in Sherlog index: ${sessionRef}`);
-    this.name = "SessionNotFoundError";
-    this.sessionRef = sessionRef;
-    this.sourceId = identity.sourceId;
-    this.nativeSessionId = identity.nativeSessionId;
-  }
-}
+export { SessionNotFoundError } from "./session-not-found";
 
 export function getMessageRange(
   dbPath: string,
@@ -118,12 +106,3 @@ function searchTopHitInSession(db: Db, session: SessionRecord, query: string): F
   return result ?? null;
 }
 
-function parseSessionRef(sessionRef: string): { sourceId: SessionSourceId; nativeSessionId: string } {
-  const separator = sessionRef.indexOf(":");
-  if (separator > 0) {
-    const sourceId = sessionRef.slice(0, separator);
-    const nativeSessionId = sessionRef.slice(separator + 1);
-    if (isSessionSourceId(sourceId)) return { sourceId, nativeSessionId };
-  }
-  return { sourceId: DEFAULT_SESSION_SOURCE_ID, nativeSessionId: sessionRef };
-}

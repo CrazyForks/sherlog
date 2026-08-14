@@ -1,15 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, parse, resolve } from "node:path";
-import { INDEX_VERSION } from "./env";
-import {
-  buildSourceFileMetaResolver,
-  getStatsCounts,
-  listCoverageRecords,
-  loadSourceFileMetaCache,
-  withReadDb,
-  type Db,
-} from "./db";
-import { tableExists } from "./db/sql";
+import { buildSourceFileMetaResolver } from "./db/file-meta-cache";
 import type { SourceFileMetaCacheEntry } from "./db/file-meta-cache";
 import type {
   CoverageRecord,
@@ -83,7 +74,7 @@ export function dbIdentitiesMatch(left: IndexSidecarDbIdentity, right: IndexSide
     && left.walSize === right.walSize;
 }
 
-export function loadIndexMetadata(dbPath: string, sourceId: SessionSourceId): IndexMetadata {
+export async function loadIndexMetadata(dbPath: string, sourceId: SessionSourceId): Promise<IndexMetadata> {
   if (!existsSync(dbPath)) {
     return {
       opened: false,
@@ -103,43 +94,8 @@ export function loadIndexMetadata(dbPath: string, sourceId: SessionSourceId): In
     };
   }
 
-  return withReadDb(dbPath, (db) => ({
-    opened: true,
-    coverageRecords: listCoverageRecordsForStatus(db, sourceId),
-    metaResolver: buildSourceFileMetaResolver(loadSourceFileMetaCache(db, sourceId)),
-    index: readIndexStatus(db, dbPath, sourceId),
-  }));
-}
-
-/**
- * Snapshot metadata from an already-open write connection. Caller must close
- * the connection (and preferably checkpoint WAL) before `writeIndexSidecar`.
- */
-export function snapshotIndexSidecar(db: Db): Omit<IndexSidecar, "writtenAt" | "dbIdentity"> {
-  const sources: IndexSidecar["sources"] = {};
-  for (const sourceId of SESSION_SOURCE_IDS) {
-    const counts = tableExists(db, "sessions")
-      ? tableColumnExists(db, "sessions", "source_id")
-        ? getStatsCounts(db, sourceId)
-        : sourceId === "codex"
-          ? getLegacyCodexStatsCounts(db)
-          : emptyIndexCounts()
-      : emptyIndexCounts();
-    sources[sourceId] = {
-      ...counts,
-      coverageRecords: listCoverageRecordsForStatus(db, sourceId),
-      fileMeta: serializeFileMeta(loadSourceFileMetaCache(db, sourceId)),
-    };
-  }
-  return {
-    version: INDEX_SIDECAR_VERSION,
-    indexVersion: INDEX_VERSION,
-    sources,
-  };
-}
-
-export function checkpointIndexWal(db: Db): void {
-  db.pragma("wal_checkpoint(TRUNCATE)");
+  const { loadIndexMetadataFromSqlite } = await import("./index-sidecar-sqlite");
+  return loadIndexMetadataFromSqlite(dbPath, sourceId);
 }
 
 export function writeIndexSidecar(
@@ -153,28 +109,6 @@ export function writeIndexSidecar(
     dbIdentity: readDbIdentity(dbPath),
   };
   atomicWriteJson(sidecarPath, payload);
-}
-
-/**
- * Dual-write helper for sync: snapshot while the write connection is open,
- * checkpoint WAL, close, then atomically replace the sidecar. A sidecar
- * failure must not fail a completed sync — the next status falls back to
- * SQLite when identity does not match.
- */
-export function persistIndexSidecarAfterWrite(db: Db, dbPath: string): void {
-  const snapshot = snapshotIndexSidecar(db);
-  try {
-    checkpointIndexWal(db);
-  } catch {
-    // Identity includes the WAL file, so a failed checkpoint is still safe.
-  }
-  db.close();
-  try {
-    writeIndexSidecar(dbPath, snapshot);
-  } catch {
-    // Projection only. Status/find reopen SQLite when the sidecar is absent
-    // or its db identity no longer matches.
-  }
 }
 
 export function readIndexSidecar(dbPath: string): IndexSidecar | null {
@@ -191,6 +125,26 @@ export function readIndexSidecar(dbPath: string): IndexSidecar | null {
   return parsed;
 }
 
+export function emptyIndexStatus(): StatusSummary["index"] {
+  return {
+    exists: false,
+    sessionCount: 0,
+    messageCount: 0,
+    earliestStartedAt: null,
+    latestEndedAt: null,
+    dbSizeBytes: 0,
+    lastSyncAt: null,
+  };
+}
+
+export function dbFileSize(dbPath: string): number {
+  try {
+    return statSync(dbPath).size;
+  } catch {
+    return 0;
+  }
+}
+
 function fileIdentity(path: string, kind: "sqlite"): Pick<IndexSidecarDbIdentity, "sqliteMtimeMs" | "sqliteSize">;
 function fileIdentity(path: string, kind: "wal"): Pick<IndexSidecarDbIdentity, "walMtimeMs" | "walSize">;
 function fileIdentity(
@@ -199,8 +153,14 @@ function fileIdentity(
 ): Pick<IndexSidecarDbIdentity, "sqliteMtimeMs" | "sqliteSize"> | Pick<IndexSidecarDbIdentity, "walMtimeMs" | "walSize"> {
   const missing = !existsSync(path);
   const stats = missing ? null : statSync(path);
-  const mtimeMs = stats ? Math.round(stats.mtimeMs) : 0;
   const size = stats ? stats.size : 0;
+  // A missing WAL and a leftover 0-byte WAL are the same: no uncheckpointed
+  // writes. Touching an empty WAL (readers, checkpoint leftovers) must not
+  // invalidate the sidecar, or status falls back and loads the native addon.
+  if (kind === "wal" && (missing || size === 0)) {
+    return { walMtimeMs: 0, walSize: 0 };
+  }
+  const mtimeMs = stats ? Math.round(stats.mtimeMs) : 0;
   return kind === "sqlite"
     ? { sqliteMtimeMs: mtimeMs, sqliteSize: size }
     : { walMtimeMs: mtimeMs, walSize: size };
@@ -220,10 +180,6 @@ function fileMetaMap(entries: IndexSidecarFileMeta[]): Map<string, SourceFileMet
   return cache;
 }
 
-function serializeFileMeta(cache: Map<string, SourceFileMetaCacheEntry>): IndexSidecarFileMeta[] {
-  return [...cache.entries()].map(([filePath, entry]) => ({ filePath, ...entry }));
-}
-
 function indexStatusFromSlice(dbPath: string, slice: IndexSidecarSourceSlice | undefined): StatusSummary["index"] {
   return {
     exists: true,
@@ -234,85 +190,6 @@ function indexStatusFromSlice(dbPath: string, slice: IndexSidecarSourceSlice | u
     dbSizeBytes: dbFileSize(dbPath),
     lastSyncAt: slice?.lastSyncAt ?? null,
   };
-}
-
-function emptyIndexStatus(): StatusSummary["index"] {
-  return {
-    exists: false,
-    sessionCount: 0,
-    messageCount: 0,
-    earliestStartedAt: null,
-    latestEndedAt: null,
-    dbSizeBytes: 0,
-    lastSyncAt: null,
-  };
-}
-
-function emptyIndexCounts(): ReturnType<typeof getStatsCounts> {
-  return {
-    sessionCount: 0,
-    messageCount: 0,
-    earliestStartedAt: null,
-    latestEndedAt: null,
-    lastSyncAt: null,
-  };
-}
-
-function readIndexStatus(db: Db, dbPath: string, sourceId: SessionSourceId): StatusSummary["index"] {
-  const counts = !tableExists(db, "sessions")
-    ? emptyIndexCounts()
-    : !tableColumnExists(db, "sessions", "source_id")
-      ? sourceId === "codex"
-        ? getLegacyCodexStatsCounts(db)
-        : emptyIndexCounts()
-      : getStatsCounts(db, sourceId);
-  return {
-    exists: true,
-    sessionCount: counts.sessionCount,
-    messageCount: counts.messageCount,
-    earliestStartedAt: counts.earliestStartedAt,
-    latestEndedAt: counts.latestEndedAt,
-    dbSizeBytes: dbFileSize(dbPath),
-    lastSyncAt: counts.lastSyncAt,
-  };
-}
-
-function listCoverageRecordsForStatus(db: Db, sourceId: SessionSourceId): CoverageRecord[] {
-  if (!tableColumnExists(db, "coverage", "source_id")) return [];
-  return listCoverageRecords(db, sourceId);
-}
-
-function getLegacyCodexStatsCounts(db: Db): ReturnType<typeof getStatsCounts> {
-  return db
-    .prepare(`
-      SELECT
-        COUNT(*) AS sessionCount,
-        COALESCE(SUM(message_count), 0) AS messageCount,
-        MIN(started_at) AS earliestStartedAt,
-        MAX(ended_at) AS latestEndedAt,
-        MAX(updated_at) AS lastSyncAt
-      FROM sessions
-    `)
-    .get() as ReturnType<typeof getStatsCounts>;
-}
-
-function tableColumnExists(db: Db, tableName: string, columnName: string): boolean {
-  return db
-    .prepare<[string, string], { name: string }>(`
-      SELECT name
-      FROM pragma_table_info(?)
-      WHERE name = ?
-      LIMIT 1
-    `)
-    .get(tableName, columnName) !== undefined;
-}
-
-function dbFileSize(dbPath: string): number {
-  try {
-    return statSync(dbPath).size;
-  } catch {
-    return 0;
-  }
 }
 
 function atomicWriteJson(filePath: string, value: unknown): void {

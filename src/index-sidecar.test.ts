@@ -81,7 +81,7 @@ describe("index sidecar", () => {
     parsed.dbIdentity.sqliteSize += 1;
     writeFileSync(sidecarPath, `${JSON.stringify(parsed)}\n`);
 
-    const metadata = loadIndexMetadata(dbPath, "codex");
+    const metadata = await loadIndexMetadata(dbPath, "codex");
     expect(metadata.opened).toBe(true);
     expect(metadata.coverageRecords).toHaveLength(1);
 
@@ -92,6 +92,23 @@ describe("index sidecar", () => {
     });
     expect(status.requestedCoverage?.freshness).toBe("fresh");
     expect(getLastCoverageProbeStats()?.dbOpens).toBe(1);
+  });
+
+  test("empty WAL leftover does not invalidate a matching sidecar", async () => {
+    const { root, dbPath } = writeCodexFixture("sidecar-empty-wal");
+    await syncSessions({ dbPath, selector: { kind: "all", root } });
+    writeFileSync(`${dbPath}-wal`, "");
+
+    const sidecar = readIndexSidecar(dbPath);
+    expect(sidecar).not.toBeNull();
+
+    const status = await collectStatus({
+      rootDir: root,
+      dbPath,
+      selector: { kind: "all", root },
+    });
+    expect(status.requestedCoverage?.freshness).toBe("fresh");
+    expect(getLastCoverageProbeStats()?.dbOpens).toBe(0);
   });
 
   test("corrupt sidecar falls back to SQLite", async () => {

@@ -2,8 +2,11 @@ export type { Db, SqlParams } from "./db/shared";
 export {
   IndexSchemaUpgradeRequiredError,
   IndexUnavailableError,
+} from "./db/errors";
+export {
   openReadDb,
   openWriteDb,
+  sqliteNativeModuleLoaded,
   withReadDb,
   withSourceAwareReadDb,
 } from "./db/connection";

@@ -19,7 +19,7 @@ import {
   replaceSession,
   upsertSourceFileMetaCache,
 } from "./db";
-import { persistIndexSidecarAfterWrite } from "./index-sidecar";
+import { persistIndexSidecarAfterWrite } from "./index-sidecar-sqlite";
 import { canonicalizeSelector, selectorSource } from "./selector";
 import { getSessionSourceAdapter } from "./sources";
 import { SourceInventoryError } from "./source-inventory";

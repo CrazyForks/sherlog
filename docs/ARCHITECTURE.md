@@ -46,7 +46,7 @@ Codex adapter 会把原有 `sessionUuid` 映射为 source-aware identity：
 
 ### 1. 同步
 
-[status.ts](../src/status.ts) 返回执行上下文、compact source inventory、index 状态，以及 `--selector`/`--cwd` 时的 `requestedCoverage` 证明。默认不 dump 历史 `coverage[]` 或 `cwdGroups`（`--inventory` 才做逐行审计）。它可以扫描 raw sessions 的 metadata，但不回答内容问题。coverage / index counts / file-meta cache 来自 sync 写在 `index.sqlite` 旁的 `index.meta.json` sidecar；sidecar 的 db identity（sqlite+wal mtime/size）与当前文件一致时，`status` 不打开正文库。sidecar 缺失或 identity 不匹配时回退一次只读 SQLite。探测只对 covering selector 做 snapshot，不重放历史 cwd/date_range 行。
+[status.ts](../src/status.ts) 返回执行上下文、compact source inventory、index 状态，以及 `--selector`/`--cwd` 时的 `requestedCoverage` 证明。默认不 dump 历史 `coverage[]` 或 `cwdGroups`（`--inventory` 才做逐行审计）。它可以扫描 raw sessions 的 metadata，但不回答内容问题。coverage / index counts / file-meta cache 来自 sync 写在 `index.sqlite` 旁的 `index.meta.json` sidecar；sidecar 的 db identity（sqlite mtime/size + WAL size；空 WAL 与缺失 WAL 等价）与当前文件一致时，`status` 不打开正文库、不加载 `better-sqlite3`。sidecar 缺失或 identity 不匹配时回退一次只读 SQLite。探测只对 covering selector 做 snapshot，不重放历史 cwd/date_range 行。
 
 [indexer.ts](../src/indexer.ts) 按显式 selector 扫描选定 source 的 session snapshot。当前公开 source 可以是 Codex、Claude Code 或 Pi；增量判断仍基于文件 `mtime`、`size` 和 `indexVersion`。
 
@@ -84,7 +84,7 @@ SQLite 访问层当前已经按 reader / writer 分流：
 
 - `sync` 走 writer 连接，负责 schema ensure、WAL 初始化、写入事务，并在同一把 sync lock 内把 coverage / counts / file-meta 投影到 `index.meta.json`
 - `find` / `read-range` / `read-page` / `list` / `stats` 走只读连接；`find` 的 coverage 证明优先读 sidecar，FTS 仍读 SQLite
-- `status` 不写 index；它读 raw metadata 和 sidecar，只在 sidecar 不可用时打开只读 SQLite
+- `status` 不写 index；它读 raw metadata 和 sidecar，只在 sidecar 不可用时打开只读 SQLite。sidecar 命中时进程不加载 `better-sqlite3` native addon（`--version` 与 sidecar-hit `status` 同路径）
 - 读路径默认设置 `busy_timeout`，避免并发 agent 多查时把瞬时锁竞争直接暴露成 `SQLITE_BUSY`
 - `sync` 额外有文件级 single-writer lock；遇到活跃 writer 会等待，遇到 dead pid 残留锁会自动清理
 

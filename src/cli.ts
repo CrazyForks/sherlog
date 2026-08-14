@@ -18,7 +18,7 @@ import {
 import {
   IndexSchemaUpgradeRequiredError,
   IndexUnavailableError,
-} from "./db";
+} from "./db/errors";
 import { loadIndexMetadata } from "./index-sidecar";
 import {
   createCachedSnapshotter,
@@ -33,26 +33,8 @@ import { getSessionSourceAdapter, listSessionSourceAdapters } from "./sources";
 // Runs before any subcommand so `shlog stats` etc. see the migrated db, not
 // just `shlog sync`. Idempotent + silent on failure (worst case is a re-sync).
 migrateLegacyDataDirIfNeeded();
-import {
-  printFindResults,
-  printReadPage,
-  printReadRangeResult,
-  printSessionList,
-  printStats,
-  printStatus,
-  printSyncSummary,
-} from "./format";
-import { SyncError, syncSessions } from "./indexer";
-import {
-  buildZeroResultRefinement,
-  collectStats,
-  findSessions,
-  getMessagePage,
-  getMessageRange,
-  listSessionSummaries,
-  SessionNotFoundError,
-} from "./query";
 import { DEFAULT_MAX_MESSAGE_CHARS } from "./query/message-elision";
+import { SessionNotFoundError } from "./query/session-not-found";
 import { canonicalizeSelector, parseSelectorJson, SelectorParseError, selectorSource } from "./selector";
 import { collectStatus } from "./status";
 import { SyncLockTimeoutError } from "./sync-lock";
@@ -102,6 +84,7 @@ program
         console.log(JSON.stringify(status, null, 2));
         return;
       }
+      const { printStatus } = await import("./format");
       printStatus(status);
     } catch (error) {
       if (error instanceof SourceOptionError) {
@@ -137,6 +120,7 @@ program
   )
   .option("--json", "输出 JSON")
   .action(async (options) => {
+    const { SyncError, syncSessions } = await import("./indexer");
     try {
       const sourceId = publicSource(options.source);
       const selector = syncSelector({ ...options, source: sourceId });
@@ -152,12 +136,14 @@ program
         console.log(JSON.stringify(summary, null, 2));
         return;
       }
+      const { printSyncSummary } = await import("./format");
       printSyncSummary(summary);
     } catch (error) {
       if (error instanceof SyncError) {
         if (options.json) {
           console.error(JSON.stringify(error.summary, null, 2));
         } else {
+          const { printSyncSummary } = await import("./format");
           printSyncSummary(error.summary);
         }
         process.exitCode = 1;
@@ -282,6 +268,7 @@ program
   .option("--json", "输出 JSON")
   .action(async (query, options) => {
     await runReadCommand(Boolean(options.json), async () => {
+      const { findSessions } = await import("./query");
       const limit = parsePositiveInt(options.limit, 10);
       const sort = normalizeFindSort(options.sort);
       const sourceIds = publicFindSources(options.source, options.selector);
@@ -309,7 +296,7 @@ program
       }));
       const merged = mergeFindSummaries(query, sort, options.excludeSession ?? [], summaries, limit);
       const result = merged.results.length === 0
-        ? { ...merged, zeroResults: buildZeroResultsDiagnosis(query, merged.coverage) }
+        ? { ...merged, zeroResults: await buildZeroResultsDiagnosis(query, merged.coverage) }
         : merged;
       // performance.now() 自 timeOrigin(进程启动)起算 ≈ 本次端到端耗时,
       // 含 better-sqlite3 模块加载;shlog 是一次性进程,所以这就是诚实的端到端。
@@ -325,6 +312,7 @@ program
         }, null, 2));
         return;
       }
+      const { printFindResults } = await import("./format");
       printFindResults(result.query, result.results, result.scannedMessageCount, elapsedMs, statsReadoutEnabled(), result.nextAction);
     });
   });
@@ -341,7 +329,8 @@ program
   .option("--db <path>", "覆盖默认数据库路径", DEFAULT_DB_PATH)
   .option("--json", "输出 JSON")
   .action((sessionRef, options) => {
-    runReadCommand(Boolean(options.json), () => {
+    runReadCommand(Boolean(options.json), async () => {
+      const { getMessageRange } = await import("./query");
       const sourceId = publicReadSource(options.source, sessionRef);
       const result = getMessageRange(options.db, sessionRefForSource(sessionRef, sourceId), {
         seq: optionalInt(options.seq),
@@ -355,6 +344,7 @@ program
         console.log(JSON.stringify({ ...result, elapsedMs }, null, 2));
         return;
       }
+      const { printReadRangeResult } = await import("./format");
       printReadRangeResult(
         result.session,
         result.anchorSeq,
@@ -380,7 +370,8 @@ program
   .option("--db <path>", "覆盖默认数据库路径", DEFAULT_DB_PATH)
   .option("--json", "输出 JSON")
   .action((sessionRef, options) => {
-    runReadCommand(Boolean(options.json), () => {
+    runReadCommand(Boolean(options.json), async () => {
+      const { getMessagePage } = await import("./query");
       const sourceId = publicReadSource(options.source, sessionRef);
       const result = getMessagePage(
         options.db,
@@ -394,6 +385,7 @@ program
         console.log(JSON.stringify({ ...result, elapsedMs }, null, 2));
         return;
       }
+      const { printReadPage } = await import("./format");
       printReadPage(
         result.session,
         result.offset,
@@ -423,7 +415,8 @@ program
   .option("--db <path>", "覆盖默认数据库路径", DEFAULT_DB_PATH)
   .option("--json", "输出 JSON")
   .action((options) => {
-    runReadCommand(Boolean(options.json), () => {
+    runReadCommand(Boolean(options.json), async () => {
+      const { listSessionSummaries } = await import("./query");
       const sourceId = publicSource(options.source);
       const sort = normalizeListSort(options.sort);
       const selector = optionalSelector({ selector: options.selector, root: options.root, source: sourceId, rootOnlySelector: true });
@@ -439,6 +432,7 @@ program
         console.log(JSON.stringify(result, null, 2));
         return;
       }
+      const { printSessionList } = await import("./format");
       printSessionList(result.results, result.nextAction);
     });
   });
@@ -450,13 +444,15 @@ program
   .option("--db <path>", "覆盖默认数据库路径", DEFAULT_DB_PATH)
   .option("--json", "输出 JSON")
   .action((options) => {
-    runReadCommand(Boolean(options.json), () => {
+    runReadCommand(Boolean(options.json), async () => {
+      const { collectStats } = await import("./query");
       const sourceId = publicSource(options.source);
       const summary = collectStats(options.db, sourceId);
       if (options.json) {
         console.log(JSON.stringify(summary, null, 2));
         return;
       }
+      const { printStats } = await import("./format");
       printStats(summary);
     });
   });
@@ -710,7 +706,8 @@ function buildCrossSourceZeroResultsNextAction(): QueryNextAction {
  * offers deterministic broadening probes for over-constrained queries.
  * Informational only — read-only commands never sync implicitly.
  */
-function buildZeroResultsDiagnosis(query: string, coverage: CoverageStatus): ZeroResultsDiagnosis {
+async function buildZeroResultsDiagnosis(query: string, coverage: CoverageStatus): Promise<ZeroResultsDiagnosis> {
+  const { buildZeroResultRefinement } = await import("./query");
   const refinement = buildZeroResultRefinement(query);
   const reason: ZeroResultsDiagnosis["reason"] = coverage.freshness === "fresh"
     ? "fresh_miss"
@@ -745,7 +742,7 @@ async function assessFindCoverage(
   const dbStarted = performance.now();
   // Coverage proof reads the sync-written sidecar when its db identity
   // still matches. find still opens SQLite for FTS; this probe does not.
-  const metadata = loadIndexMetadata(dbPath, sourceId);
+  const metadata = await loadIndexMetadata(dbPath, sourceId);
   const { coverageRecords, metaResolver } = metadata;
   stats.dbOpens = metadata.opened ? 1 : 0;
   stats.dbMs = performance.now() - dbStarted;

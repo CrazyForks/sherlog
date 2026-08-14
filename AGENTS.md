@@ -26,6 +26,7 @@
 - session-level FTS 使用显式字段权重：title 8.0、compact 4.0、summary 3.0、reasoning summary 1.2
 - `classifyQueryProfile()` 仍存在，但当前评分没有按 `broad/exact` 做显式分权
 - parser 只把 `event_msg` 里的 user / assistant 写入 `messages`；`type=compacted` 与 `response_item.reasoning.summary` 只进入 session-level 索引字段，不形成可回读 message projection
+- `better-sqlite3` 只在第一次 `openReadDb` / `openWriteDb` 时才 `dlopen`；sidecar 命中的 `status` / `--version` 不加载 native addon。没有默认 daemon / watcher
 
 不要把下面这些说成已完成：
 
@@ -42,6 +43,7 @@
 - [db.ts](src/db.ts): SQLite facade；具体 schema / store / coverage 模块在 `src/db/`
 - [query.ts](src/query.ts): 查询 facade；find / read / list / stats / search / snippet 模块在 `src/query/`
 - [status.ts](src/status.ts): status 输出编排
+- [index-sidecar.ts](src/index-sidecar.ts): metadata sidecar 只读/只写 JSON；SQLite 回退与 sync persist 在 [index-sidecar-sqlite.ts](src/index-sidecar-sqlite.ts)
 - [selector.ts](src/selector.ts): selector 解析与覆盖蕴含规则
 - [source-inventory.ts](src/source-inventory.ts): raw sessions metadata inventory
 - [types.ts](src/types.ts): CLI JSON contract 与核心类型
