@@ -36,7 +36,7 @@ export async function collectStatus(options: {
   const dbPath = options.dbPath ?? DEFAULT_DB_PATH;
   const stats = emptyCoverageProbeStats();
   const dbStarted = performance.now();
-  const dbState = loadIndexMetadata(dbPath, source.id);
+  const dbState = await loadIndexMetadata(dbPath, source.id);
   stats.dbMs = performance.now() - dbStarted;
   stats.dbOpens = dbState.opened ? 1 : 0;
 

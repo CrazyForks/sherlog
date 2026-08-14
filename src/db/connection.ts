@@ -1,23 +1,27 @@
 import { existsSync } from "node:fs";
-import Database from "better-sqlite3";
+import { createRequire } from "node:module";
+import type BetterSqlite3 from "better-sqlite3";
+import { IndexSchemaUpgradeRequiredError, IndexUnavailableError } from "./errors";
 import { ensureSchema } from "./schema";
 import { BUSY_TIMEOUT_MS, type Db } from "./shared";
 
-export class IndexUnavailableError extends Error {
-  constructor(public readonly dbPath: string) {
-    super(`index not found: ${dbPath}`);
-    this.name = "IndexUnavailableError";
+export { IndexSchemaUpgradeRequiredError, IndexUnavailableError } from "./errors";
+
+const require = createRequire(import.meta.url);
+
+type SqliteDatabaseConstructor = typeof BetterSqlite3;
+let sqliteDatabase: SqliteDatabaseConstructor | undefined;
+
+function loadSqlite(): SqliteDatabaseConstructor {
+  if (!sqliteDatabase) {
+    sqliteDatabase = require("better-sqlite3") as SqliteDatabaseConstructor;
   }
+  return sqliteDatabase;
 }
 
-export class IndexSchemaUpgradeRequiredError extends Error {
-  constructor(
-    public readonly dbPath: string,
-    public readonly missingColumns: string[],
-  ) {
-    super(`index schema is too old for source-aware read commands: ${dbPath}`);
-    this.name = "IndexSchemaUpgradeRequiredError";
-  }
+/** True only after a read/write connection has actually loaded the native addon. */
+export function sqliteNativeModuleLoaded(): boolean {
+  return sqliteDatabase !== undefined;
 }
 
 export function openReadDb(dbPath: string): Db {
@@ -25,6 +29,7 @@ export function openReadDb(dbPath: string): Db {
     throw new IndexUnavailableError(dbPath);
   }
 
+  const Database = loadSqlite();
   const db = new Database(dbPath, { readonly: true });
   db.pragma(`busy_timeout = ${BUSY_TIMEOUT_MS}`);
   db.pragma("query_only = ON");
@@ -55,6 +60,7 @@ export function withSourceAwareReadDb<T>(dbPath: string, fn: (db: Db) => T): T {
 }
 
 export function openWriteDb(dbPath: string): Db {
+  const Database = loadSqlite();
   const db = new Database(dbPath);
   db.pragma(`busy_timeout = ${BUSY_TIMEOUT_MS}`);
   db.pragma("journal_mode = WAL");

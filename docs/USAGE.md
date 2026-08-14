@@ -95,7 +95,7 @@ By default, source-scoped commands read Codex sessions from `~/.codex/sessions`.
 ~/.local/state/shlog/index.meta.json
 ```
 
-`index.sqlite` is the retrieval source of truth. `index.meta.json` is a sync-written metadata sidecar (coverage fingerprints, session/message counts, source file meta cache). `status` and `find` coverage proofs read the sidecar when its sqlite+wal identity still matches; they open the body database only when the sidecar is missing or stale. Sync remains the only writer.
+`index.sqlite` is the retrieval source of truth. `index.meta.json` is a sync-written metadata sidecar (coverage fingerprints, session/message counts, source file meta cache). `status` and `find` coverage proofs read the sidecar when its sqlite+wal identity still matches; they open the body database only when the sidecar is missing or stale. A sidecar hit does not load the `better-sqlite3` native addon. Sync remains the only writer. There is no default daemon or watcher.
 
 `$XDG_STATE_HOME` is respected, and `SHLOG_DATA_DIR` has the highest priority. `CXS_DATA_DIR` still works as a legacy alias:
 
