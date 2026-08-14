@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { buildReadRangeContextArgs, desiredContextMode, evaluateDogfoodItem, missingContextNeedles, selectDogfoodHit } from "./dogfood-eval-core";
+import { buildFindCliArgs, buildReadRangeContextArgs, desiredContextMode, evaluateDogfoodItem, missingContextNeedles, selectDogfoodHit } from "./dogfood-eval-core";
 import { parseDogfoodJsonl } from "./dogfood-schema";
 import type { DogfoodGolden } from "./dogfood-schema";
 import type { FindResult } from "../src/types";
@@ -110,6 +110,20 @@ describe("dogfood eval core", () => {
 
     expect(desiredContextMode(item, findResult({ matchSource: "message", matchSeq: 7 }))).toBe("read-range");
     expect(desiredContextMode(item, findResult({ matchSource: "session", matchSeq: null }))).toBe("read-range");
+  });
+
+  test("passes find.cwd as --cwd instead of a Codex-only --selector", () => {
+    expect(buildFindCliArgs({
+      query: "Claude Code",
+      limit: 5,
+      cwd: "/Users/envvar/work/repos/cxs",
+      excludeSessionUuids: ["self"],
+    })).toEqual([
+      "find", "Claude Code",
+      "--limit", "5",
+      "--cwd", "/Users/envvar/work/repos/cxs",
+      "--exclude-session", "self",
+    ]);
   });
 
   test("keeps --query next to --seq so elision can preserve the evidence span", () => {

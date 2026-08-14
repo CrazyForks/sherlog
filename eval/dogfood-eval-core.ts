@@ -99,6 +99,25 @@ export function selectDogfoodHit(item: DogfoodGolden, results: FindResult[]): Se
  * and still pass --query so large-message elision uses around_query instead
  * of head_tail. Session-only hits omit --seq and locate via --query.
  */
+/** Mirror a real agent find: pass --cwd, not a Codex-only --selector. */
+export function buildFindCliArgs(input: {
+  query: string;
+  limit: number;
+  sort?: string;
+  cwd?: string;
+  selector?: { kind: string };
+  excludeSessionUuids?: string[];
+}): string[] {
+  const args = ["find", input.query, "--limit", String(input.limit)];
+  if (input.sort) args.push("--sort", input.sort);
+  if (input.selector) args.push("--selector", JSON.stringify(input.selector));
+  else if (input.cwd) args.push("--cwd", input.cwd);
+  for (const sessionUuid of input.excludeSessionUuids ?? []) {
+    args.push("--exclude-session", sessionUuid);
+  }
+  return args;
+}
+
 export function buildReadRangeContextArgs(input: {
   sessionRef: string;
   matchSeq: number | null;

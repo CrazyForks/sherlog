@@ -3,9 +3,8 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawn as childSpawn } from "node:child_process";
 import { basename, join, resolve } from "node:path";
-import { buildDogfoodScoreboard, buildReadRangeContextArgs, desiredContextMode, evaluateDogfoodItem, missingContextNeedles, type DogfoodEvaluation, type DogfoodScoreboard } from "./dogfood-eval-core";
+import { buildDogfoodScoreboard, buildFindCliArgs, buildReadRangeContextArgs, desiredContextMode, evaluateDogfoodItem, missingContextNeedles, type DogfoodEvaluation, type DogfoodScoreboard } from "./dogfood-eval-core";
 import { parseDogfoodJsonl, type DogfoodGolden } from "./dogfood-schema";
-import { DEFAULT_CODEX_DIR } from "../src/env";
 import type { FindResult, FindSort, Selector } from "../src/types";
 
 interface FindOutput {
@@ -23,6 +22,7 @@ interface FindAttemptSpec {
   query: string;
   limit: number;
   sort?: FindSort;
+  cwd?: string;
   selector?: Selector;
   excludeSessionUuids: string[];
 }
@@ -144,7 +144,7 @@ async function runFindAttempts(
 function buildFindAttemptSpecs(item: DogfoodGolden): FindAttemptSpec[] {
   const options = item.find ?? {};
   const queries = uniqueNonEmpty(options.queries?.length ? options.queries : [item.query]);
-  const selector = options.selector ?? selectorFromCwd(options.cwd, options.root);
+  const selector = options.selector;
   const limit = Math.max(item.expected.topK ?? 5, options.limit ?? 0, 5);
   const excludeSessionUuids = uniqueNonEmpty(options.excludeSessionUuids ?? []);
 
@@ -153,22 +153,23 @@ function buildFindAttemptSpecs(item: DogfoodGolden): FindAttemptSpec[] {
     query,
     limit,
     ...(options.sort ? { sort: options.sort } : {}),
-    ...(selector ? { selector } : {}),
+    ...(selector ? { selector } : options.cwd ? { cwd: options.cwd } : {}),
     excludeSessionUuids,
   }));
 }
 
-function selectorFromCwd(cwd: string | undefined, root: string | undefined): Selector | undefined {
-  if (!cwd) return undefined;
-  return { kind: "cwd", root: resolve(root ?? DEFAULT_CODEX_DIR), cwd };
-}
-
 function buildFindCommand(spec: FindAttemptSpec): string[] {
-  const command = [process.execPath, "--import", "tsx", CLI_ENTRY, "find", spec.query, "--limit", String(spec.limit)];
-  if (spec.sort) command.push("--sort", spec.sort);
-  if (spec.selector) command.push("--selector", JSON.stringify(spec.selector));
-  for (const sessionUuid of spec.excludeSessionUuids) command.push("--exclude-session", sessionUuid);
-  return command;
+  return [
+    process.execPath, "--import", "tsx", CLI_ENTRY,
+    ...buildFindCliArgs({
+      query: spec.query,
+      limit: spec.limit,
+      sort: spec.sort,
+      cwd: spec.cwd,
+      selector: spec.selector,
+      excludeSessionUuids: spec.excludeSessionUuids,
+    }),
+  ];
 }
 
 function uniqueNonEmpty(values: string[]): string[] {
