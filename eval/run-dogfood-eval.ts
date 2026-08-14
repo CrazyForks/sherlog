@@ -4,6 +4,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawn as childSpawn } from "node:child_process";
 import { basename, join, resolve } from "node:path";
 import { buildDogfoodScoreboard, buildFindCliArgs, buildReadRangeContextArgs, desiredContextMode, evaluateDogfoodItem, missingContextNeedles, type DogfoodEvaluation, type DogfoodScoreboard } from "./dogfood-eval-core";
+import { measureReturnedContext, summarizeReturnedContext, type ReturnedContextMetric, type ReturnedContextSummary } from "./returned-context";
 import { parseDogfoodJsonl, type DogfoodGolden } from "./dogfood-schema";
 import type { FindResult, FindSort, Selector } from "../src/types";
 
@@ -50,6 +51,7 @@ interface DogfoodEvalRow {
   selectedTitle: string;
   findJsonPath: string;
   contextTxtPath?: string;
+  returnedContext: ReturnedContextMetric;
   attemptCount: number;
   selectedAttemptOrdinal: number | null;
   selectedAttemptQuery: string;
@@ -64,6 +66,7 @@ interface DogfoodAttemptRow {
   findJsonPath: string;
   findTxtPath: string;
   contextTxtPath?: string;
+  returnedContext: ReturnedContextMetric;
 }
 
 const rows: DogfoodEvalRow[] = [];
@@ -81,6 +84,7 @@ for (const [index, item] of entries.entries()) {
     selectedTitle: selectedAttempt?.selectedTitle ?? "(none)",
     findJsonPath: selectedAttempt?.findJsonPath ?? "",
     contextTxtPath: selectedAttempt?.contextTxtPath,
+    returnedContext: selectedAttempt?.returnedContext ?? measureReturnedContext({}),
     attemptCount: attempts.length,
     selectedAttemptOrdinal: selectedAttempt?.spec.ordinal ?? null,
     selectedAttemptQuery: selectedAttempt?.spec.query ?? item.query,
@@ -89,12 +93,13 @@ for (const [index, item] of entries.entries()) {
 }
 
 const scoreboard = buildDogfoodScoreboard(rows.map((row) => ({ status: row.item.status, evaluation: row.evaluation })));
+const returnedContext = summarizeReturnedContext(rows.map((row) => row.returnedContext));
 const readmePath = join(outDir, "README.md");
 const scorecardPath = join(outDir, "scorecard.json");
-writeFileSync(readmePath, renderReadme(args.goldenPath, scoreboard, rows));
-writeFileSync(scorecardPath, `${JSON.stringify({ source: args.goldenPath, scoreboard, rows }, null, 2)}\n`);
+writeFileSync(readmePath, renderReadme(args.goldenPath, scoreboard, returnedContext, rows));
+writeFileSync(scorecardPath, `${JSON.stringify({ source: args.goldenPath, scoreboard, returnedContext, rows }, null, 2)}\n`);
 
-console.log(JSON.stringify({ outDir, readme: readmePath, scorecard: scorecardPath, scoreboard }, null, 2));
+console.log(JSON.stringify({ outDir, readme: readmePath, scorecard: scorecardPath, scoreboard, returnedContext }, null, 2));
 if (scoreboard.hardFail > 0) process.exitCode = 1;
 
 async function runFindAttempts(
@@ -135,6 +140,7 @@ async function runFindAttempts(
       findJsonPath,
       findTxtPath,
       contextTxtPath: context.textPath,
+      returnedContext: measureReturnedContext(context),
     });
   }
 
@@ -257,6 +263,7 @@ function buildContextCommand(
 function renderReadme(
   sourcePath: string,
   scoreboard: DogfoodScoreboard,
+  returnedContext: ReturnedContextSummary,
   rows: DogfoodEvalRow[],
 ): string {
   const lines = [
@@ -278,13 +285,17 @@ function renderReadme(
     `- assertion_fail: ${scoreboard.assertionFail}`,
     `- facet_pass: ${scoreboard.facetPass}`,
     `- facet_fail: ${scoreboard.facetFail}`,
+    `- context_reads: ${returnedContext.reads}`,
+    `- context_chars_p50: ${returnedContext.charsP50 ?? "-"}`,
+    `- context_chars_p95: ${returnedContext.charsP95 ?? "-"}`,
+    `- context_chars_max: ${returnedContext.charsMax ?? "-"}`,
     "",
-    "| id | status | mark | assertions | facets | failure_classes | blocking | selected_rank | selected_title |",
-    "|----|--------|------|------------|--------|-----------------|----------|---------------|----------------|",
+    "| id | status | mark | assertions | facets | failure_classes | blocking | selected_rank | context_chars | selected_title |",
+    "|----|--------|------|------------|--------|-----------------|----------|---------------|---------------|----------------|",
   ];
 
   for (const row of rows) {
-    lines.push(`| ${row.item.id} | ${row.item.status} | ${row.evaluation.mark} | ${row.evaluation.assertionMark} | ${row.evaluation.facetMark} | ${formatFailureClasses(row.evaluation.failureClasses)} | ${row.evaluation.blocking} | ${row.evaluation.selected.rank ?? "-"} | ${row.selectedTitle.replaceAll("|", "¦").slice(0, 60)} |`);
+    lines.push(`| ${row.item.id} | ${row.item.status} | ${row.evaluation.mark} | ${row.evaluation.assertionMark} | ${row.evaluation.facetMark} | ${formatFailureClasses(row.evaluation.failureClasses)} | ${row.evaluation.blocking} | ${row.evaluation.selected.rank ?? "-"} | ${row.returnedContext.read ? row.returnedContext.chars : "-"} | ${row.selectedTitle.replaceAll("|", "¦").slice(0, 60)} |`);
   }
 
   for (const row of rows) {
@@ -302,6 +313,7 @@ function renderReadme(
     lines.push(`- selected_title: ${row.selectedTitle}`);
     lines.push(`- find_json: \`${rel(row.findJsonPath)}\``);
     if (row.contextTxtPath) lines.push(`- context_txt: \`${rel(row.contextTxtPath)}\``);
+    lines.push(`- returned_context: ${row.returnedContext.read ? `${row.returnedContext.kind} ${row.returnedContext.chars} chars / ${row.returnedContext.bytes} bytes` : "not read"}`);
     lines.push(`- predicates: ${formatPredicates(row.evaluation.predicateResults)}`);
     if (row.attempts.length > 1) {
       lines.push("", "### attempts", "");
