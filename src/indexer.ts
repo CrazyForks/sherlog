@@ -19,6 +19,7 @@ import {
   replaceSession,
   upsertSourceFileMetaCache,
 } from "./db";
+import { persistIndexSidecarAfterWrite } from "./index-sidecar";
 import { canonicalizeSelector, selectorSource } from "./selector";
 import { getSessionSourceAdapter } from "./sources";
 import { SourceInventoryError } from "./source-inventory";
@@ -185,9 +186,13 @@ export async function syncSessions(options: SyncOptions = {}): Promise<SyncSumma
         // to full content scans when rows are missing.
       }
 
+      // Metadata plane for status/find coverage proofs. Written after the
+      // SQLite commit so a crash mid-sync never leaves a newer sidecar than
+      // the body index. persistIndexSidecarAfterWrite closes `db`.
+      persistIndexSidecarAfterWrite(db, dbPath);
       return summary;
     } finally {
-      db.close();
+      if (db.open) db.close();
     }
   });
 }

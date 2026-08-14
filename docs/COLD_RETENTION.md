@@ -42,7 +42,7 @@
 | 层 | 是什么 | 典型位置 | 干什么 |
 | --- | --- | --- | --- |
 | L0 hot | Codex 正在用的 raw | `~/.codex/sessions` | 默认同步源；保持精简 |
-| L1 index | Sherlog SQLite | `~/.local/state/shlog/index.sqlite` | **检索真相源** |
+| L1 index | Sherlog SQLite + metadata sidecar | `~/.local/state/shlog/index.sqlite`（检索真相源）与 `index.meta.json`（status/coverage 元数据平面） | **检索真相源** |
 | L2 cold | 归档 raw（可压缩） | `~/.codex/archived_sessions/.../*.jsonl.zst` | 省空间；证明“还在” |
 | L3 backup | 整包 tar 等 | 任意 | 离线备份；**不**进 prune 语义 |
 

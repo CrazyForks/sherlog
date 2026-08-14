@@ -158,6 +158,8 @@ describe("collectStatus", () => {
     expect(snapshotSpy).toHaveBeenCalledTimes(1);
     expect(snapshotSpy.mock.calls[0]?.[0]).toMatchObject({ kind: "all", root: tempDir });
     expect(probe?.snapshotCalls).toBe(1);
+    // Direct replaceCoverage does not write the sidecar, so status falls back
+    // to one SQLite open. After sync, the sidecar path is dbOpens=0.
     expect(probe?.dbOpens).toBe(1);
   });
 

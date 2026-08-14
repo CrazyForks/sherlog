@@ -16,13 +16,10 @@ import {
   removeColdRoot,
 } from "./cold-roots";
 import {
-  buildSourceFileMetaResolver,
   IndexSchemaUpgradeRequiredError,
   IndexUnavailableError,
-  listCoverageRecords,
-  loadSourceFileMetaCache,
-  withReadDb,
 } from "./db";
+import { loadIndexMetadata } from "./index-sidecar";
 import {
   createCachedSnapshotter,
   emptyCoverageProbeStats,
@@ -746,13 +743,11 @@ async function assessFindCoverage(
   const source = getSessionSourceAdapter(sourceId);
   const stats = emptyCoverageProbeStats();
   const dbStarted = performance.now();
-  // Load the sync-written file-meta cache alongside coverage records so the
-  // freshness probe can skip content prefix reads for unchanged files.
-  const { coverageRecords, metaResolver } = withReadDb(dbPath, (db) => ({
-    coverageRecords: listCoverageRecords(db, sourceId),
-    metaResolver: buildSourceFileMetaResolver(loadSourceFileMetaCache(db, sourceId)),
-  }));
-  stats.dbOpens = 1;
+  // Coverage proof reads the sync-written sidecar when its db identity
+  // still matches. find still opens SQLite for FTS; this probe does not.
+  const metadata = loadIndexMetadata(dbPath, sourceId);
+  const { coverageRecords, metaResolver } = metadata;
+  stats.dbOpens = metadata.opened ? 1 : 0;
   stats.dbMs = performance.now() - dbStarted;
   const collectStarted = performance.now();
   const files = await source.collectFiles(selector.root, { metaResolver });
