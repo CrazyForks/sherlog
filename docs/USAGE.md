@@ -92,7 +92,10 @@ By default, source-scoped commands read Codex sessions from `~/.codex/sessions`.
 
 ```text
 ~/.local/state/shlog/index.sqlite
+~/.local/state/shlog/index.meta.json
 ```
+
+`index.sqlite` is the retrieval source of truth. `index.meta.json` is a sync-written metadata sidecar (coverage fingerprints, session/message counts, source file meta cache). `status` and `find` coverage proofs read the sidecar when its sqlite+wal identity still matches; they open the body database only when the sidecar is missing or stale. Sync remains the only writer.
 
 `$XDG_STATE_HOME` is respected, and `SHLOG_DATA_DIR` has the highest priority. `CXS_DATA_DIR` still works as a legacy alias:
 
@@ -107,7 +110,7 @@ Sync is strict by default. If any selected file fails to parse or write, `sync` 
 Sherlog treats three layers as distinct:
 
 1. **Hot raw** — default Codex root `~/.codex/sessions` (what normal `sync` scans)
-2. **Index** — `~/.local/state/shlog/index.sqlite` (retrieval source of truth)
+2. **Index** — `~/.local/state/shlog/index.sqlite` (retrieval source of truth) plus `index.meta.json` (status/coverage metadata plane)
 3. **Cold raw** — e.g. `~/.codex/archived_sessions/.../rollout-*.jsonl.zst` (space saving; not the default sync root)
 
 Recommended space-saving flow:

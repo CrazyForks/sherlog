@@ -16,7 +16,7 @@
 
 ## status
 
-Purpose：执行上下文、compact source inventory、index 与 coverage proof。不回答内容，不写状态。默认 JSON 是小证明（`requestedCoverage` + compact index/inventory），不是历史 `coverage[]` / `cwdGroups` 审计。
+Purpose：执行上下文、compact source inventory、index 与 coverage proof。不回答内容，不写状态。默认 JSON 是小证明（`requestedCoverage` + compact index/inventory），不是历史 `coverage[]` / `cwdGroups` 审计。coverage 证明读 sync 写的 `index.meta.json` sidecar，不打开正文库；sidecar 缺失或与 sqlite identity 不一致时才回退只读 SQLite。
 
 ```bash
 "${SHLOG_BIN:-${CXS_BIN:-shlog}}" status --json

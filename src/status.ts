@@ -1,14 +1,5 @@
-import { existsSync, statSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import { INDEX_VERSION, DEFAULT_DB_PATH } from "./env";
-import {
-  buildSourceFileMetaResolver,
-  getStatsCounts,
-  listCoverageRecords,
-  loadSourceFileMetaCache,
-  withReadDb,
-  type Db,
-} from "./db";
 import {
   createCachedSnapshotter,
   emptyCoverageProbeStats,
@@ -17,12 +8,12 @@ import {
   proveRequestedCoverage,
   type CoverageProbeStats,
 } from "./coverage-freshness";
+import { loadIndexMetadata } from "./index-sidecar";
 import { selectorSource } from "./selector";
 import { getSessionSourceAdapter } from "./sources";
 import type { SessionSourceAdapter } from "./sources/types";
 import type {
   CoverageInventoryStatus,
-  CoverageRecord,
   Selector,
   SessionSourceId,
   SourceFileMeta,
@@ -45,7 +36,7 @@ export async function collectStatus(options: {
   const dbPath = options.dbPath ?? DEFAULT_DB_PATH;
   const stats = emptyCoverageProbeStats();
   const dbStarted = performance.now();
-  const dbState = loadStatusDbState(dbPath, source.id);
+  const dbState = loadIndexMetadata(dbPath, source.id);
   stats.dbMs = performance.now() - dbStarted;
   stats.dbOpens = dbState.opened ? 1 : 0;
 
@@ -106,34 +97,10 @@ export async function collectStatus(options: {
   return summary;
 }
 
-interface StatusDbState {
-  opened: boolean;
-  coverageRecords: CoverageRecord[];
-  metaResolver?: SourceFileMetaResolver;
-  index: StatusSummary["index"];
-}
-
 interface StatusSourceContext {
   source: SessionSourceAdapter;
   files: SourceFileMeta[];
   inventory: SourceInventory;
-}
-
-function loadStatusDbState(dbPath: string, sourceId: SessionSourceId): StatusDbState {
-  if (!existsSync(dbPath)) {
-    return {
-      opened: false,
-      coverageRecords: [],
-      index: emptyIndexStatus(),
-    };
-  }
-
-  return withReadDb(dbPath, (db) => ({
-    opened: true,
-    coverageRecords: listCoverageRecordsForStatus(db, sourceId),
-    metaResolver: buildSourceFileMetaResolver(loadSourceFileMetaCache(db, sourceId)),
-    index: readIndexStatus(db, dbPath),
-  }));
 }
 
 function statusSourceCacheKey(sourceId: SessionSourceId, root: string): string {
@@ -174,87 +141,4 @@ function compactSourceInventory(inventory: SourceInventory): SourceInventory {
     pathDateRange: inventory.pathDateRange,
     cwdGroups: [],
   };
-}
-
-function emptyIndexStatus(): StatusSummary["index"] {
-  return {
-    exists: false,
-    sessionCount: 0,
-    messageCount: 0,
-    earliestStartedAt: null,
-    latestEndedAt: null,
-    dbSizeBytes: 0,
-    lastSyncAt: null,
-  };
-}
-
-function readIndexStatus(db: Db, dbPath: string): StatusSummary["index"] {
-  const counts = !tableExists(db, "sessions")
-    ? emptyIndexCounts()
-    : !tableColumnExists(db, "sessions", "source_id")
-      ? getLegacyCodexStatsCounts(db)
-      : getStatsCounts(db);
-  let dbSizeBytes = 0;
-  try {
-    dbSizeBytes = statSync(dbPath).size;
-  } catch {
-    dbSizeBytes = 0;
-  }
-
-  return {
-    exists: true,
-    sessionCount: counts.sessionCount,
-    messageCount: counts.messageCount,
-    earliestStartedAt: counts.earliestStartedAt,
-    latestEndedAt: counts.latestEndedAt,
-    dbSizeBytes,
-    lastSyncAt: counts.lastSyncAt,
-  };
-}
-
-function listCoverageRecordsForStatus(db: Db, sourceId: SessionSourceId): CoverageRecord[] {
-  if (!tableColumnExists(db, "coverage", "source_id")) return [];
-  return listCoverageRecords(db, sourceId);
-}
-
-function emptyIndexCounts(): ReturnType<typeof getStatsCounts> {
-  return {
-    sessionCount: 0,
-    messageCount: 0,
-    earliestStartedAt: null,
-    latestEndedAt: null,
-    lastSyncAt: null,
-  };
-}
-
-function getLegacyCodexStatsCounts(db: Db): ReturnType<typeof getStatsCounts> {
-  const row = db
-    .prepare(`
-      SELECT
-        COUNT(*) AS sessionCount,
-        COALESCE(SUM(message_count), 0) AS messageCount,
-        MIN(started_at) AS earliestStartedAt,
-        MAX(ended_at) AS latestEndedAt,
-        MAX(updated_at) AS lastSyncAt
-      FROM sessions
-    `)
-    .get() as ReturnType<typeof getStatsCounts>;
-  return row;
-}
-
-function tableColumnExists(db: Db, tableName: string, columnName: string): boolean {
-  return db
-    .prepare<[string, string], { name: string }>(`
-      SELECT name
-      FROM pragma_table_info(?)
-      WHERE name = ?
-      LIMIT 1
-    `)
-    .get(tableName, columnName) !== undefined;
-}
-
-function tableExists(db: Db, tableName: string): boolean {
-  return db
-    .prepare<[string], unknown>("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1")
-    .get(tableName) !== undefined;
 }
