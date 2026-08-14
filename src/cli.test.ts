@@ -2020,7 +2020,7 @@ describe("shlog cli", { timeout: 20_000 }, () => {
     expect(message.timestamp).toBe("2026-04-21T00:00:00.000Z");
     expect(message.sessionUuid).toBe("99999999-9999-4999-8999-999999999999");
     expect(message.contentText).toContain("evidence");
-    expect(message.contentText.length).toBeLessThan(1_000);
+    expect(message.contentText.length).toBeLessThan(1_200);
     expect(message.elision).toMatchObject({
       originalCharCount: huge.length,
       strategy: "around_query",

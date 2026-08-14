@@ -63,10 +63,27 @@ function preserveAroundQuery(
   queryLength: number,
 ): { text: string; visibleCharCount: number } {
   const budget = Math.max(maxMessageChars, queryLength);
+  const queryWindow = windowAround(text.length, queryIndex, queryLength, budget);
+  if (queryWindow.start === 0) return markElision(text, queryWindow.start, queryWindow.end);
+
+  // Keep the full query window plus a short leading slice so `cd /path &&`
+  // and table headers survive. Do not shrink the query window: that drops
+  // nearby evidence that already fit in the original around_query span.
+  const headBudget = Math.min(Math.floor(budget / 4), queryWindow.start);
+  if (headBudget < 32) return markElision(text, queryWindow.start, queryWindow.end);
+  if (queryWindow.start <= headBudget) return markElision(text, 0, queryWindow.end);
+  return markElision(text, 0, headBudget, queryWindow.start, queryWindow.end);
+}
+
+function windowAround(
+  textLength: number,
+  queryIndex: number,
+  queryLength: number,
+  budget: number,
+): { start: number; end: number } {
   const start = Math.max(0, queryIndex - Math.floor((budget - queryLength) / 2));
-  const end = Math.min(text.length, start + budget);
-  const adjustedStart = Math.max(0, end - budget);
-  return markElision(text, adjustedStart, end);
+  const end = Math.min(textLength, start + budget);
+  return { start: Math.max(0, end - budget), end };
 }
 
 function preserveHeadTail(text: string, maxMessageChars: number): { text: string; visibleCharCount: number } {

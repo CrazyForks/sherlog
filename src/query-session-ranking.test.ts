@@ -161,4 +161,44 @@ describe("cxs session ranking", () => {
     const found = findSessions(dbPath, "node build/cli.js deploy", 5);
     expect(found.results[0]?.sessionUuid).toBe("f2f2f2f2-f2f2-42f2-82f2-f2f2f2f2f2f2");
   });
+
+  test("path-like command query prefers executed invocation over a later title restatement", async () => {
+    const base = mkdtempSync(join(tmpdir(), "cxs-command-restate-"));
+    tempDirs.push(base);
+    const sessionsRoot = join(base, "sessions", "2026", "05", "01");
+    mkdirSync(sessionsRoot, { recursive: true });
+
+    writeFileSync(
+      join(sessionsRoot, "rollout-2026-05-01T09-00-00-a1a1a1a1-a1a1-41a1-81a1-a1a1a1a1a1a1.jsonl"),
+      [
+        line("session_meta", { id: "a1a1a1a1-a1a1-41a1-81a1-a1a1a1a1a1a1", cwd: "/tmp/what7" }),
+        line("turn_context", { model: "gpt-5.4" }),
+        line("event_msg", { type: "user_message", message: "怎么使用" }),
+        line("event_msg", {
+          type: "agent_message",
+          message: "cd /tmp/what7 后运行 node dist/cli.js publish fixtures/sample.jsonl --json",
+        }),
+      ].join("\n"),
+    );
+
+    writeFileSync(
+      join(sessionsRoot, "rollout-2026-05-02T09-00-00-b2b2b2b2-b2b2-42b2-82b2-b2b2b2b2b2b2.jsonl"),
+      [
+        line("session_meta", { id: "b2b2b2b2-b2b2-42b2-82b2-b2b2b2b2b2b2", cwd: "/tmp/play" }),
+        line("turn_context", { model: "gpt-5.4" }),
+        line("event_msg", { type: "user_message", message: "cxs node dist/cli.js publish 搜下这个是哪个项目路径的" }),
+        line("event_msg", { type: "agent_message", message: "这是在搜命令对应的仓库，不是一次 publish 调用。" }),
+      ].join("\n"),
+    );
+
+    const dbPath = join(base, "index.sqlite");
+    const summary = await syncSessions({ dbPath, rootDir: join(base, "sessions") });
+    expect(summary.added).toBe(2);
+
+    const found = findSessions(dbPath, "node dist/cli.js publish", 5);
+    expect(found.results.map((result) => result.sessionUuid)).toEqual([
+      "a1a1a1a1-a1a1-41a1-81a1-a1a1a1a1a1a1",
+      "b2b2b2b2-b2b2-42b2-82b2-b2b2b2b2b2b2",
+    ]);
+  });
 });

@@ -199,6 +199,23 @@
   <main>
     <section>
       <div class="release-header">
+        <span class="release-version">v0.4.4</span>
+        <span class="release-date">2026-08-14</span>
+      </div>
+      <ul class="en">
+        <li><strong>Path-like command ranking.</strong> A later title that restates <code>node dist/cli.js publish</code> no longer outranks the session that actually ran the command.</li>
+        <li><strong>Large-message reads keep the query window.</strong> <code>read-range --query</code> still centers on the match, and also keeps a short leading slice so <code>cd /path</code> and table headers survive. Dogfood / skill now keep <code>--query</code> next to <code>--seq</code>.</li>
+        <li>Skill: <code>--sort ended</code> is not a date filter; short product names need <code>--cwd</code> or a more distinctive phrase.</li>
+      </ul>
+      <ul class="zh">
+        <li><strong>Path-like 命令排序。</strong>后来用标题复述 <code>node dist/cli.js publish</code> 的会话，不再压过真正执行过这条命令的会话。</li>
+        <li><strong>大消息读取保住 query 窗口。</strong><code>read-range --query</code> 仍以命中为中心，并保留一小段文首，避免 <code>cd /path</code> 和表头被裁掉。Dogfood / skill 会把 <code>--query</code> 和 <code>--seq</code> 一起带上。</li>
+        <li>Skill：<code>--sort ended</code> 不是日期窗；短产品名要加 <code>--cwd</code>，或改用更独特的短语。</li>
+      </ul>
+    </section>
+
+    <section>
+      <div class="release-header">
         <span class="release-version">v0.4.3</span>
         <span class="release-date">2026-08-14</span>
       </div>

@@ -94,6 +94,44 @@ export function selectDogfoodHit(item: DogfoodGolden, results: FindResult[]): Se
   return { hit: results[0] ?? null, rank: results.length > 0 ? 1 : null, topK };
 }
 
+/**
+ * Mirror evidenceRead.argv for message hits: keep --seq as the stable anchor
+ * and still pass --query so large-message elision uses around_query instead
+ * of head_tail. Session-only hits omit --seq and locate via --query.
+ */
+/** Mirror a real agent find: pass --cwd, not a Codex-only --selector. */
+export function buildFindCliArgs(input: {
+  query: string;
+  limit: number;
+  sort?: string;
+  cwd?: string;
+  selector?: { kind: string };
+  excludeSessionUuids?: string[];
+}): string[] {
+  const args = ["find", input.query, "--limit", String(input.limit)];
+  if (input.sort) args.push("--sort", input.sort);
+  if (input.selector) args.push("--selector", JSON.stringify(input.selector));
+  else if (input.cwd) args.push("--cwd", input.cwd);
+  for (const sessionUuid of input.excludeSessionUuids ?? []) {
+    args.push("--exclude-session", sessionUuid);
+  }
+  return args;
+}
+
+export function buildReadRangeContextArgs(input: {
+  sessionRef: string;
+  matchSeq: number | null;
+  query?: string;
+  before: number;
+  after: number;
+}): string[] {
+  const args = ["read-range", input.sessionRef];
+  if (typeof input.matchSeq === "number") args.push("--seq", String(input.matchSeq));
+  if (input.query) args.push("--query", input.query);
+  args.push("--before", String(input.before), "--after", String(input.after));
+  return args;
+}
+
 export function desiredContextMode(item: DogfoodGolden, hit: FindResult | null): "read-range" | "read-page" | null {
   const context = item.expected.context;
   if (!context?.mustContain?.length && !item.expected.answerFacets?.length) return null;

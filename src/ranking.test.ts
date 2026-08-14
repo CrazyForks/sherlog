@@ -123,4 +123,93 @@ describe("rerankHits", () => {
     expect(results).toHaveLength(2);
     expect(results[0].sessionUuid).toBe("sess2");
   });
+
+  test("path-like command query prefers executed invocation over a later title restatement", () => {
+    const executed = makeRow({
+      sessionUuid: "executed-use",
+      title: "怎么使用",
+      cwd: "/tmp/what7",
+      contentText: "cd /tmp/what7 && node dist/cli.js publish fixtures/sample.jsonl --json",
+      matchSource: "message",
+      matchRole: "assistant",
+      endedAt: "2026-05-01T09:12:06.959Z",
+      score: -2,
+    });
+    const restatement = makeRow({
+      sessionUuid: "search-restatement",
+      title: "cxs node dist/cli.js publish 搜下这个是哪个项目路径的",
+      cwd: "/tmp/play",
+      contentText: "cxs node dist/cli.js publish 搜下这个是哪个项目路径的",
+      matchSource: "message",
+      matchRole: "user",
+      endedAt: "2026-05-02T09:00:00.000Z",
+      score: -2,
+    });
+
+    const results = rerankHits([restatement, executed], "node dist/cli.js publish", 5);
+    expect(results[0]?.sessionUuid).toBe("executed-use");
+  });
+
+  test("session-level title+summary concat does not treat a later cli.js copy as command args", () => {
+    const restatement = makeRow({
+      sessionUuid: "search-restatement",
+      title: "cxs node dist/cli.js publish 搜下这个是哪个项目路径的",
+      cwd: "/tmp/play",
+      contentText: [
+        "cxs node dist/cli.js publish 搜下这个是哪个项目路径的",
+        "user: cxs node dist/cli.js publish 搜下这个是哪个项目路径的 | assistant: 这是在搜命令对应的仓库",
+      ].join("\n"),
+      matchSource: "session",
+      matchRole: "session",
+      score: -2,
+    });
+    const executed = makeRow({
+      sessionUuid: "executed-use",
+      title: "怎么使用",
+      cwd: "/tmp/what7",
+      contentText: "cd /tmp/what7 && node dist/cli.js publish fixtures/sample.jsonl --json",
+      matchSource: "message",
+      matchRole: "assistant",
+      score: -2,
+    });
+
+    const results = rerankHits([restatement, executed], "node dist/cli.js publish", 5);
+    expect(results[0]?.sessionUuid).toBe("executed-use");
+  });
+
+  test("title restatement still loses when the later session quotes the invocation path", () => {
+    const executed = makeRow({
+      sessionUuid: "executed-use",
+      title: "怎么使用",
+      cwd: "/tmp/what7",
+      contentText: "cd /tmp/what7 && node dist/cli.js publish fixtures/sample.jsonl --json",
+      matchSource: "message",
+      matchRole: "assistant",
+      endedAt: "2026-05-01T09:12:06.959Z",
+      score: -2,
+    });
+    const restatement = makeRow({
+      sessionUuid: "search-restatement",
+      title: "cxs node dist/cli.js publish 搜下这个是哪个项目路径的",
+      cwd: "/tmp/play",
+      contentText: "cxs find node dist/cli.js publish 命中的历史 session cwd=/tmp/what7 证据 node dist/cli.js publish fixtures/sample.jsonl --json",
+      matchSource: "message",
+      matchRole: "assistant",
+      endedAt: "2026-05-02T09:00:00.000Z",
+      score: -2,
+    });
+    const restatementUser = makeRow({
+      sessionUuid: "search-restatement",
+      title: "cxs node dist/cli.js publish 搜下这个是哪个项目路径的",
+      cwd: "/tmp/play",
+      contentText: "cxs node dist/cli.js publish 搜下这个是哪个项目路径的",
+      matchSource: "message",
+      matchRole: "user",
+      endedAt: "2026-05-02T09:00:00.000Z",
+      score: -2,
+    });
+
+    const results = rerankHits([restatementUser, restatement, executed], "node dist/cli.js publish", 5);
+    expect(results[0]?.sessionUuid).toBe("executed-use");
+  });
 });

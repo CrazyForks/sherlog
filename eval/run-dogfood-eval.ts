@@ -3,9 +3,8 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawn as childSpawn } from "node:child_process";
 import { basename, join, resolve } from "node:path";
-import { buildDogfoodScoreboard, desiredContextMode, evaluateDogfoodItem, missingContextNeedles, type DogfoodEvaluation, type DogfoodScoreboard } from "./dogfood-eval-core";
+import { buildDogfoodScoreboard, buildFindCliArgs, buildReadRangeContextArgs, desiredContextMode, evaluateDogfoodItem, missingContextNeedles, type DogfoodEvaluation, type DogfoodScoreboard } from "./dogfood-eval-core";
 import { parseDogfoodJsonl, type DogfoodGolden } from "./dogfood-schema";
-import { DEFAULT_CODEX_DIR } from "../src/env";
 import type { FindResult, FindSort, Selector } from "../src/types";
 
 interface FindOutput {
@@ -23,6 +22,7 @@ interface FindAttemptSpec {
   query: string;
   limit: number;
   sort?: FindSort;
+  cwd?: string;
   selector?: Selector;
   excludeSessionUuids: string[];
 }
@@ -118,7 +118,7 @@ async function runFindAttempts(
 
     const parsedFind = JSON.parse(findJson) as FindOutput;
     const preselected = evaluateDogfoodItem({ item, results: parsedFind.results }).selected;
-    const context = await readContextIfNeeded(item, preselected.hit, prefix, `${safeId}${suffix}`, outDir);
+    const context = await readContextIfNeeded(item, preselected.hit, prefix, `${safeId}${suffix}`, outDir, spec.query);
     const evaluation = evaluateDogfoodItem({
       item,
       results: parsedFind.results,
@@ -144,7 +144,7 @@ async function runFindAttempts(
 function buildFindAttemptSpecs(item: DogfoodGolden): FindAttemptSpec[] {
   const options = item.find ?? {};
   const queries = uniqueNonEmpty(options.queries?.length ? options.queries : [item.query]);
-  const selector = options.selector ?? selectorFromCwd(options.cwd, options.root);
+  const selector = options.selector;
   const limit = Math.max(item.expected.topK ?? 5, options.limit ?? 0, 5);
   const excludeSessionUuids = uniqueNonEmpty(options.excludeSessionUuids ?? []);
 
@@ -153,22 +153,23 @@ function buildFindAttemptSpecs(item: DogfoodGolden): FindAttemptSpec[] {
     query,
     limit,
     ...(options.sort ? { sort: options.sort } : {}),
-    ...(selector ? { selector } : {}),
+    ...(selector ? { selector } : options.cwd ? { cwd: options.cwd } : {}),
     excludeSessionUuids,
   }));
 }
 
-function selectorFromCwd(cwd: string | undefined, root: string | undefined): Selector | undefined {
-  if (!cwd) return undefined;
-  return { kind: "cwd", root: resolve(root ?? DEFAULT_CODEX_DIR), cwd };
-}
-
 function buildFindCommand(spec: FindAttemptSpec): string[] {
-  const command = [process.execPath, "--import", "tsx", CLI_ENTRY, "find", spec.query, "--limit", String(spec.limit)];
-  if (spec.sort) command.push("--sort", spec.sort);
-  if (spec.selector) command.push("--selector", JSON.stringify(spec.selector));
-  for (const sessionUuid of spec.excludeSessionUuids) command.push("--exclude-session", sessionUuid);
-  return command;
+  return [
+    process.execPath, "--import", "tsx", CLI_ENTRY,
+    ...buildFindCliArgs({
+      query: spec.query,
+      limit: spec.limit,
+      sort: spec.sort,
+      cwd: spec.cwd,
+      selector: spec.selector,
+      excludeSessionUuids: spec.excludeSessionUuids,
+    }),
+  ];
 }
 
 function uniqueNonEmpty(values: string[]): string[] {
@@ -193,17 +194,18 @@ async function readContextIfNeeded(
   prefix: string,
   safeId: string,
   outDir: string,
+  attemptQuery: string,
 ): Promise<{ kind?: "read-range" | "read-page"; text?: string; textPath?: string; unavailableReason?: string }> {
   const mode = desiredContextMode(item, hit);
   if (!mode) return {};
   if (!hit) return { unavailableReason: "no selected hit for context read" };
 
-  let command = buildContextCommand(item, hit, mode);
+  let command = buildContextCommand(item, hit, mode, attemptQuery);
   let contextJson = await runCommand([...command, "--json"]);
   let contextText = await runCommand(command);
   let suffix: string = mode;
   if (shouldReadWiderRange(item, mode, contextText)) {
-    command = buildContextCommand(item, hit, mode, { before: 4, after: 8 });
+    command = buildContextCommand(item, hit, mode, attemptQuery, { before: 4, after: 8 });
     contextJson = await runCommand([...command, "--json"]);
     contextText = await runCommand(command);
     suffix = `${mode}.wide`;
@@ -227,19 +229,20 @@ function buildContextCommand(
   item: DogfoodGolden,
   hit: FindResult,
   mode: "read-range" | "read-page",
+  attemptQuery: string,
   defaultWindow: { before: number; after: number } = { before: 2, after: 2 },
 ): string[] {
   const context = item.expected.context ?? {};
   if (mode === "read-range") {
-    const anchorArgs = typeof hit.matchSeq === "number"
-      ? ["--seq", String(hit.matchSeq)]
-      : ["--query", context.query ?? item.query];
     return [
       process.execPath, "--import", "tsx", CLI_ENTRY,
-      "read-range", hit.sessionRef,
-      ...anchorArgs,
-      "--before", String(context.before ?? defaultWindow.before),
-      "--after", String(context.after ?? defaultWindow.after),
+      ...buildReadRangeContextArgs({
+        sessionRef: hit.sessionRef,
+        matchSeq: hit.matchSeq,
+        query: context.query ?? attemptQuery,
+        before: context.before ?? defaultWindow.before,
+        after: context.after ?? defaultWindow.after,
+      }),
     ];
   }
 

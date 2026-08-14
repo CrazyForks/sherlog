@@ -17,6 +17,8 @@ Apply `SKILL.md` **Canonical policy**. This file maps failures to recovery actio
 | 冷迁后担心历史丢了 | `find/list/read-*` | 默认 retain；确认 cold 已注册。完整 raw 细节走 progressive raw fallback |
 | `database is locked` | 重试一次 | 仍忙则跳过 `stats`，稍后重试读命令 |
 | 同主题多 uuid | `find -n 10 --json` | 按 `startedAt` / `cwd` / `matchCount` 选，再执行 `evidenceRead` |
+| 短产品名/通用文件名被新提及淹没 | `find "<distinct phrase>" --cwd <repo-cwd> --json` | 不要把 `--sort ended` 或 query 里的「最近一周」当成日期过滤 |
+| read 有 elision 但缺关键句 | 原 `evidenceRead.argv` 加 `--max-message-chars 0` | 不要丢掉 `--query`；`around_query` 依赖它 |
 | metadata 问题却 broad find/status | 只读 SQLite + `read-*` | 标 `skill-guidance-issue`，改用 metadata primitive |
 | CJK 零结果 | 换词 | ≥2 字中文、英文标识符、或缩 selector |
 | `unsupported_source` | 修正 source id | public: `codex` / experimental `claude-code` / `pi` |
