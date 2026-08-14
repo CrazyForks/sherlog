@@ -199,6 +199,19 @@
   <main>
     <section>
       <div class="release-header">
+        <span class="release-version">v0.4.3</span>
+        <span class="release-date">2026-08-14</span>
+      </div>
+      <ul class="en">
+        <li><strong>Status no longer loads SQLite.</strong> <code>better-sqlite3</code> is opened only when a command actually needs the body index. <code>--version</code> and sidecar-hit <code>status --selector</code> stay on the metadata sidecar and do not <code>dlopen</code> the native addon. An empty leftover WAL no longer invalidates sidecar identity.</li>
+      </ul>
+      <ul class="zh">
+        <li><strong>status 不再加载 SQLite。</strong><code>better-sqlite3</code> 只在命令真正需要正文库时才打开。<code>--version</code> 和 sidecar 命中的 <code>status --selector</code> 只走元数据 sidecar，不 <code>dlopen</code> native addon。空的残留 WAL 不再让 sidecar identity 失效。</li>
+      </ul>
+    </section>
+
+    <section>
+      <div class="release-header">
         <span class="release-version">v0.4.2</span>
         <span class="release-date">2026-08-14</span>
       </div>
