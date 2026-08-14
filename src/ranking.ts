@@ -63,6 +63,7 @@ interface SessionAggregate {
   titlePhrase: boolean;
   titleTermHits: number;
   cwdTermHits: number;
+  titleRestatement: boolean;
 }
 
 export function rerankHits(rows: RawHitRow[], query: string, limit: number): FindResult[] {
@@ -99,7 +100,8 @@ function createSessionAggregate(row: RawHitRow, signals: QuerySignals, signalSco
     && (signals.isPathLikeCommand
       ? containsBoundedPhrase(rowTitleLower, signals.normalizedQuery)
       : rowTitleLower.includes(signals.normalizedQuery));
-  const titleTermHits = countMatchedTerms(rowTitleLower, signals.terms);
+  const titleRestatement = titleLooksLikeCommandRestatement(rowTitleLower, signals);
+  const titleTermHits = titleRestatement ? 0 : countMatchedTerms(rowTitleLower, signals.terms);
   const cwdTermHits = countMatchedTerms(rowCwdLower, signals.terms);
 
   return {
@@ -111,9 +113,10 @@ function createSessionAggregate(row: RawHitRow, signals: QuerySignals, signalSco
     hitCount: 1,
     sessionHitCount: row.matchSource === "session" ? 1 : 0,
     userHitCount: row.matchRole === "user" ? 1 : 0,
-    titlePhrase,
+    titlePhrase: titlePhrase && !titleRestatement,
     titleTermHits,
     cwdTermHits,
+    titleRestatement,
   };
 }
 
@@ -239,7 +242,8 @@ function scoreSession(aggregate: SessionAggregate, now: number): number {
     + Math.min(aggregate.userHitCount, 3) * 4
     + Math.min(aggregate.sessionHitCount, 2) * 2
     + Math.min(aggregate.hitCount, 6) * 1.5
-    + recencyBonus;
+    + recencyBonus
+    - (aggregate.titleRestatement ? 20 : 0);
 }
 
 /**
@@ -265,7 +269,9 @@ function countMatchedTerms(haystack: string, terms: string[]): number {
 
 function scorePathLikeCommandSequence(haystack: string, signals: QuerySignals): number {
   if (!signals.isPathLikeCommand || signals.terms.length < 2) return 0;
-  if (containsBoundedPhrase(haystack, signals.normalizedQuery)) return 36;
+  if (containsBoundedPhrase(haystack, signals.normalizedQuery)) {
+    return 36 + scoreTrailingCommandArgs(haystack, signals.normalizedQuery);
+  }
 
   const span = shortestOrderedSpan(tokenize(haystack), signals.terms);
   if (span === null) return 0;
@@ -296,6 +302,42 @@ function shortestOrderedSpan(tokens: string[], terms: string[]): number | null {
   }
 
   return best === Infinity ? null : best;
+}
+
+/**
+ * A title that contains the command plus extra wrapper words ("搜下这个是哪个
+ * 项目路径的") is a search restatement, not evidence of having run the command.
+ * Those titles otherwise collect titlePhrase (+30) and titleTermHits (*10).
+ */
+function titleLooksLikeCommandRestatement(titleLower: string, signals: QuerySignals): boolean {
+  if (!signals.isPathLikeCommand || signals.normalizedQuery.length === 0) return false;
+  if (!containsBoundedPhrase(titleLower, signals.normalizedQuery)) return false;
+  const leftover = titleLower.replaceAll(signals.normalizedQuery, " ");
+  return tokenize(leftover).length >= 2;
+}
+
+/**
+ * Extra path-like or flag-like tokens after a bounded command distinguish an
+ * invocation (`publish fixtures/sample.jsonl --json`) from a question that
+ * merely repeats the command text. Only inspect the same line as this
+ * occurrence so session-level title+summary concat cannot leak a later `cli.js`.
+ */
+function scoreTrailingCommandArgs(haystack: string, phrase: string): number {
+  let offset = 0;
+  while (offset < haystack.length) {
+    const index = haystack.indexOf(phrase, offset);
+    if (index < 0) return 0;
+
+    const before = index > 0 ? haystack[index - 1] : undefined;
+    const afterIndex = index + phrase.length;
+    const after = afterIndex < haystack.length ? haystack[afterIndex] : undefined;
+    if (isPhraseBoundary(before) && isPhraseBoundary(after)) {
+      const window = haystack.slice(afterIndex, afterIndex + 80).split(/\n/)[0] ?? "";
+      if (/[./]/.test(window) || /(?:^|\s)--?[a-z0-9]/.test(window)) return 24;
+    }
+    offset = index + 1;
+  }
+  return 0;
 }
 
 function containsBoundedPhrase(haystack: string, phrase: string): boolean {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { desiredContextMode, evaluateDogfoodItem, missingContextNeedles, selectDogfoodHit } from "./dogfood-eval-core";
+import { buildReadRangeContextArgs, desiredContextMode, evaluateDogfoodItem, missingContextNeedles, selectDogfoodHit } from "./dogfood-eval-core";
 import { parseDogfoodJsonl } from "./dogfood-schema";
 import type { DogfoodGolden } from "./dogfood-schema";
 import type { FindResult } from "../src/types";
@@ -110,6 +110,35 @@ describe("dogfood eval core", () => {
 
     expect(desiredContextMode(item, findResult({ matchSource: "message", matchSeq: 7 }))).toBe("read-range");
     expect(desiredContextMode(item, findResult({ matchSource: "session", matchSeq: null }))).toBe("read-range");
+  });
+
+  test("keeps --query next to --seq so elision can preserve the evidence span", () => {
+    expect(buildReadRangeContextArgs({
+      sessionRef: "session-a",
+      matchSeq: 6,
+      query: "node dist/cli.js publish",
+      before: 2,
+      after: 4,
+    })).toEqual([
+      "read-range", "session-a",
+      "--seq", "6",
+      "--query", "node dist/cli.js publish",
+      "--before", "2",
+      "--after", "4",
+    ]);
+
+    expect(buildReadRangeContextArgs({
+      sessionRef: "session-b",
+      matchSeq: null,
+      query: "ping pong",
+      before: 2,
+      after: 2,
+    })).toEqual([
+      "read-range", "session-b",
+      "--query", "ping pong",
+      "--before", "2",
+      "--after", "2",
+    ]);
   });
 
   test("reports missing context needles case-insensitively", () => {

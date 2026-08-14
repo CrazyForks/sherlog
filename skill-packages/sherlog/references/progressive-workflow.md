@@ -27,6 +27,8 @@ sqlite3 -readonly "$DB_PATH" \
 "${SHLOG_BIN:-${CXS_BIN:-shlog}}" find "cf tunnel" --json -n 5
 ```
 
+短产品名（两个英文词）或通用文件名单独作 query 时加 `--cwd`，或改用更长独特短语；否则跨源默认 find 容易被近期配置闲聊占满。
+
 选候选时用 `matchedFields`（命中出处：message 证据强于 title/compact/reasoningSummary）和 `sessionMessageCount`（读取成本上限）辅助判断；零结果时按 `zeroResults.reason` 分流（见 failure-cookbook）。对候选始终执行 `evidenceRead.argv`；不要根据 `matchSeq` 自己重建命令。示例形状可能是：
 
 ```bash

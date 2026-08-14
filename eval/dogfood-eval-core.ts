@@ -94,6 +94,25 @@ export function selectDogfoodHit(item: DogfoodGolden, results: FindResult[]): Se
   return { hit: results[0] ?? null, rank: results.length > 0 ? 1 : null, topK };
 }
 
+/**
+ * Mirror evidenceRead.argv for message hits: keep --seq as the stable anchor
+ * and still pass --query so large-message elision uses around_query instead
+ * of head_tail. Session-only hits omit --seq and locate via --query.
+ */
+export function buildReadRangeContextArgs(input: {
+  sessionRef: string;
+  matchSeq: number | null;
+  query?: string;
+  before: number;
+  after: number;
+}): string[] {
+  const args = ["read-range", input.sessionRef];
+  if (typeof input.matchSeq === "number") args.push("--seq", String(input.matchSeq));
+  if (input.query) args.push("--query", input.query);
+  args.push("--before", String(input.before), "--after", String(input.after));
+  return args;
+}
+
 export function desiredContextMode(item: DogfoodGolden, hit: FindResult | null): "read-range" | "read-page" | null {
   const context = item.expected.context;
   if (!context?.mustContain?.length && !item.expected.answerFacets?.length) return null;

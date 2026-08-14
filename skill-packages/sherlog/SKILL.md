@@ -28,8 +28,8 @@ description: "Use proactively for local agent-session history and prior setup ar
 | policy | rule |
 | --- | --- |
 | Evidence | `find/list` 只定位候选；内容先执行 `evidenceRead.argv` / `read-*`。只有 index projection 明确缺少完整 tool call、patch、长代码或原始事件时，才在定位 session 后走 agent-side raw fallback。 |
-| Provenance | 读结果时先看 `matchedFields`（命中出处）与 `sessionMessageCount`（读取成本上限）再决定 read 策略：message 锚点走 `read-range`，session-level 命中信 `evidenceRead`，大 session 避免盲目全量 `read-page`。 |
-| Sort | `find` 默认 relevance；用户问最新/最近时用 `--sort ended`，必要时 `--exclude-session` 排除 self-hit。 |
+| Provenance | 读结果时先看 `matchedFields`（命中出处）与 `sessionMessageCount`（读取成本上限）再决定 read 策略：message 锚点走 `read-range`，session-level 命中信 `evidenceRead`，大 session 避免盲目全量 `read-page`。始终执行完整 `evidenceRead.argv`（含 `--query`）；有 elision 且关键句不可见时，同一命令加 `--max-message-chars 0`。 |
+| Sort | `find` 默认 relevance；用户问最新/最近时用 `--sort ended`，必要时 `--exclude-session` 排除 self-hit。`--sort ended` 只按命中 session 的 `endedAt` 排序，不是日期窗；query 里的「最近一个星期」只是 FTS 词。短产品名或通用文件名先加 `--cwd` 或改用更独特短语。 |
 | Zero results | 先读 `zeroResults.reason`：`fresh_miss` 可信，按 `suggestedQueries` 放宽后再下结论；`stale_or_missing_coverage` 不可信，按 `nextAction` 同范围 sync 再重试；`coverage_not_confirmed` 先 `status`。不要对同一过长 query 原样重试。 |
 | Coverage | 跟随同范围 `nextAction`。Codex `source_content_changed` + `recommendedAction: "query"` 是 soft stale：先 query/read；只有答案依赖最新活跃尾部时才 sync。 |
 | Cold | `cold add` 只注册 presence 供 prune 保留。`sync` 只摄取 plain `*.jsonl`；不会从 cold `*.jsonl.zst` 重建 index。 |
