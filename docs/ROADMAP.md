@@ -24,6 +24,7 @@
   - 支持为单个 golden 描述真实检索 workflow：多 query attempt、`sort`、cwd/selector scope、排除 self-hit session
   - 检查 expected session / cwd / matchSource / context key phrase
   - 每个 attempt 会落盘 find/context artifact，scorecard 会标出最终采用的 attempt
+  - scorecard 带 per-case `returnedContext`（chars/bytes）和 batch p50/p95，context 预算回归按 case 可见
   - `hard` 失败会以非零退出阻断本机 gate
   - `candidate` 失败只报告，不阻断
 

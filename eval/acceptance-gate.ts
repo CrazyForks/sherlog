@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildDogfoodScoreboard, desiredContextMode, evaluateDogfoodItem, type DogfoodEvaluation, type DogfoodScoreboard } from "./dogfood-eval-core";
 import type { DogfoodGolden } from "./dogfood-schema";
+import { measureReturnedContext, summarizeReturnedContext, type ReturnedContextMetric, type ReturnedContextSummary } from "./returned-context";
 import { syncSessions } from "../src/indexer";
 import { findSessions, getMessagePage, getMessageRange } from "../src/query";
 import type { FindResult, SyncSummary } from "../src/types";
@@ -21,6 +22,9 @@ const DUP_FAMILY_SESSIONS = [
 const DIVERSE_HIT_SESSION = "66666666-6666-4666-8666-666666666666";
 const CLAUDE_CODE_HIT_SESSION = "claude-code:claude-eval-session";
 const PI_HIT_SESSION = "pi:pi-eval-session";
+const COMMAND_EXEC_SESSION = "77777777-7777-4777-8777-777777777777";
+const COMMAND_RESTATE_SESSION = "88888888-8888-4888-8888-888888888888";
+const QUERY_WINDOW_SESSION = "99999999-9999-4999-8999-999999999999";
 
 type AcceptanceSourceId = "codex" | "claude-code" | "pi";
 
@@ -60,6 +64,7 @@ export interface AcceptanceGateRow {
   failureClasses: DogfoodEvaluation["failureClasses"];
   predicates: DogfoodEvaluation["predicateResults"];
   diversity: TopResultDiversity;
+  returnedContext: ReturnedContextMetric;
 }
 
 export interface AcceptanceGateResult {
@@ -69,6 +74,7 @@ export interface AcceptanceGateResult {
   sync: SyncSummary;
   sourceSyncs: Record<AcceptanceSourceId, SyncSummary>;
   scoreboard: DogfoodScoreboard;
+  returnedContext: ReturnedContextSummary;
   rows: AcceptanceGateRow[];
 }
 
@@ -98,6 +104,7 @@ export async function runAcceptanceGate(options: AcceptanceGateOptions = {}): Pr
       sync: sourceSyncs.codex,
       sourceSyncs,
       scoreboard: buildDogfoodScoreboard(rows.map((row) => ({ status: row.status, evaluation: row }))),
+      returnedContext: summarizeReturnedContext(rows.map((row) => row.returnedContext)),
       rows,
     };
   } finally {
@@ -139,6 +146,7 @@ function evaluateAcceptanceItems(dbPath: string, items: DogfoodGolden[]): Accept
       failureClasses: evaluation.failureClasses,
       predicates: evaluation.predicateResults,
       diversity: topResultDiversity(summary.results, item.expected.topK ?? limit),
+      returnedContext: measureReturnedContext(context),
     };
   });
 }
@@ -164,22 +172,15 @@ function readContextIfNeeded(
   if (!hit) return { unavailableReason: "no selected hit for context read" };
   const context = item.expected.context ?? {};
   if (mode === "read-range") {
-    if (typeof hit.matchSeq !== "number") {
-      // Session-only hit: use the query to locate the real anchor inside the
-      // session transcript, mirroring buildEvidenceReadAction's read-range --query path.
-      const query = context.query ?? item.query;
-      if (!query) {
-        return { kind: "read-range", unavailableReason: "selected hit has no numeric matchSeq and no query available" };
-      }
-      const range = getMessageRange(dbPath, hit.sessionRef, {
-        query,
-        before: context.before ?? 2,
-        after: context.after ?? 2,
-      });
-      return { kind: "read-range", text: messagesText(range.messages) };
+    const query = context.query ?? item.query;
+    if (typeof hit.matchSeq !== "number" && !query) {
+      return { kind: "read-range", unavailableReason: "selected hit has no numeric matchSeq and no query available" };
     }
+    // Keep --seq and --query together so around_query can preserve evidence
+    // the same way evidenceRead.argv / the dogfood runner do.
     const range = getMessageRange(dbPath, hit.sessionRef, {
-      seq: hit.matchSeq,
+      ...(typeof hit.matchSeq === "number" ? { seq: hit.matchSeq } : {}),
+      ...(query ? { query } : {}),
       before: context.before ?? 2,
       after: context.after ?? 2,
     });
@@ -320,6 +321,44 @@ function acceptanceGoldens(roots: AcceptanceFixtureRoots): DogfoodGolden[] {
         },
       },
     },
+    {
+      id: "command-restatement-loses-to-execution",
+      query: "node dist/cli.js publish",
+      intent: "public mirror of the path-like command FP: a later title that restates the command must not beat the session that ran it",
+      status: "hard",
+      expected: {
+        topK: 1,
+        sourceId: "codex",
+        acceptableSessionUuids: [COMMAND_EXEC_SESSION],
+        sessionRef: COMMAND_EXEC_SESSION,
+        cwdContains: "/tmp/sherlog-acceptance/what7",
+        matchSource: "message",
+      },
+    },
+    {
+      id: "query-window-keeps-table-rows",
+      query: "两个格式的关键差异",
+      intent: "public mirror of the elision FN: around_query must keep the full query window so both comparison-table rows stay visible",
+      status: "hard",
+      expected: {
+        topK: 1,
+        sourceId: "codex",
+        acceptableSessionUuids: [QUERY_WINDOW_SESSION],
+        sessionRef: QUERY_WINDOW_SESSION,
+        cwdContains: "/tmp/sherlog-acceptance/format-diff",
+        matchSource: "message",
+        matchSeq: 1,
+        context: {
+          mode: "read-range",
+          before: 0,
+          after: 0,
+          mustContain: [
+            "存储位置 │ ~/.codex/sessions/（扁平）",
+            "对话结构 │ 线性 │ 树形（parentUuid 分支）",
+          ],
+        },
+      },
+    },
   ];
 }
 
@@ -368,6 +407,24 @@ function writeCodexAcceptanceFixtures(root: string): void {
   writeCodexSession(day, DIVERSE_HIT_SESSION, "/tmp/sherlog-acceptance/diverse", [
     event("user_message", "familyneedle staging cutover decision record"),
     event("agent_message", "The distinct session captures the actual cutover decision evidence."),
+  ]);
+  writeCodexSession(day, COMMAND_EXEC_SESSION, "/tmp/sherlog-acceptance/what7", [
+    event("user_message", "怎么使用"),
+    event("agent_message", "cd /tmp/sherlog-acceptance/what7 && node dist/cli.js publish fixtures/sample.jsonl --json"),
+  ]);
+  writeCodexSession(day, COMMAND_RESTATE_SESSION, "/tmp/sherlog-acceptance/play", [
+    event("user_message", "cxs node dist/cli.js publish 搜下这个是哪个项目路径的", "2026-06-27T05:00:00.000Z"),
+    event("agent_message", "这是在搜命令对应的仓库", "2026-06-27T05:00:01.000Z"),
+  ]);
+  writeCodexSession(day, QUERY_WINDOW_SESSION, "/tmp/sherlog-acceptance/format-diff", [
+    event("user_message", "compare the two session transcript formats"),
+    event("agent_message", [
+      "两个格式的关键差异：\n",
+      "存储位置 │ ~/.codex/sessions/（扁平） │ ~/.claude/projects/<hash>/<uuid>.jsonl（嵌套）\n",
+      `${"x".repeat(500)}\n`,
+      "对话结构 │ 线性 │ 树形（parentUuid 分支）\n",
+      "y".repeat(400),
+    ].join("")),
   ]);
 }
 
@@ -424,17 +481,25 @@ function writeCodexSession(day: string, uuid: string, cwd: string, records: Reco
   writeFileSync(filePath, content);
 }
 
-function event(type: "user_message" | "agent_message", message: string): Record<string, unknown> {
-  return line("event_msg", { type, message });
+function event(
+  type: "user_message" | "agent_message",
+  message: string,
+  timestamp = "2026-06-26T05:00:00.000Z",
+): Record<string, unknown> {
+  return line("event_msg", { type, message }, timestamp);
 }
 
 function compacted(message: string): Record<string, unknown> {
   return line("compacted", { message });
 }
 
-function line(type: string, payload: Record<string, unknown>): Record<string, unknown> {
+function line(
+  type: string,
+  payload: Record<string, unknown>,
+  timestamp = "2026-06-26T05:00:00.000Z",
+): Record<string, unknown> {
   return {
-    timestamp: "2026-06-26T05:00:00.000Z",
+    timestamp,
     type,
     payload,
   };
