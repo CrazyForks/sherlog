@@ -11,10 +11,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: "22"
           cache: npm
@@ -25,5 +25,88 @@ jobs:
       - name: Run tests
         run: npm run check
 
-      - name: Build package
-        run: npm run build
+  rust-quality:
+    name: Rust stable quality gates
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Install Rust stable
+        run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
+
+      - name: Check formatting
+        run: cargo +stable fmt --all -- --check
+
+      - name: Run tests
+        run: cargo +stable test --workspace --all-features --locked
+
+      - name: Run clippy
+        run: cargo +stable clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+  rust-release-binary:
+    name: Rust release binary (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64
+            os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - name: macOS arm64
+            os: macos-15
+            target: aarch64-apple-darwin
+          - name: macOS x64
+            os: macos-15-intel
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Install Rust stable target
+        run: rustup toolchain install stable --profile minimal --target ${{ matrix.target }}
+
+      - name: Test target
+        run: cargo +stable test --workspace --all-features --locked --target ${{ matrix.target }}
+
+      - name: Build release binary
+        run: cargo +stable build --release --locked --target ${{ matrix.target }} --bin shlog
+
+      - name: Smoke release binary
+        shell: bash
+        run: |
+          binary="target/${{ matrix.target }}/release/shlog"
+          test -x "$binary"
+          "$binary" --version
+          "$binary" --help > /dev/null
+
+  native-contract:
+    name: Native CLI contract and acceptance
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup Node oracle
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install oracle dependencies
+        run: npm ci
+
+      - name: Install Rust stable
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Build native release candidate
+        run: cargo +stable build --release --all-features --locked --bin shlog
+
+      - name: Run contract gate against native candidate
+        run: |
+          test -x ./target/release/shlog
+          npm run eval:contract -- --candidate-argv-json '["./target/release/shlog"]' --require-candidate
+
+      - name: Run acceptance gate against native candidate
+        run: npm run eval:acceptance -- --cli-argv-json '["./target/release/shlog"]' --require-candidate

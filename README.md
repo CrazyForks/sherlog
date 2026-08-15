@@ -4,33 +4,46 @@
 
 `Sherlog` is a local-first CLI for searching local Codex, Claude Code, and Pi session logs. It is built for agents that know how to investigate: find the right session first, then read only the relevant range or page.
 
-## Quick Install
+## Native Runtime Status
 
-Install the CLI globally:
+The product runtime in this checkout is a standalone Rust CLI with bundled SQLite/FTS5. Node.js and the TypeScript implementation remain only as development contract/evaluation oracles; they are not part of the production runtime.
+
+The native release pipeline and installer are source-ready, but **no native release tag or native assets have been published from this cutover yet**. Existing releases predate the Rust cutover. Until the next native tag is published, build the current source:
 
 ```bash
-npm i -g @act0r/sherlog
-shlog --help
+git clone https://github.com/catoncat/sherlog.git
+cd sherlog
+cargo build --release --locked -p sherlog-cli --bin shlog
+./target/release/shlog --help
 ```
 
-Install the agent skill separately:
+After the next native tag is published, install the latest native release without Node.js:
+
+```bash
+curl -fsSL https://github.com/catoncat/sherlog/releases/latest/download/install.sh | sh
+```
+
+To pin a published native version, replace `X.Y.Z` with that release number:
+
+```bash
+curl -fsSL https://github.com/catoncat/sherlog/releases/download/vX.Y.Z/install.sh \
+  | SHERLOG_VERSION=X.Y.Z sh
+```
+
+The installer defaults to `$HOME/.local/bin`, verifies SHA-256, installs both `shlog` and the `sherlog` alias, and never invokes `sudo`. Set `SHERLOG_INSTALL_DIR` to choose another user-writable directory; replacing an existing command requires explicit `SHERLOG_FORCE=1`.
+
+Install the optional agent skill separately. This uses the external `skills` package manager; it does not make the Sherlog CLI depend on Node.js:
 
 ```bash
 npx skills add -g catoncat/sherlog
 ```
 
-## Requirements
+## Supported native targets
 
-- **Node.js >= 22.13.0** — Sherlog uses Node's built-in SQLite (`node:sqlite`).
-  There are **no native addons** to compile, download, or load, so the CLI can
-  never hit a Node-ABI mismatch and works on macOS, Linux, and Windows alike.
-- On Node 22.x, the runtime prints a one-line
-  `ExperimentalWarning: SQLite is an experimental feature` to stderr once per
-  process. It is harmless; silence it with
-  `NODE_OPTIONS=--disable-warning=ExperimentalWarning` if your agent inspects
-  stderr. Node 24+ prints nothing.
-- Something looks off? Run `shlog doctor` — it reports the Node version, the
-  built-in SQLite version, and whether the index database is readable.
+The first native release publishes archives for macOS arm64, macOS x64, and
+Linux x64 GNU. Linux arm64, musl, and Windows archives are not declared yet.
+Node.js >= 22.13 is required only when developing or running the TypeScript
+differential oracle in this repository; it is not a user runtime dependency.
 
 ## Quick Start
 

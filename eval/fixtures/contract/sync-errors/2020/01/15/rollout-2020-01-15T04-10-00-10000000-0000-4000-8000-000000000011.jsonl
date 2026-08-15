@@ -1,0 +1,2 @@
+{"timestamp":"2020-01-15T04:10:00.000Z","type":"session_meta","payload":{"id":"10000000-0000-4000-8000-000000000011","cwd":"/tmp/sherlog-contract/unreadable"}}
+{"timestamp":"2020-01-15T04:10:01.000Z","type":"event_msg","payload":{"type":"user_message","message":"contract deliberately unreadable session"}}

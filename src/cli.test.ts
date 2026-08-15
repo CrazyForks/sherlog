@@ -29,7 +29,7 @@ afterEach(() => {
 });
 
 describe("shlog cli", { timeout: 20_000 }, () => {
-  test("help shows status/sync/find/read-range/read-page/list/stats/doctor", async () => {
+  test("help shows the fixed command surface", async () => {
     const result = await runCli(["--help"]);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("status");
@@ -39,7 +39,7 @@ describe("shlog cli", { timeout: 20_000 }, () => {
     expect(result.stdout).toContain("read-page");
     expect(result.stdout).toContain("list");
     expect(result.stdout).toContain("stats");
-    expect(result.stdout).toContain("doctor");
+    expect(result.stdout).not.toContain("doctor");
     expect(result.stdout).not.toContain("current");
     expect(result.stdout).not.toContain("window");
     expect(result.stdout).not.toContain("\n  session ");

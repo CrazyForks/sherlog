@@ -3,34 +3,318 @@ name: release
 on:
   push:
     tags:
-      - "v*"
+      - "v*.*.*"
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  publish-npm:
-    name: publish npm package
-    runs-on: ubuntu-latest
+  native-archive:
+    name: Native archive (${{ matrix.label }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux x64 GNU
+            # Build on the oldest declared release image to keep the glibc floor
+            # below the general CI image. This is GNU/glibc, not musl.
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - label: macOS arm64
+            os: macos-15
+            target: aarch64-apple-darwin
+          - label: macOS x64
+            os: macos-15-intel
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
-      - name: Setup Node
-        uses: actions/setup-node@v6
+      - name: Install Rust stable target
+        run: rustup toolchain install stable --profile minimal --target ${{ matrix.target }}
+
+      - name: Test release target
+        run: cargo +stable test --workspace --all-features --locked --target ${{ matrix.target }}
+
+      - name: Build release binary
+        run: cargo +stable build --release --all-features --locked --target ${{ matrix.target }} --bin shlog
+
+      - name: Package and smoke installed archive
+        id: package
+        shell: bash
+        env:
+          RELEASE_TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+
+          binary="target/${RELEASE_TARGET}/release/shlog"
+          test -x "$binary"
+
+          version_output=$("$binary" --version)
+          version=${version_output##* }
+          version=${version#v}
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Unexpected shlog --version output: ${version_output}"
+            exit 1
+          fi
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" != "v${version}" ]]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match binary version v${version}"
+            exit 1
+          fi
+          if [[ "$RELEASE_TARGET" == "x86_64-unknown-linux-gnu" ]]; then
+            max_glibc=$(objdump -T "$binary" \
+              | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)*' \
+              | LC_ALL=C sort -Vu \
+              | tail -n 1)
+            max_glibc_version=${max_glibc#GLIBC_}
+            if [[ "$(printf '2.35\n%s\n' "$max_glibc_version" | sort -V | tail -n 1)" != "2.35" ]]; then
+              echo "::error::Linux binary imports ${max_glibc}, above the declared GLIBC_2.35 ceiling"
+              exit 1
+            fi
+            ldd "$binary"
+            echo "- Linux GNU archive maximum imported glibc symbol: ${max_glibc}" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          package_name="sherlog-v${version}-${RELEASE_TARGET}"
+          package_dir="dist/${package_name}"
+          archive="dist/${package_name}.tar.gz"
+          sbom="dist/${package_name}.spdx.json"
+          mkdir -p "$package_dir"
+          install -m 0755 "$binary" "$package_dir/shlog"
+          ln -s shlog "$package_dir/sherlog"
+          install -m 0644 README.md "$package_dir/README.md"
+          install -m 0644 LICENSE "$package_dir/LICENSE"
+          tar -C dist -czf "$archive" "$package_name"
+
+          smoke_dir=$(mktemp -d "${RUNNER_TEMP}/sherlog-smoke.XXXXXX")
+          trap 'rm -rf "$smoke_dir"' EXIT
+          tar -xzf "$archive" -C "$smoke_dir"
+          installed="$smoke_dir/$package_name"
+          test -x "$installed/shlog"
+          test -L "$installed/sherlog"
+          test "$("$installed/shlog" --version | awk '{print $NF}' | sed 's/^v//')" = "$version"
+          test "$("$installed/sherlog" --version | awk '{print $NF}' | sed 's/^v//')" = "$version"
+          "$installed/shlog" --help > /dev/null
+          "$installed/sherlog" --help > /dev/null
+
+          {
+            echo "version=$version"
+            echo "package_dir=$package_dir"
+            echo "archive=$archive"
+            echo "sbom=$sbom"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: ${{ steps.package.outputs.package_dir }}
+          format: spdx-json
+          output-file: ${{ steps.package.outputs.sbom }}
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Attest archive build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: ${{ steps.package.outputs.archive }}
+
+      - name: Attest archive SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: ${{ steps.package.outputs.archive }}
+          sbom-path: ${{ steps.package.outputs.sbom }}
+
+      - name: Upload native archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-${{ matrix.target }}
+          path: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.sbom }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  native-contract:
+    name: Validate Linux archive contract
+    needs: native-archive
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Download Linux GNU archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: native-x86_64-unknown-linux-gnu
+          path: release-contract-assets
+
+      - name: Extract release candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mapfile -t archives < <(
+            find release-contract-assets -type f \
+              -name 'sherlog-v*-x86_64-unknown-linux-gnu.tar.gz' \
+              -print
+          )
+          if [[ "${#archives[@]}" -ne 1 ]]; then
+            echo "::error::Expected exactly one Linux GNU archive, found ${#archives[@]}"
+            exit 1
+          fi
+
+          mkdir -p native-contract
+          tar -xzf "${archives[0]}" --strip-components=1 -C native-contract
+          test -x ./native-contract/shlog
+
+      - name: Setup Node oracle
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: "22"
-          registry-url: "https://registry.npmjs.org"
           cache: npm
 
-      - name: Install dependencies
+      - name: Install oracle dependencies
         run: npm ci
 
-      - name: Run checks
-        run: npm run check
+      - name: Run contract gate against archived binary
+        run: npm run eval:contract -- --candidate-argv-json '["./native-contract/shlog"]' --require-candidate
 
-      - name: Publish
-        run: npm publish
+      - name: Run acceptance gate against archived binary
+        run: npm run eval:acceptance -- --cli-argv-json '["./native-contract/shlog"]' --require-candidate
+
+  publish-release:
+    name: Publish native GitHub Release
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs:
+      - native-archive
+      - native-contract
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Download native archives
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: native-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Validate assets, render formula, and write checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version=${GITHUB_REF_NAME#v}
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Release tag is not a supported semver tag: ${GITHUB_REF_NAME}"
+            exit 1
+          fi
+
+          targets=(
+            aarch64-apple-darwin
+            x86_64-apple-darwin
+            x86_64-unknown-linux-gnu
+          )
+          expected_assets=()
+          for target in "${targets[@]}"; do
+            base="sherlog-v${version}-${target}"
+            archive="release-assets/${base}.tar.gz"
+            sbom="release-assets/${base}.spdx.json"
+            expected_assets+=("${base}.tar.gz" "${base}.spdx.json")
+            test -s "$archive"
+            test -s "$sbom"
+            tar -tzf "$archive" | grep -Fx "${base}/shlog" > /dev/null
+            tar -tzf "$archive" | grep -Fx "${base}/sherlog" > /dev/null
+            tar -tzf "$archive" | grep -Fx "${base}/README.md" > /dev/null
+            tar -tzf "$archive" | grep -Fx "${base}/LICENSE" > /dev/null
+          done
+
+          arm_sha=$(sha256sum "release-assets/sherlog-v${version}-aarch64-apple-darwin.tar.gz" | awk '{print $1}')
+          mac_x64_sha=$(sha256sum "release-assets/sherlog-v${version}-x86_64-apple-darwin.tar.gz" | awk '{print $1}')
+          linux_x64_sha=$(sha256sum "release-assets/sherlog-v${version}-x86_64-unknown-linux-gnu.tar.gz" | awk '{print $1}')
+          sed \
+            -e "s/__VERSION__/${version}/g" \
+            -e "s/__MACOS_ARM64_SHA256__/${arm_sha}/g" \
+            -e "s/__MACOS_X64_SHA256__/${mac_x64_sha}/g" \
+            -e "s/__LINUX_X64_SHA256__/${linux_x64_sha}/g" \
+            Formula/sherlog.rb.template > release-assets/sherlog.rb
+          if grep -Eq '__[A-Z0-9_]+__' release-assets/sherlog.rb; then
+            echo "::error::Unexpanded Homebrew formula placeholder"
+            exit 1
+          fi
+
+          install -m 0755 scripts/install.sh release-assets/install.sh
+          expected_assets+=(sherlog.rb install.sh)
+          expected_manifest="${RUNNER_TEMP}/expected-release-assets.txt"
+          actual_manifest="${RUNNER_TEMP}/actual-release-assets.txt"
+          printf '%s\n' "${expected_assets[@]}" | LC_ALL=C sort > "$expected_manifest"
+          find release-assets -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' \
+            | LC_ALL=C sort > "$actual_manifest"
+          if ! diff -u "$expected_manifest" "$actual_manifest"; then
+            echo "::error::Release asset set differs from the explicit expected set"
+            exit 1
+          fi
+          (
+            cd release-assets
+            while IFS= read -r asset; do
+              sha256sum "$asset"
+            done < "$expected_manifest"
+          ) > release-assets/SHA256SUMS
+
+      - name: Attest the complete release asset set
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: release-assets/*
+
+      - name: Create or resume draft release, upload, and publish
+        shell: bash
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          state=absent
+          if gh release view "$GITHUB_REF_NAME" --json isDraft > release-state.json 2>/dev/null; then
+            state=$(jq -r '.isDraft' release-state.json)
+          fi
+          case "$state" in
+            absent)
+              gh release create "$GITHUB_REF_NAME" \
+                --verify-tag \
+                --draft \
+                --generate-notes \
+                --title "Sherlog ${GITHUB_REF_NAME}"
+              ;;
+            true)
+              echo "Resuming existing draft release ${GITHUB_REF_NAME}"
+              ;;
+            false)
+              echo "::error::Release ${GITHUB_REF_NAME} is already published; refusing to mutate it"
+              exit 1
+              ;;
+            *)
+              echo "::error::Unexpected release state: ${state}"
+              exit 1
+              ;;
+          esac
+
+          gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
+          gh release edit "$GITHUB_REF_NAME" --draft=false

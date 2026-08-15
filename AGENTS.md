@@ -2,31 +2,34 @@
 
 ## 项目定位
 
-`Sherlog`（CLI 命令 `shlog`）是一个面向本机 agent session 日志的渐进式检索 CLI；当前公开 source 包括 `codex`、experimental `claude-code` 和 experimental `pi`。它不是 GUI app，也不是实时同步守护进程。
+`Sherlog`（CLI 命令 `shlog`）是一个面向本机 agent session 日志的渐进式检索 CLI。生产 runtime 已切换为 standalone Rust binary，内置 SQLite/FTS5；使用者运行 CLI 不需要 Node.js。当前公开 source 包括 `codex`、experimental `claude-code` 和 experimental `pi`。
 
 当前接受的产品边界：
 
 - 命令面固定为：`status`、`sync`、`cold`、`find`、`read-range`、`read-page`、`list`、`stats`
 - 主工作流固定为：先按问题选择 metadata projection / semantic recall / content read / coverage diagnosis；首次安装可用 `sync` 初始化默认 Codex index，coverage 不足时才做同范围 sync
-- `sync` 与 `cold add/remove` 会写 Sherlog 状态；检索命令只读 SQLite，`status` 只读 raw metadata
+- `sync` 是唯一 content/index writer；`cold add/remove` 只写 cold retention state；其余命令只读
+- `find` / `read-*` / `list` / `stats` 只读 SQLite index，不扫描 raw transcript；`status` 不返回/检索正文且不写 index，但 inventory cache miss 会流式读取 raw，仅按 privacy allowlist 派生 inventory/fingerprint
 - 默认接受手动增量同步，不做 watcher / daemon / realtime sync
-- 这个仓库可以作为其他 sidecar / GUI 的 retrieval engine，但本仓库自身不以 GUI 为目标
+- 这个仓库可以作为其他工具或 GUI 的 retrieval engine，但本仓库自身不以 GUI 为目标
 
 ## 当前实现真相
 
-- 检索主链是 `message/session recall -> session heuristic rerank -> progressive read`
-- `status` 只返回执行上下文、source inventory、index 状态与 coverage 状态；`status --selector` 只读地报告目标 selector 的 coverage/freshness 和 recommendedAction；它可以扫描 raw session metadata，但不写 index、不回答内容问题
-- 常规内容回答先来自 Sherlog index projection（`read-range` / `read-page`）；当 projection 明确不足以保留完整 tool call、patch、长代码或原始事件时，agent 可以先用 Sherlog 定位 session，再从该 session 的 hot plain raw 或逐文件 cold zstd 取完整原文证据。raw fallback 是 agent-side 取证，不是 `shlog` 检索/读取能力；source inventory 仍只用于 selector/coverage，不能作为内容真相源
-- `sync` 是建立 coverage 的唯一入口；裸 `sync` 是 first-install bootstrap，等价于默认 Codex root 的 canonical `all` selector；`--cwd` / `--root` / `--selector` 仍是日常 agent 范围控制入口；只读命令不得隐式触发 sync
-- 查找前不要求无条件 sync；只有目标 selector coverage 缺失或 stale 时才同步。fresh `all(root)` coverage 可以覆盖同 root 下更窄 selector
-- `find` 默认按 relevance 排序；“最新/最近 + 关键词”应使用 `find <query> --sort ended`，必要时 `--exclude-session` 排除当前会话/self-hit
-- 候选召回来自 `messages_fts` 与 `sessions_fts(title + summary_text + compact_text + reasoning_summary_text)`；极少数零 token CJK query 在 message 侧回退到 LIKE
-- `messages_fts` / `sessions_fts` 是 contentless FTS5（`content=''` + `contentless_delete=1`）：倒排索引保留，不再把 `tokenize()` 后的文本复制进 `*_fts_content`。snippet 来自 JOIN 后的 `messages.content_text` / session 字段，不读 FTS content 列。升级后第一次 write/`sync` 会从已存行重建 FTS，不重新解析 transcript；这次 migrate 可能较慢并伴随 VACUUM
-- `summary_text`、`compact_text`、`reasoning_summary_text` 已持久化，也会通过 `sessions_fts` 参与 session-level recall
-- session-level FTS 使用显式字段权重：title 8.0、compact 4.0、summary 3.0、reasoning summary 1.2
-- `classifyQueryProfile()` 仍存在，但当前评分没有按 `broad/exact` 做显式分权
-- parser 只把 `event_msg` 里的 user / assistant 写入 `messages`；`type=compacted` 与 `response_item.reasoning.summary` 只进入 session-level 索引字段，不形成可回读 message projection
-- `better-sqlite3` 只在第一次 `openReadDb` / `openWriteDb` 时才 `dlopen`；sidecar 命中的 `status` / `--version` 不加载 native addon。没有默认 daemon / watcher
+- 当前生产代码在 `rust/`；根 workspace 生成单个 `shlog` binary。`src/` 下的 TypeScript 只保留为开发期 differential oracle，不是用户 runtime，也不是发布入口。
+- v8 SQLite 是唯一持久化真相源：`meta`、物理表 `session_rows`、只读兼容 view `sessions`、`source_files`、统一 `documents`、contentless `documents_fts`、`coverage`、`cold_roots`。没有 metadata sidecar。
+- v8 writer 固定使用 rollback `journal_mode=DELETE` 与 `synchronous=FULL`。这是短命 CLI + 显式 single-writer 的有意识取舍：发布态 index 保持单文件，所有只读命令在 DB `0444`、目录 `0555` 时也不会创建 `-wal` / `-shm`；不要改成 `immutable=1` 或 close-time WAL seal，它们在并发 writer/reader 下会读旧数据或留下转换竞态。
+- `sessions` view 故意没有 `INSTEAD OF` trigger：高级只读 SQL 保持兼容，旧 TypeScript writer 对 v8 写入时会 fail closed。
+- 检索主链是 `SQLite candidate recall -> deterministic session ranking -> evidenceRead -> read-range/read-page`。真实 message 与 session profile 是两类 document；profile 命中不得伪装成 message evidence。
+- v8 tokenizer 使用 UAX #29 lowercase word 与重叠 CJK Unicode-scalar bigram。FTS column 权重为 body 1.0、title 8.0、summary 3.0、compact 4.0、reasoning summary 1.2。
+- `source` / root / cwd / date / session / exclude 约束尽量在 SQL candidate generation 阶段下推，不先召回大集合再在 app 层过滤。
+- 任何新增的快速候选层都必须返回 conservative superset：只能排除可证明不匹配的记录，tokenizer、delta 或 source 状态不确定时必须保守纳入并交给精确层；不得制造 false negative。
+- `source_files` 保存 append cursor、digest、checkpoint 与 epoch。可证明 append 走增量 projection；truncate、prefix rewrite、identity/epoch 不安全时走 full replay。设计验收不变量是 `incremental projection == full replay projection`。
+- `status` 返回 execution context、source inventory、index 状态与可选 requested coverage；它不返回或检索 raw content、不写 index。inventory cache miss 会流式解析 raw accepted records/body，仅按 privacy allowlist 派生 cwd/time/session identity 与 fingerprint；rejected/private record 不影响 proof。exact `mtime_ns`/checkpoint cache hit 不重 parse。
+- coverage 只由成功的 `sync` 写入。裸 `sync` 是默认 Codex `all(root)` bootstrap；只读命令不会隐式 sync 或 migrate。
+- strict sync 遇到选中输入错误时不发布部分 coverage；`--best-effort` 可提交成功文件，但不会伪造 complete coverage。`--prune` 只删除 hot 与 registered cold 都不存在的同 source 投影。
+- v8 `cold_roots` 表是 cold registration 真相。legacy `cold-roots.json` 只作为首次 v7/v8 cutover 的一次性导入输入；导入后使用 tombstone 阻止旧 writer 复活配置。
+- v7 -> v8 migration 只发生在授权 writer 路径，采用 copy/verify/backup/atomic publish；read-only commands 不迁移。cold-only projection 必须保留。
+- 当前 native release pipeline 仅声明 `aarch64-apple-darwin`、`x86_64-apple-darwin`、`x86_64-unknown-linux-gnu`。源码与 pipeline 已 ready，但本次 cutover 尚未发布 native tag/assets；本机全局 `shlog --version` 当前实测仍为旧发布版 `0.4.4`，发布/重装后必须重新核对路径与版本。
 
 不要把下面这些说成已完成：
 
@@ -34,20 +37,27 @@
 - richer projection / range cache / event-level replay
 - duplicate family collapse / diversity control
 - 强约束的 gold set / rubric / error taxonomy
+- 完整的 incremental/full-replay property/state-machine test 矩阵；当前只有聚焦 transition/migration tests
+- candidate/filter/exact 各阶段完整可观测性与 `weakMatch`/`matchMode` 公共 contract
+- 全正文 typo-tolerant fuzzy、evidence-read frecency
+- native GitHub release/tag/assets 已发布或本机 global CLI 已切换为 native
+- Linux arm64、musl 或 Windows native archive
+- watcher / daemon、LMDB 或第二状态真相源
 
 ## 代码地图
 
-- [cli.ts](src/cli.ts): CLI 命令面
-- [indexer.ts](src/indexer.ts): sync 与索引更新
-- [parser.ts](src/parser.ts): Codex JSONL 解析 facade；source-specific parser 在 `src/sources/`
-- [db.ts](src/db.ts): SQLite facade；具体 schema / store / coverage 模块在 `src/db/`
-- [query.ts](src/query.ts): 查询 facade；find / read / list / stats / search / snippet 模块在 `src/query/`
-- [status.ts](src/status.ts): status 输出编排
-- [index-sidecar.ts](src/index-sidecar.ts): metadata sidecar 只读/只写 JSON；SQLite 回退与 sync persist 在 [index-sidecar-sqlite.ts](src/index-sidecar-sqlite.ts)
-- [selector.ts](src/selector.ts): selector 解析与覆盖蕴含规则
-- [source-inventory.ts](src/source-inventory.ts): raw sessions metadata inventory
-- [types.ts](src/types.ts): CLI JSON contract 与核心类型
-- [ranking.ts](src/ranking.ts): session heuristic rerank
+- [main.rs](rust/src/main.rs): native binary entrypoint
+- [cli.rs](rust/src/cli.rs): fixed CLI surface and flags
+- [app/](rust/src/app): command orchestration, output and status
+- [runner.rs](rust/src/runner.rs): parse/dispatch/error routing
+- [sources/](rust/src/sources): source adapters, inventory and privacy projection
+- [sync/](rust/src/sync): lock, scan/project/stage, append/full transitions, cold retention and publish
+- [index/](rust/src/index): v7 read compatibility, v8 reader/writer/schema/SQL invariants
+- [retrieval/](rust/src/retrieval): query analysis, candidate aggregation, ranking, snippets and evidence-read plans
+- [migration/](rust/src/migration): v7 -> v8 copy/verify/atomic publication
+- [selector.rs](rust/src/selector.rs), [coverage.rs](rust/src/coverage.rs), [tokenizer.rs](rust/src/tokenizer.rs): shared invariants
+- [model.rs](rust/src/model.rs): public JSON/data contracts
+- [src/](src): legacy TypeScript differential oracle only
 - [eval/](eval): manual eval、batch compare
 
 ## 文档规则
@@ -67,7 +77,7 @@
 
 ### 发布版 Sherlog
 
-`shlog` 永远代表线上安装版 CLI，`sherlog` 永远代表线上安装版 skill。不要把本地 dirty tree rsync 到全局 skill。
+`shlog` 代表当前 `PATH` 上的安装版 CLI，`sherlog` 代表安装版 skill。不要把 dirty tree rsync、symlink 或本地 build 冒充已发布版本。
 
 对外推荐安装方式，也是本机更新全局线上 skill 的方式：
 
@@ -75,7 +85,7 @@
 npx skills add -g catoncat/sherlog
 ```
 
-注意这个 skill 不会自动安装 `shlog` CLI 本体。默认约定：
+这个 skill 不会安装 `shlog` CLI 本体，也不会让 native CLI 依赖 Node.js。默认约定：
 
 - 优先使用 `SHLOG_BIN`
 - 兼容回退到 `CXS_BIN`
@@ -85,14 +95,14 @@ npx skills add -g catoncat/sherlog
 
 做完涉及 CLI 行为、JSON contract、命令输出、skill 文案或对外使用流程的改动后，不要只停在源码验证；必须分清四层状态，并在 closeout 里明说当前哪几层已经更新：
 
-- 源码层：当前 checkout 的代码和 `skill-packages/sherlog` 是否已改、已测、已 commit / seal / push。
-- Skill 发布层：`skill-packages/sherlog` 只是发布源码；全局安装版 skill 必须用 `npx skills add -g catoncat/sherlog` 从 GitHub 更新，不能 rsync dirty tree 或本地 symlink 冒充发布。
-- CLI 发布层：`shlog` CLI 只代表 npm registry 发布版；不能用 `npm install -g .`、`pnpm add -g <checkout>` 或本地 symlink 冒充发布。
-- 本机安装层：用 `command -v shlog` / `which -a shlog`、`shlog --version` 和必要 CLI smoke 确认当前 `PATH` 上到底运行的是哪一个版本。
+- 源码层：Rust checkout、`skill-packages/sherlog`、tests 是否已改、已测、已 commit / seal / push。
+- Native release 层：tag 是否触发三目标 GitHub Release，archives/SBOM/checksums/installer/formula 是否实际发布。没有 release assets 就不能声称 native 已发布。
+- 本机安装层：用 `command -v shlog` / `which -a shlog`、`shlog --version` 和 smoke 确认当前 `PATH` 上运行的是哪个 binary。`target/release/shlog` 只代表本地 build。
+- Skill 发布层：全局 skill 必须用 `npx skills add -g catoncat/sherlog` 从 GitHub 更新；这是可选的外部 skill manager，不是 CLI runtime dependency。
 
-CLI 改动需要对外生效时，走正式发布流程：bump `package.json` 版本 → `npm run check` → commit / Mainline seal → push `main` → push `v<version>` tag 或触发 release workflow → 回读 GitHub Actions 与 `npm view @act0r/sherlog version`。发布成功后才更新本机 CLI，优先使用用户既有包管理器安装 registry 版；先查 shim 和包管理器来源，不要猜。
+CLI 改动需要对外生效时，走 native 发布流程：同步 bump Cargo workspace 与开发 workspace version → Rust/TS gates → commit / Mainline seal → push `main` → push `v<version>` tag → 回读 GitHub Actions 与 GitHub Release assets/attestations。发布成功后再通过发布的 installer/formula 更新本机 binary。
 
-如果只完成源码提交但尚未发布，必须明确说“全局 `shlog` CLI 仍是旧发布版，不包含本次改动”。不要声称本机 CLI 已更新。
+如果只完成源码但尚未发布，必须明确说“native source 已 ready；尚无本次 native tag/assets；本机全局 `shlog` 仍是旧发布版”。
 
 ### 本地开发验证
 
@@ -100,8 +110,9 @@ CLI 改动需要对外生效时，走正式发布流程：bump `package.json` �
 
 维护规则：
 
-- 改 CLI 行为时，同步更新 `skill-packages/sherlog`，并判断是否需要正式 CLI release；未 release 前只能用 `npm run shlog -- <args>` 验证 checkout，不要更新或覆盖全局 CLI
-- 验证当前 checkout 的未发布代码时，用 `npm run shlog -- <args>`
+- 改 CLI 行为时，同步更新 `skill-packages/sherlog`，并判断是否需要正式 native release；未 release 前只验证 checkout binary，不要更新或覆盖全局 CLI
+- 验证当前 checkout 的未发布 production code 时，优先用 `cargo run --locked --bin shlog -- <args>`；`npm run shlog -- <args>` 只是该命令的开发包装
+- TypeScript oracle 用 `npm run shlog:reference -- <args>`，不得作为 production smoke
 - 验证已安装 / 已发布行为时，用 `shlog <args>`，并先核对 `command -v shlog` 与 `shlog --version`
 - 全局 `sherlog` skill 通过 `npx skills add` 更新；不要再创建 `cxsd` skill 或 symlink
 
@@ -124,8 +135,8 @@ Dogfood golden 是开发者本机的真实历史检索验收集，不是普通�
 
 用户让 agent 根据 dogfood test 改进 Sherlog 时，先复现和分层，不要直接改实现：
 
-1. 运行 `npm run eval:dogfood -- data/cxs-dogfood/goldens.local.jsonl`
-2. 对失败 case 用 `npm run shlog -- find ... --json`、`npm run shlog -- read-range ... --json` 或 `npm run shlog -- read-page ... --json` 复现
+1. 构建 native candidate，并用 `SHLOG_BIN_UNDER_TEST=./target/debug/shlog npm run eval:dogfood -- data/cxs-dogfood/goldens.local.jsonl`（或等价 `--cli-argv-json`）运行 eval
+2. 对失败 case 用 `cargo run --locked --bin shlog -- find ... --json`、`read-range` 或 `read-page` 复现；必要时再用 `npm run shlog:reference -- ...` 做 differential diagnosis
 3. 先判断问题层级：
    - index/coverage stale → 修同步/selector 使用流程，不改排序代码
    - skill guidance 问题 → 改 `skill-packages/sherlog`，不改 CLI
@@ -133,24 +144,31 @@ Dogfood golden 是开发者本机的真实历史检索验收集，不是普通�
    - golden 期望不稳 → 保持 `candidate` 或请用户确认 stale，不硬凑实现
 4. 如果是从 `$sherlog-dogfood` 交接来的修复 handoff，先按 handoff 里的 case id、命令、期望 session/context 复现；handoff 是入口，不是结论
 5. 禁止为了通过 dogfood 直接改 golden、hardcode 某个 query/session/id、或新增不必要实体；修复必须能解释成通用 Sherlog 改进
-6. 收口至少跑 `npm run check` 和 dogfood eval；涉及 skill 行为时再验证全局 skill 安装/软链接状态
+6. 收口至少跑 Rust gates、`npm run check`、focused native repro 和绑定 native candidate 的 dogfood eval（`--cli-argv-json`、`SHLOG_CLI_ARGV_JSON` 或 `SHLOG_BIN_UNDER_TEST`）；无 override 时 runner 默认 TypeScript oracle。涉及 skill 行为时再验证全局 skill 安装状态
 
 ## 默认验证
 
 涉及实现或文档真相变更时，至少做与改动直接相关的验证：
 
-- `npm run check`
-- 必要时补一条 CLI 烟测，例如 `npm run shlog -- status --json` 或 `npm run shlog -- find "<query>" --json`
+- `cargo fmt --all -- --check`
+- `cargo test --workspace --all-targets --all-features --locked`
+- `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`
+- `cargo build --release --locked --bin shlog`
+- `npm run check`（仅 TypeScript oracle/eval workspace）
+- 必要时补一条 release binary 烟测，例如 `target/release/shlog status --json` 或 sanitized fixture sync/find/read
 - 涉及 skill 通道时，验证 `npx skills ls -g --json` 和 `shlog --help`
-- 涉及发布 / 安装态时，回读 `npm view @act0r/sherlog version`、`which -a shlog`、`shlog --version`，并说明本机 CLI 是否已经来自 registry 发布版
+- 涉及发布 / 安装态时，回读 GitHub Release assets、`which -a shlog`、`shlog --version`，并说明本机 CLI 是否来自 native release
 
 没有验证证据，不要声称“已对齐”“已完成”“文档正确”。
 
 ## 当前近端优先级
 
 1. 先把 eval 从弱提示升级成更可信的 acceptance gate
-2. 继续观察 session-level 字段召回是否引入排序噪音，并补 eval 覆盖
-3. 更重的 reranker / projection / diversity 控制放后面
+2. 把 `incremental == full replay` 扩成 property/state-machine acceptance，覆盖 append、truncate、prefix rewrite、rename、hot/cold/prune、migration crash 与旧 writer 竞争
+3. 增加 candidate -> filter -> exact/read 各阶段计数与 match mode 可观测性
+4. 继续观察 session-level 字段召回是否引入排序噪音，并补 eval 覆盖
+5. 只在 eval 证明收益后探索 metadata typo fallback 或有上限的 evidence-read frecency；不做无界正文 fuzzy
+6. 更重的 reranker / projection / diversity 控制放后面
 
 具体 roadmap 见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 

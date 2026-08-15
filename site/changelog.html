@@ -180,23 +180,40 @@
   <div class="top-controls">
     <a href="/">Home</a>
     <a href="https://github.com/catoncat/sherlog">GitHub</a>
-    <a href="https://www.npmjs.com/package/@act0r/sherlog">npm</a>
+    <a href="https://github.com/catoncat/sherlog/releases"><span class="en">Releases</span><span class="zh">发布</span></a>
     <span class="lang-toggle">
-      <button onclick="setLang('en')" id="btn-en" aria-label="English">EN</button>
-      <button onclick="setLang('zh')" id="btn-zh" aria-label="中文">中</button>
+      <button type="button" onclick="setLang('en')" id="btn-en" aria-label="English">EN</button>
+      <button type="button" onclick="setLang('zh')" id="btn-zh" aria-label="中文">中</button>
     </span>
-    <button onclick="toggleTheme()" id="btn-theme" class="theme-btn" aria-label="Toggle theme">◐</button>
+    <button type="button" onclick="toggleTheme()" id="btn-theme" class="theme-btn" aria-label="Toggle theme">◐</button>
   </div>
 
   <header>
     <h1>changelog</h1>
     <div class="lede">
-      <span class="en">Release history for <code>@act0r/sherlog</code>. Full commit history lives on <a href="https://github.com/catoncat/sherlog/releases">GitHub Releases</a>.</span>
-      <span class="zh"><code>@act0r/sherlog</code> 的版本历史。完整提交记录见 <a href="https://github.com/catoncat/sherlog/releases">GitHub Releases</a>。</span>
+      <span class="en">Release history and native-cutover status for Sherlog. Published artifacts live on <a href="https://github.com/catoncat/sherlog/releases">GitHub Releases</a>.</span>
+      <span class="zh">Sherlog 的版本历史与原生切换状态。已发布产物见 <a href="https://github.com/catoncat/sherlog/releases">GitHub Releases</a>。</span>
     </div>
   </header>
 
   <main>
+    <section>
+      <div class="release-header">
+        <span class="release-version">v0.5.0</span>
+        <span class="release-date">unreleased</span>
+      </div>
+      <ul class="en">
+        <li><strong>Standalone Rust runtime.</strong> The production CLI in the current source tree is a native Rust binary with bundled SQLite/FTS5. Node.js and the TypeScript implementation remain only as development contract/evaluation oracles.</li>
+        <li><strong>Native distribution is source-ready.</strong> Release automation builds and tests macOS arm64/x64 and Linux x64 GNU archives, with SHA-256 checksums, SPDX SBOMs, GitHub attestations, a no-Node installer, and a rendered Homebrew formula.</li>
+        <li><strong>Not published yet.</strong> No native tag or native assets have been released from this cutover. Build the current checkout with <code>cargo build --release --locked -p sherlog-cli --bin shlog</code>; installer URLs become live only after the next native tag is published.</li>
+      </ul>
+      <ul class="zh">
+        <li><strong>Standalone Rust runtime。</strong>当前源码树中的生产 CLI 已是内置 SQLite/FTS5 的原生 Rust binary。Node.js 与 TypeScript 实现只保留为开发阶段的 contract / eval oracle。</li>
+        <li><strong>原生分发源码已就绪。</strong>Release automation 会分别构建并测试 macOS arm64/x64 与 Linux x64 GNU archive，同时生成 SHA-256、SPDX SBOM、GitHub attestation、无需 Node 的 installer，以及带真实校验值的 Homebrew formula。</li>
+        <li><strong>尚未发布。</strong>这次切换还没有创建 native tag 或发布 native assets。当前请用 <code>cargo build --release --locked -p sherlog-cli --bin shlog</code> 构建 checkout；installer URL 只会在下一个 native tag 发布后生效。</li>
+      </ul>
+    </section>
+
     <section>
       <div class="release-header">
         <span class="release-version">v0.4.4</span>
@@ -387,7 +404,8 @@
   </main>
 
   <footer>
-    Node 22+ &middot; macOS &middot; Linux
+    <span class="en">Standalone Rust source &middot; native release pending &middot; historical npm releases retained below</span>
+    <span class="zh">Standalone Rust 源码 &middot; 原生发布待创建 &middot; 下方保留历史 npm 版本记录</span>
   </footer>
 
   <script>

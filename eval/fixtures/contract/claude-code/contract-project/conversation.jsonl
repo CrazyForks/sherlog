@@ -1,0 +1,2 @@
+{"type":"user","sessionId":"contract-claude-session","cwd":"/tmp/sherlog-contract/claude","timestamp":"2020-01-15T02:00:00.000Z","message":{"content":"contract shared beacon claude request"}}
+{"type":"assistant","sessionId":"contract-claude-session","cwd":"/tmp/sherlog-contract/claude","timestamp":"2020-01-15T02:00:01.000Z","message":{"content":[{"type":"text","text":"contract claude response remains readable"}]}}

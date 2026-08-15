@@ -1,249 +1,61 @@
-# Sherlog JSON Schema
+# Public JSON Shapes
 
-## find
+以下是 standalone Rust CLI 的 agent-facing contract。字段使用 camelCase；示例省略不影响决策的长文本。不要从 SQLite 内部 row shape 推导 public JSON。
 
-Top-level shape:
-
-```ts
-{
-  query: string;
-  sourceIds: Array<"codex" | "claude-code" | "pi">;
-  sort: "relevance" | "ended" | "started";
-  excludedSessions: string[];
-  results: FindResult[];
-  scannedMessageCount: number; // 检索覆盖范围(selector 限定后)内的消息总数,做诚实分母
-  coverage: CoverageStatus;
-  coverageBySource?: Array<{ sourceId: "codex" | "claude-code" | "pi"; coverage: CoverageStatus }>;
-  nextAction?: QueryNextAction;
-  zeroResults?: ZeroResultsDiagnosis; // 仅零结果时出现
-  elapsedMs: number; // 端到端耗时(进程启动到输出),仅 CLI 输出注入,非 query 层字段
-}
-```
-
-`ZeroResultsDiagnosis`（零结果诊断，只读、不会隐式 sync）:
+## Shared selector
 
 ```ts
-{
-  reason: "fresh_miss" | "stale_or_missing_coverage" | "coverage_not_confirmed";
-  overConstrained: boolean;      // query token 过多或中英混排
-  suggestedQueries: string[];    // 确定性放宽建议(单个独特标识符 / 完整中文词串)
-  hints: string[];
-}
-```
+type SourceId = "codex" | "claude-code" | "pi";
 
-- `fresh_miss`：coverage 新鲜，miss 可信；先按 `suggestedQueries` 放宽再下结论。
-- `stale_or_missing_coverage`：miss 不可信；按 `nextAction` 同范围 sync 后重试。
-- `coverage_not_confirmed`：未确认新鲜度；先 `status` 同 selector。
-
-`scannedMessageCount` 随 selector 范围收窄(全库 vs `--cwd` 子集),可用于「从 ~N 条历史里定位」这类诚实回述,不要据此编造「省 X%」。`elapsedMs` 由 CLI 层在产出输出时用 `performance.now()` 注入,`read-range` / `read-page` 的 JSON 同样带 `elapsedMs`。
-
-`FindResult`:
-
-```ts
-{
-  rank: number;
-  sourceId: "codex" | "claude-code" | "pi";
-  sessionUuid: string;
-  sessionRef: string;
-  title: string;
-  summaryText: string;
-  cwd: string;
-  startedAt: string;
-  endedAt: string;
-  matchCount: number;
-  matchSource: "message" | "session";
-  matchSeq: number | null;
-  matchRole: "user" | "assistant" | "session";
-  matchTimestamp: string | null;
-  score: number;
-  snippet: string;
-  matchedFields: Array<"message" | "title" | "summary" | "compact" | "reasoningSummary">;
-  sessionMessageCount: number; // 该 session 已索引消息总数 = read-page 成本上限
-  evidenceRead: EvidenceReadAction; // 仅 CLI JSON 输出注入；优先执行它读取内容证据
-}
-```
-
-`matchedFields` 是 best-effort 命中出处：`["message"]` 表示锚在真实 transcript 消息；session-level 命中列出命中的索引字段（title/summary/compact/reasoningSummary），空数组表示无法归因（如 diacritics 折叠命中）。用它判断信任度：message > title/compact > reasoningSummary。`sessionMessageCount` 用于估算读取成本，选择 `read-range` 局部窗口还是 `read-page` 顺序翻页。
-
-`find` defaults to cross-source recall across public indexed sources. Use
-`sourceIds` to see which sources participated. Use each result's `sessionRef`
-as the read command input; for Codex it is usually the bare UUID, while
-Claude Code and Pi refs are source-qualified such as `claude-code:<id>` or `pi:<id>`.
-
-`matchSource = "session"` means the hit came from session-level fields such as title, derived summary, compact handoff, or reasoning summary rather than a concrete message. In that case `matchSeq` is `null`; follow `evidenceRead.argv` instead of fabricating a `read-range --seq` anchor.
-
-`EvidenceReadAction`:
-
-```ts
-type EvidenceReadAction =
+type Selector =
+  | { kind: "all"; source: SourceId; root: string }
+  | { kind: "cwd"; source: SourceId; root: string; cwd: string }
   | {
-      kind: "read-range";
-      reason: "message_match";
-      sourceId: "codex" | "claude-code" | "pi";
-      sessionRef: string;
-      seq: number;
-      query?: string;
-      before: number;
-      after: number;
-      argv: string[];
+      kind: "date_range";
+      source: SourceId;
+      root: string;
+      fromDate: string;
+      toDate: string;
     }
   | {
-      kind: "read-range";
-      reason: "session_level_match";
-      sourceId: "codex" | "claude-code" | "pi";
-      sessionRef: string;
-      query: string;
-      before: number;
-      after: number;
-      argv: string[];
-    }
-  | {
-      kind: "read-page";
-      reason: "session_level_match";
-      sourceId: "codex" | "claude-code" | "pi";
-      sessionRef: string;
-      offset: number;
-      limit: number;
-      argv: string[];
+      kind: "cwd_date_range";
+      source: SourceId;
+      root: string;
+      cwd: string;
+      fromDate: string;
+      toDate: string;
     };
 ```
 
-优先执行 `evidenceRead.argv`。message-level `read-range` 在有原 query 时会同时带 `--seq` 和 `--query`，用于保持稳定 seq anchor 并让 read command 在超大消息省略时围绕 query term 保留证据 span。session-level hit 有 query 时会用 `read-range --query` 重新定位真实 message anchor；没有 query 时才 fallback `read-page`。
-
-`QueryNextAction` appears on `find` / `list` when the command cannot prove the target coverage is fresh enough for the requested conclusion. For Codex `find`, non-empty results no longer get a retry gate for `source_content_changed` soft stale, which commonly means the current session file is still being appended. If non-empty `find` still returns `stale_or_missing_coverage`, treat it as a harder risk such as missing coverage, a changed source file set, or a non-Codex source staying conservative unless a follow-up `status` says otherwise.
+## Stored coverage
 
 ```ts
-{
-  kind: "check_coverage_then_retry" | "choose_selector_then_check_coverage";
-  reason:
-    | "zero_results_with_unconfirmed_selector_coverage"
-    | "zero_results_without_selector"
-    | "stale_or_missing_coverage";
-  selector?: Selector;
-  steps: string[];
-  commands?: Array<{ label: string; recommended: boolean; argv: string[]; selector?: Selector }>;
-}
-```
-
-Treat it as a retry gate for zero results, explicit completeness questions, missing coverage, and source-set changes. If `status.requestedCoverage.staleReason === "source_content_changed"` and `recommendedAction === "query"`, prefer querying/reading the existing index first; sync only when the answer may depend on the latest active-session tail. Otherwise choose/check the same selector, run `sync` only if `status.requestedCoverage.recommendedAction === "sync"`, then retry `find` before concluding the current result set is complete.
-
-## read-range
-
-```ts
-{
-  session: SessionRecord;
-  anchorSeq: number;
-  rangeStartSeq: number;
-  rangeEndSeq: number;
-  messages: MessageRecord[];
-  coverage: { entries: CoverageRecord[] };
-  elapsedMs: number; // 端到端耗时(进程启动到输出),仅 CLI 输出注入,非 query 层字段
-}
-```
-
-## read-page
-
-```ts
-{
-  session: SessionRecord;
-  offset: number;
-  limit: number;
-  totalCount: number;
-  hasMore: boolean;
-  messages: MessageRecord[];
-  coverage: { entries: CoverageRecord[] };
-  elapsedMs: number; // 端到端耗时(进程启动到输出),仅 CLI 输出注入,非 query 层字段
-}
-```
-
-## list
-
-```ts
-{
-  query: {
-    sourceId?: "codex" | "claude-code" | "pi";
-    cwd?: string;
-    since?: string;
-    selector?: Selector;
-    sort: "ended" | "started" | "messages";
-    limit: number;
-  };
-  results: SessionListEntry[];
-  coverage: CoverageStatus;
-  nextAction?: QueryNextAction;
-}
-```
-
-## stats
-
-```ts
-{
-  sessionCount: number;
-  messageCount: number;
-  earliestStartedAt: string | null;
-  latestEndedAt: string | null;
-  topCwds: Array<{ cwd: string; count: number }>;
+interface CoverageRecord {
+  id: number;
+  selector: Selector;
+  sourceFingerprint: string;
+  sourceFileSetFingerprint: string;
+  sourceFileCount: number;
+  indexedSessionCount: number;
+  completedAt: string;
   indexVersion: string;
-  dbPath: string;
-  dbSizeBytes: number;
-  lastSyncAt: string | null;
-  coverage: CoverageRecord[];
+}
+
+interface CoverageStatus {
+  requested: Selector | null;
+  complete: boolean;
+  freshness: "fresh" | "stale" | "missing" | "not_checked";
+  staleReason?: "none" | "missing" | "source_content_changed" | "source_set_changed";
+  coveringSelectors: CoverageRecord[];
 }
 ```
 
-## Read Command Errors
+`find/list/read/stats` 的 coverage 只来自 SQLite stored proof。`find/list` 的 `CoverageStatus.freshness` 是 `not_checked`，即使 `complete=true` 也只表示存在 compatible covering record；`read/stats` 只返回 stored entries/rows。Live comparison 只在 `status` 中出现。Status 不返回/检索正文、不写 index，但 inventory cache miss 会流式读取 raw accepted projection；exact `mtime_ns`/checkpoint cache hit 不重 parse。
 
-`find` / `read-range` / `read-page` / `list` / `stats` return structured
-errors in `--json` mode for expected index setup and read failures:
-
-```ts
-{
-  error:
-    | {
-        code: "index_unavailable";
-        message: string;
-        dbPath: string;
-        hint: string;
-        nextAction: {
-          kind: "bootstrap_index";
-          reason: "index_unavailable";
-          commands: Array<{
-            label: string;
-            when: string;
-            recommended: boolean;
-            argv: string[];
-            selector: Selector;
-          }>;
-        };
-      }
-    | { code: "index_schema_upgrade_required"; message: string; dbPath: string; missingColumns: string[]; hint: string }
-    | {
-        code: "session_not_found";
-        message: string;
-        sessionRef: string;
-        sourceId: SessionSourceId;
-        nativeSessionId: string;
-        hint: string;
-        nextAction: {
-          kind: "check_coverage_then_retry_read";
-          reason: "session_not_found";
-          steps: string[];
-          commands: Array<{
-            label: string;
-            recommended: boolean;
-            argv: string[];
-          }>;
-        };
-      };
-}
-```
-
-## status
-
-Default JSON is a compact coverage proof, not a historical audit dump:
+## `status --json`
 
 ```ts
-{
+interface StatusPayload {
   context: {
     cwd: string;
     root: string;
@@ -254,7 +66,11 @@ Default JSON is a compact coverage proof, not a historical audit dump:
     root: string;
     totalFiles: number;
     pathDateRange: { from: string | null; to: string | null };
-    cwdGroups: SourceInventoryCwdGroup[]; // empty unless --inventory
+    cwdGroups: Array<{
+      cwd: string;
+      fileCount: number;
+      pathDateRange: { from: string | null; to: string | null };
+    }>;
   };
   index: {
     exists: boolean;
@@ -265,31 +81,48 @@ Default JSON is a compact coverage proof, not a historical audit dump:
     dbSizeBytes: number;
     lastSyncAt: string | null;
   };
-  coverageCount: number; // stored coverage rows for this source; not a freshness proof
-  coverage: CoverageInventoryStatus[]; // empty unless --inventory
-  requestedCoverage?: RequestedCoverageStatus; // present when --selector / --cwd
+  coverageCount: number;
+  coverage: CoverageInventoryStatus[];
+  requestedCoverage?: RequestedCoverageStatus;
+}
+
+interface CoverageInventoryStatus extends CoverageRecord {
+  freshness: "fresh" | "stale";
+  staleReason: "none" | "source_content_changed" | "source_set_changed";
+  advisory: boolean;
+  currentSourceFingerprint: string;
+  currentSourceFileSetFingerprint: string;
+  currentSourceFileCount: number;
+}
+
+interface RequestedCoverageStatus {
+  requested: Selector;
+  complete: boolean;
+  freshness: "fresh" | "stale" | "missing";
+  staleReason: "none" | "missing" | "source_content_changed" | "source_set_changed";
+  sourceFingerprint: string;
+  sourceFileSetFingerprint: string;
+  sourceFileCount: number;
+  coveringSelectors: CoverageInventoryStatus[];
+  recommendedAction: "query" | "sync";
 }
 ```
 
-Use `requestedCoverage` (from `--selector` / `--cwd`) as the freshness proof. `fresh all(root)` still covers narrower same-root selectors via `selectorImplies`. Do not iterate default `coverage[]` or `sourceInventory.cwdGroups` — they are omitted unless you pass `--inventory`. `coverageCount` is only a stored-row count.
+默认 `coverage=[]` 且 `cwdGroups=[]`；`--inventory` 才展开。`requestedCoverage` 只在 `--cwd` / `--selector` 时出现。
 
-`--inventory` restores the old per-row freshness audit (`coverage[]`) and `cwdGroups`. It re-fingerprints historical cwd/date_range selectors and is for debugging, not the agent common path.
-
-## sync
+## `sync --json`
 
 ```ts
-{
+interface SyncPayload {
   scanned: number;
   added: number;
   updated: number;
   skipped: number;
   filtered: number;
   removed: number;
+  retainedCold: number;
   errors: number;
-  errorDetails: Array<{
-    filePath: string;
-    message: string;
-  }>;
+  errorDetails: Array<{ filePath: string; message: string }>;
   selector: Selector;
   coverage: {
     written: boolean;
@@ -305,18 +138,116 @@ Use `requestedCoverage` (from `--selector` / `--cwd`) as the freshness proof. `f
 }
 ```
 
-当 Codex JSONL 在 strict sync 读取其起始 byte 边界后仅继续追加时，sync 仍以成功结束，稳定 source 和已读前缀一起提交；`coverage.staleReason` 标记当前活跃尾部尚未包含，`recommendedAction: "query"` 表示现有 index 可查询，稍后再 sync 可补齐尾部。截断、前缀摘要不一致、同大小替换或 source file set 变化不会得到这两个字段，而是继续走非零失败与 `errorDetails`。
+strict failure 的 JSON report 写 stderr 并 non-zero；`--best-effort` report 可写 stdout且包含 errors。`coverage.written=true` 才代表写入 coverage record；仍需观察可选 staleReason。
 
-若尚未索引的新 Codex 文件在 parser 建立有界读取前已经变化，sync 无法证明旧 snapshot 前缀未被改写，因此不写该文件，也不写 complete coverage；其他稳定 operation 仍在同一事务提交。此时 `coverage.written=false`、`reason="active_source_deferred"`、`recommendedAction="sync"`，下一次 sync 再补该文件。
-
-## Shared Records
-
-`SessionRecord`:
+## `find --json`
 
 ```ts
-{
+interface FindPayload {
+  query: string;
+  sourceIds: SourceId[];
+  sort: "relevance" | "ended" | "started";
+  excludedSessions: string[];
+  results: FindResult[];
+  scannedMessageCount: number;
+  coverage: CoverageStatus;
+  coverageBySource?: Array<{ sourceId: SourceId; coverage: CoverageStatus }>;
+  nextAction?: QueryNextAction;
+  zeroResults?: {
+    reason: "fresh_miss" | "stale_or_missing_coverage" | "coverage_not_confirmed";
+    overConstrained: boolean;
+    suggestedQueries: string[];
+    hints: string[];
+  };
+  elapsedMs: number;
+}
+
+interface FindResult {
+  rank: number;
+  sourceId: SourceId;
+  sessionUuid: string;
+  sessionRef: string;
+  title: string;
+  summaryText: string;
+  cwd: string;
+  startedAt: string;
+  endedAt: string;
+  matchCount: number;
+  matchSource: "message" | "session";
+  matchSeq: number | null;
+  matchRole: "user" | "assistant" | "session";
+  matchTimestamp: string | null;
+  score: number;
+  snippet: string;
+  matchedFields: Array<"message" | "title" | "summary" | "compact" | "reasoningSummary">;
+  sessionMessageCount: number;
+  evidenceRead: EvidenceRead;
+}
+
+type EvidenceRead =
+  | {
+      kind: "read-range";
+      reason: "message_match" | "session_level_match";
+      sourceId: SourceId;
+      sessionRef: string;
+      seq?: number;
+      query?: string;
+      before: number;
+      after: number;
+      argv: string[];
+    }
+  | {
+      kind: "read-page";
+      reason: "session_level_match";
+      sourceId: SourceId;
+      sessionRef: string;
+      offset: number;
+      limit: number;
+      argv: string[];
+    };
+```
+
+总是执行完整 `evidenceRead.argv`。`matchSource="session"` 时 `matchSeq=null`；不要构造虚假的 `--seq -1`。
+
+当前 native `find` 不扫描 raw，因此正常 zero-result diagnosis 使用 `coverage_not_confirmed`。需要把同 selector 的 `status.requestedCoverage` live proof 与 find miss 组合起来；不要从 stored `complete` 推断 `fresh_miss`。Schema 保留其他 reason 供兼容/演进。
+
+当前 public JSON 没有 candidate/filter/exact stage counts、`weakMatch` 或 `matchMode`；这些是后续 observability 工作，不能依赖。
+
+## `read-range --json`
+
+```ts
+interface ReadRangePayload {
+  session: SessionRecord;
+  anchorSeq: number;
+  rangeStartSeq: number;
+  rangeEndSeq: number;
+  messages: MessageRecord[];
+  coverage: { entries: CoverageRecord[] };
+  elapsedMs: number;
+}
+```
+
+## `read-page --json`
+
+```ts
+interface ReadPagePayload {
+  session: SessionRecord;
+  offset: number;
+  limit: number;
+  totalCount: number;
+  hasMore: boolean;
+  messages: MessageRecord[];
+  coverage: { entries: CoverageRecord[] };
+  elapsedMs: number;
+}
+```
+
+## Shared session/message
+
+```ts
+interface SessionRecord {
   id: number;
-  sourceId: "codex" | "claude-code" | "pi";
+  sourceId: SourceId;
   nativeSessionId: string;
   sessionKey: string;
   sessionUuid: string;
@@ -331,124 +262,144 @@ Use `requestedCoverage` (from `--selector` / `--cwd`) as the freshness proof. `f
   pathDate: string;
   messageCount: number;
 }
-```
 
-`MessageRecord`:
-
-```ts
-{
+interface MessageRecord {
   sessionUuid: string;
   seq: number;
   role: "user" | "assistant";
   contentText: string;
   timestamp: string;
   sourceKind: string;
-  elision?: MessageElision;
+  elision?: {
+    originalCharCount: number;
+    displayedCharCount: number;
+    omittedCharCount: number;
+    strategy: "head_tail" | "around_query";
+    query?: string;
+    hint: string;
+  };
 }
 ```
 
-`read-range` / `read-page` 默认会对超大单条消息做确定性省略。被省略的 message 保留 `sessionUuid`、`seq`、`role`、`timestamp`、`sourceKind`，并把 `contentText` 替换成保留片段加显式省略 marker；未省略的小消息没有 `elision` 字段。传 `--max-message-chars 0` 可关闭单条消息省略。
-
-`MessageElision`:
+## `list --json`
 
 ```ts
-{
-  originalCharCount: number;
-  displayedCharCount: number;
-  omittedCharCount: number;
-  strategy: "head_tail" | "around_query";
-  query?: string;
-  hint: string; // 例如 rerun read with --max-message-chars N
+interface ListPayload {
+  query: {
+    sourceId?: SourceId;
+    cwd?: string;
+    since?: string;
+    selector?: Selector;
+    sort: "ended" | "started" | "messages";
+    limit: number;
+  };
+  results: Array<{
+    sessionUuid: string;
+    title: string;
+    summaryText: string;
+    cwd: string;
+    startedAt: string;
+    endedAt: string;
+    pathDate: string;
+    messageCount: number;
+  }>;
+  coverage: CoverageStatus;
+  nextAction?: QueryNextAction;
 }
 ```
 
-`Selector`:
+`list` 当前 result 不带 `sessionRef`/`sourceId`；非 Codex 工作流若需要 source-qualified read，保持已知 `--source` 并构造对应 source ref，或优先用 `find` 获取 `sessionRef`。
+
+## `stats --json`
 
 ```ts
-type Selector =
-  | { source?: "codex" | "claude-code" | "pi"; kind: "all"; root: string }
-  | { source?: "codex" | "claude-code" | "pi"; kind: "date_range"; root: string; fromDate: string; toDate: string }
-  | { source?: "codex" | "claude-code" | "pi"; kind: "cwd"; root: string; cwd: string }
-  | { source?: "codex" | "claude-code" | "pi"; kind: "cwd_date_range"; root: string; cwd: string; fromDate: string; toDate: string };
-```
-
-Input selector JSON may omit `source`; canonical selectors returned by public CLI commands include the resolved source id. `claude-code` and `pi` are public but experimental CLI sources. These public CLI schemas still should not be read as stable raw-format promises; non-Codex support may move toward different SDK/session contracts in later releases.
-
-`CoverageStatus`:
-
-```ts
-{
-  requested: Selector | null;
-  complete: boolean;
-  freshness: "fresh" | "stale" | "missing" | "not_checked";
-  staleReason?: "none" | "missing" | "source_content_changed" | "source_set_changed";
-  coveringSelectors: CoverageRecord[];
-}
-```
-
-Public `find --json` evaluates raw source freshness and keeps these fields aligned
-with `nextAction`. The synchronous SQLite query facade cannot inspect raw source
-state, so it returns `complete=false` / `freshness="not_checked"` while retaining
-historical `coveringSelectors`; that means freshness is unconfirmed, not that the
-indexed rows are unusable. For a Codex active-tail soft stale, non-empty results
-remain queryable with `complete=false`, `freshness="stale"`, and
-`staleReason="source_content_changed"`; a suspicious zero result also carries a
-retry-oriented `nextAction`.
-
-`RequestedCoverageStatus`:
-
-```ts
-{
-  requested: Selector;
-  complete: boolean;
-  freshness: "fresh" | "stale" | "missing";
-  staleReason: "none" | "missing" | "source_content_changed" | "source_set_changed";
-  sourceFingerprint: string;
-  sourceFileSetFingerprint: string;
-  sourceFileCount: number;
-  coveringSelectors: CoverageInventoryStatus[];
-  recommendedAction: "query" | "sync";
-}
-```
-
-`source_content_changed` means an existing source file changed while the selected
-file set stayed stable. This is based on `sourceFileSetFingerprint`, not
-`sourceFileCount`; same-count file replacement remains `source_set_changed`.
-For Codex this often happens because the current conversation JSONL is still
-growing; when paired with `recommendedAction: "query"`, the existing index may
-be useful, but it is not proof of the latest tail. Other sources may still pair
-`source_content_changed` with `recommendedAction: "sync"`. `source_set_changed`
-means files entered or left the selected snapshot and is a stronger reason to
-sync before a completeness claim.
-
-`CoverageRecord`:
-
-```ts
-{
-  id: number;
-  selector: Selector;
-  sourceFingerprint: string;
-  sourceFileSetFingerprint: string;
-  sourceFileCount: number;
-  indexedSessionCount: number;
-  completedAt: string;
+interface StatsPayload {
+  sessionCount: number;
+  messageCount: number;
+  earliestStartedAt: string | null;
+  latestEndedAt: string | null;
+  topCwds: Array<{ cwd: string; count: number }>;
   indexVersion: string;
+  dbPath: string;
+  dbSizeBytes: number;
+  lastSyncAt: string | null;
+  coverage: CoverageRecord[];
 }
 ```
 
-`CoverageInventoryStatus`:
+## `cold --json`
 
 ```ts
-CoverageRecord & {
-  freshness: "fresh" | "stale";
-  currentSourceFingerprint: string;
-  currentSourceFileSetFingerprint: string;
-  currentSourceFileCount: number;
+interface RegisteredColdRoot {
+  sourceId: SourceId;
+  root: string;
+  addedAt: string;
+}
+
+// cold add
+{ ok: true; configPath: string; entry: RegisteredColdRoot }
+
+// cold list
+{ configPath: string; roots: RegisteredColdRoot[] }
+
+// cold remove
+{ ok: true; removed: boolean; configPath: string; root: string; sourceId: SourceId }
+```
+
+在 v8 中 `configPath` 只标识 legacy tombstone compatibility path。registration truth 是 `roots` / SQLite `cold_roots`，不要读取/写入该路径当配置文件。
+
+## Query next action
+
+```ts
+interface QueryNextAction {
+  kind: "check_coverage_then_retry" | "choose_selector_then_check_coverage";
+  reason:
+    | "zero_results_with_unconfirmed_selector_coverage"
+    | "zero_results_without_selector"
+    | "stale_or_missing_coverage";
+  selector?: Selector;
+  steps: string[];
+  commands?: Array<{
+    label: string;
+    recommended: boolean;
+    argv: string[];
+    selector?: Selector;
+  }>;
 }
 ```
 
-## 来源
+## Error envelope
 
-- 仓库内 `src/types.ts`
-- 仓库内 `src/cli.ts`
-- 仓库内 `src/query.ts`
+Typed business/index errors：
+
+```ts
+interface ErrorEnvelope {
+  error: {
+    code: string;
+    message: string;
+    [key: string]: unknown;
+  };
+}
+```
+
+常见扩展：
+
+- `index_unavailable`：`dbPath`、`hint`、`nextAction.commands[].argv`；
+- `index_schema_upgrade_required`：`dbPath`、`missingColumns`、`hint`；
+- `session_not_found`：`sessionRef`、`sourceId`、`nativeSessionId`、`dbPath`、`nextAction`；
+- `unsupported_source`：`source`；
+- `invalid_selector` / `invalid_cold_root` / `index_error`：message。
+
+CLI parse error 不保证 JSON envelope；例如缺少 `find` query 是 plain stderr compatibility text。
+
+## SQLite storage truth
+
+v8 internal object：`meta`、`session_rows`、read-only `sessions` view、`source_files`、`documents`、contentless `documents_fts`、`coverage`、`cold_roots`。高级 metadata SQL 只依赖 `sessions` view；不要查询 FTS content columns，也不要手写内部表。
+
+## Source of truth
+
+- `rust/src/model.rs`
+- `rust/src/retrieval/evidence.rs`
+- `rust/src/app/output.rs`
+- `rust/src/error.rs`
+- `rust/src/index/v8.sql`
