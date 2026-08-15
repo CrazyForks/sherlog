@@ -34,7 +34,7 @@ export function listSessions(db: Db, query: SessionListQuery): SessionListEntry[
   params.push(query.limit);
 
   return db
-    .prepare<typeof params, SessionListEntry>(`
+    .prepare(`
       SELECT
         session_uuid AS sessionUuid,
         title,
@@ -49,5 +49,5 @@ export function listSessions(db: Db, query: SessionListQuery): SessionListEntry[
       ORDER BY ${orderColumn} DESC
       LIMIT ?
     `)
-    .all(...params) as SessionListEntry[];
+    .all(...params) as unknown as SessionListEntry[];
 }

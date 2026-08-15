@@ -1,6 +1,6 @@
 import { tokenizedText } from "../tokenize";
 import { DEFAULT_SESSION_SOURCE_ID, isSessionSourceId, type ParsedMessage, type ParsedSession, type SessionRecord, type SessionSourceId } from "../types";
-import type { Db } from "./shared";
+import { withTransaction, type Db } from "./shared";
 import { sessionRootFromFile } from "./sql";
 
 export function getIndexedSessionMeta(
@@ -9,7 +9,7 @@ export function getIndexedSessionMeta(
   sourceId: SessionSourceId = DEFAULT_SESSION_SOURCE_ID,
 ): { rawFileMtime: number; rawFileSize: number; indexVersion: string } | null {
   const row = db
-    .prepare<[SessionSourceId, string], { rawFileMtime: number; rawFileSize: number; indexVersion: string }>(`
+    .prepare(`
       SELECT raw_file_mtime AS rawFileMtime, raw_file_size AS rawFileSize, index_version AS indexVersion
       FROM sessions
       WHERE source_id = ? AND file_path = ?
@@ -35,7 +35,7 @@ export function getIndexedSessionMetas(
     const chunk = filePaths.slice(i, i + chunkSize);
     const placeholders = chunk.map(() => "?").join(",");
     const rows = db
-      .prepare<[SessionSourceId, ...string[]], { file_path: string; rawFileMtime: number; rawFileSize: number; indexVersion: string }>(`
+      .prepare(`
         SELECT file_path, raw_file_mtime AS rawFileMtime, raw_file_size AS rawFileSize, index_version AS indexVersion
         FROM sessions
         WHERE source_id = ? AND file_path IN (${placeholders})
@@ -71,28 +71,28 @@ export function getIndexedSessionProjection(
   filePath: string,
   sourceId: SessionSourceId = DEFAULT_SESSION_SOURCE_ID,
 ): IndexedSessionProjection | null {
-  const row = db.prepare<[SessionSourceId, string], Omit<IndexedSessionProjection, "messages"> & { id: number }>(`
+  const row = db.prepare(`
     SELECT id, session_uuid AS sessionUuid, title, summary_text AS summaryText,
            compact_text AS compactText, reasoning_summary_text AS reasoningSummaryText,
            cwd, started_at AS startedAt, ended_at AS endedAt
     FROM sessions
     WHERE source_id = ? AND file_path = ?
     LIMIT 1
-  `).get(sourceId, filePath);
+  `).get(sourceId, filePath) as (Omit<IndexedSessionProjection, "messages"> & { id: number }) | undefined;
   if (!row) return null;
-  const messages = db.prepare<[number], ParsedMessage>(`
+  const messages = db.prepare(`
     SELECT role, content_text AS contentText, timestamp, seq, source_kind AS sourceKind
     FROM messages
     WHERE session_id = ?
     ORDER BY seq ASC
-  `).all(row.id);
+  `).all(row.id) as unknown as ParsedMessage[];
   const { id: _id, ...session } = row;
   return { ...session, messages };
 }
 
 export function deleteSessionByFilePath(db: Db, filePath: string, sourceId: SessionSourceId = DEFAULT_SESSION_SOURCE_ID): void {
   const row = db
-    .prepare<[SessionSourceId, string], { id: number }>("SELECT id FROM sessions WHERE source_id = ? AND file_path = ? LIMIT 1")
+    .prepare("SELECT id FROM sessions WHERE source_id = ? AND file_path = ? LIMIT 1")
     .get(sourceId, filePath) as { id: number } | undefined;
 
   if (!row) return;
@@ -101,7 +101,7 @@ export function deleteSessionByFilePath(db: Db, filePath: string, sourceId: Sess
 
 export function deleteSessionByUuid(db: Db, sessionUuid: string, sourceId: SessionSourceId = DEFAULT_SESSION_SOURCE_ID): void {
   const row = db
-    .prepare<[SessionSourceId, string], { id: number }>("SELECT id FROM sessions WHERE source_id = ? AND native_session_id = ? LIMIT 1")
+    .prepare("SELECT id FROM sessions WHERE source_id = ? AND native_session_id = ? LIMIT 1")
     .get(sourceId, sessionUuid) as { id: number } | undefined;
   if (!row) return;
   deleteSessionById(db, row.id);
@@ -124,9 +124,9 @@ export function replaceSession(
   sourceRoot = sessionRootFromFile(session.filePath),
 ): void {
   const identity = sessionIdentity(session);
-  const tx = db.transaction(() => {
+  withTransaction(db, () => {
     const existing = db
-      .prepare<[SessionSourceId, string, SessionSourceId, string], { id: number; sessionUuid: string }>(`
+      .prepare(`
         SELECT id, session_uuid AS sessionUuid
         FROM sessions
         WHERE (source_id = ? AND native_session_id = ?) OR (source_id = ? AND file_path = ?)
@@ -200,7 +200,7 @@ export function replaceSession(
     }
 
     const sessionRow = db
-      .prepare<[string], { id: number }>("SELECT id FROM sessions WHERE session_key = ? LIMIT 1")
+      .prepare("SELECT id FROM sessions WHERE session_key = ? LIMIT 1")
       .get(identity.sessionKey) as { id: number };
 
     db.prepare("DELETE FROM messages_fts WHERE rowid IN (SELECT id FROM messages WHERE session_id = ?)").run(sessionRow.id);
@@ -221,11 +221,11 @@ export function replaceSession(
       session.sessionUuid,
     );
 
-    const messageStmt = db.prepare<[number, string, number, string, string, string, string]>(`
+    const messageStmt = db.prepare(`
       INSERT INTO messages (session_id, session_uuid, seq, role, content_text, timestamp, source_kind)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
-    const ftsStmt = db.prepare<[number, string, string, number, string, string]>(`
+    const ftsStmt = db.prepare(`
       INSERT INTO messages_fts(rowid, content_text, session_uuid, seq, role, timestamp)
       VALUES (?, ?, ?, ?, ?, ?)
     `);
@@ -254,14 +254,12 @@ export function replaceSession(
       );
     }
   });
-
-  tx();
 }
 
 export function getSessionRecord(db: Db, sessionUuid: string): SessionRecord | null {
   const identity = parseSessionRef(sessionUuid);
   const row = db
-    .prepare<[SessionSourceId, string], SessionRecord & { filePath: string }>(`
+    .prepare(`
       SELECT
         id,
         source_id AS sourceId,

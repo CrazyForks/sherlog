@@ -1,5 +1,5 @@
 import type { CachedSourceFileMeta, SessionSourceId, SourceFileMeta, SourceFileMetaResolver } from "../types";
-import type { Db } from "./shared";
+import { withTransaction, type Db } from "./shared";
 import { escapeLike, tableExists } from "./sql";
 
 // Sync-time cache of content-derived source file metadata (cwd, pathDate,
@@ -49,7 +49,7 @@ export function upsertSourceFileMetaCache(
   prune?: { root: string },
 ): void {
   ensureSourceFileMetaCacheTable(db);
-  const insert = db.prepare<[string, string, number, number, string, string | null, string]>(`
+  const insert = db.prepare(`
     INSERT INTO ${SOURCE_FILE_META_CACHE_TABLE}
       (source_id, file_path, mtime_ms, size, cwd, path_date, extra_fingerprint, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -62,16 +62,16 @@ export function upsertSourceFileMetaCache(
       updated_at = CURRENT_TIMESTAMP
   `);
 
-  const tx = db.transaction(() => {
+  withTransaction(db, () => {
     if (prune) {
       const keep = new Set(files.map((file) => file.filePath));
       const rows = db
-        .prepare<[string, string, string], { file_path: string }>(`
+        .prepare(`
           SELECT file_path FROM ${SOURCE_FILE_META_CACHE_TABLE}
           WHERE source_id = ? AND (file_path = ? OR file_path LIKE ? ESCAPE '\\')
         `)
         .all(sourceId, prune.root, `${escapeLike(prune.root)}/%`) as Array<{ file_path: string }>;
-      const remove = db.prepare<[string, string]>(
+      const remove = db.prepare(
         `DELETE FROM ${SOURCE_FILE_META_CACHE_TABLE} WHERE source_id = ? AND file_path = ?`,
       );
       for (const row of rows) {
@@ -90,7 +90,6 @@ export function upsertSourceFileMetaCache(
       );
     }
   });
-  tx();
 }
 
 export function loadSourceFileMetaCache(db: Db, sourceId: SessionSourceId): Map<string, SourceFileMetaCacheEntry> {
@@ -98,7 +97,7 @@ export function loadSourceFileMetaCache(db: Db, sourceId: SessionSourceId): Map<
   if (!tableExists(db, SOURCE_FILE_META_CACHE_TABLE)) return cache;
 
   const rows = db
-    .prepare<[string], { file_path: string; mtime_ms: number; size: number; cwd: string; path_date: string | null; extra_fingerprint: string }>(`
+    .prepare(`
       SELECT file_path, mtime_ms, size, cwd, path_date, extra_fingerprint
       FROM ${SOURCE_FILE_META_CACHE_TABLE}
       WHERE source_id = ?

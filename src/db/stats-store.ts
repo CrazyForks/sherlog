@@ -9,7 +9,7 @@ export function getStatsCounts(db: Db, sourceId: SessionSourceId = DEFAULT_SESSI
   lastSyncAt: string | null;
 } {
   const row = db
-    .prepare<[SessionSourceId]>(`
+    .prepare(`
       SELECT
         COUNT(*) AS sessionCount,
         COALESCE(SUM(message_count), 0) AS messageCount,
@@ -31,7 +31,7 @@ export function getStatsCounts(db: Db, sourceId: SessionSourceId = DEFAULT_SESSI
 
 export function getTopCwds(db: Db, limit: number, sourceId: SessionSourceId = DEFAULT_SESSION_SOURCE_ID): CwdCount[] {
   return db
-    .prepare<[SessionSourceId, number], CwdCount>(`
+    .prepare(`
       SELECT cwd, COUNT(*) AS count
       FROM sessions
       WHERE source_id = ? AND cwd != ''
@@ -39,5 +39,5 @@ export function getTopCwds(db: Db, limit: number, sourceId: SessionSourceId = DE
       ORDER BY count DESC, cwd ASC
       LIMIT ?
     `)
-    .all(sourceId, limit) as CwdCount[];
+    .all(sourceId, limit) as unknown as CwdCount[];
 }

@@ -92,7 +92,7 @@ function searchByFts(
   const orderBy = orderBySql(options.sort, "score", "s", "m");
 
   const rows = db
-    .prepare<typeof params, RawHitRow>(`
+    .prepare(`
       SELECT
         s.source_id AS sourceId,
         s.session_key AS sessionKey,
@@ -116,7 +116,7 @@ function searchByFts(
       ORDER BY ${orderBy}
       LIMIT ?
     `)
-    .all(...params) as Array<RawHitRow & { contentText: string }>;
+    .all(...params) as unknown as Array<RawHitRow & { contentText: string }>;
 
   return rows.map((row) => ({
     ...row,
@@ -147,7 +147,7 @@ function searchSessionsByFts(
   params.push(limit);
   const orderBy = orderBySql(options.sort, "score", "s");
   const rows = db
-    .prepare<typeof params, RawHitRow>(`
+    .prepare(`
       SELECT
         s.source_id AS sourceId,
         s.session_key AS sessionKey,
@@ -173,7 +173,7 @@ function searchSessionsByFts(
       ORDER BY ${orderBy}
       LIMIT ?
     `)
-    .all(...params) as Array<RawHitRow & SessionFieldTexts>;
+    .all(...params) as unknown as Array<RawHitRow & SessionFieldTexts>;
 
   return rows.map((row) => ({
     ...row,
@@ -242,7 +242,7 @@ function searchSessionsByLike(
   const orderBy = orderBySql(options.sort, "s.started_at DESC", "s");
 
   const rows = db
-    .prepare<typeof params, RawHitRow & { contentText: string }>(`
+    .prepare(`
       SELECT
         s.source_id AS sourceId,
         s.session_key AS sessionKey,
@@ -265,7 +265,7 @@ function searchSessionsByLike(
       ORDER BY ${orderBy}
       LIMIT ?
     `)
-    .all(...params) as Array<RawHitRow & SessionFieldTexts & { contentText: string }>;
+    .all(...params) as unknown as Array<RawHitRow & SessionFieldTexts & { contentText: string }>;
 
   return rows.map((row, index) => ({
     ...row,
@@ -302,7 +302,7 @@ function searchByLike(
   const orderBy = orderBySql(options.sort, "s.started_at DESC, m.seq ASC", "s", "m");
 
   const rows = db
-    .prepare<typeof params, RawHitRow & { contentText: string }>(`
+    .prepare(`
       SELECT
         s.source_id AS sourceId,
         s.session_key AS sessionKey,
@@ -324,7 +324,7 @@ function searchByLike(
       ORDER BY ${orderBy}
       LIMIT ?
     `)
-    .all(...params) as Array<RawHitRow & { contentText: string }>;
+    .all(...params) as unknown as Array<RawHitRow & { contentText: string }>;
 
   return rows.map((row, index) => ({
     ...row,
@@ -368,7 +368,7 @@ function orderBySql(sort: FindSort | undefined, relevanceOrder: string, sessionA
 
 function tableExists(db: Db, tableName: string): boolean {
   const row = db
-    .prepare<[string], unknown>("SELECT 1 FROM sqlite_master WHERE name = ? LIMIT 1")
+    .prepare("SELECT 1 FROM sqlite_master WHERE name = ? LIMIT 1")
     .get(tableName);
   return Boolean(row);
 }

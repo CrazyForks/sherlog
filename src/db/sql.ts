@@ -21,7 +21,7 @@ export function selectorWhereSql(selector: Selector, alias: string): { condition
 }
 
 export function tableExists(db: Db, tableName: string): boolean {
-  const row = db.prepare<[string], unknown>("SELECT 1 FROM sqlite_master WHERE name = ? LIMIT 1").get(tableName);
+  const row = db.prepare("SELECT 1 FROM sqlite_master WHERE name = ? LIMIT 1").get(tableName);
   return Boolean(row);
 }
 

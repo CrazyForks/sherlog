@@ -1,6 +1,6 @@
 import { tokenizedText } from "../tokenize";
 import { ensureSourceFileMetaCacheTable } from "./file-meta-cache";
-import type { Db } from "./shared";
+import { setPragma, withTransaction, type Db } from "./shared";
 
 const MESSAGES_FTS_DDL = `
     CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
@@ -37,7 +37,7 @@ export function ensureSchema(db: Db): void {
   ensureSourceFileMetaCacheTable(db);
 
   dropLegacyTrigramTable(db);
-  db.pragma("foreign_keys = ON");
+  setPragma(db, "foreign_keys = ON");
 
   if (rebuiltMessagesFts || rebuiltSessionsFts) {
     db.exec("VACUUM");
@@ -197,7 +197,7 @@ function rebuildMessagesFts(db: Db): void {
     );
   }
 
-  db.transaction(() => {
+  withTransaction(db, () => {
     db.exec("DROP TABLE IF EXISTS messages_fts");
     db.exec(MESSAGES_FTS_DDL);
     const insert = db.prepare(`
@@ -234,11 +234,11 @@ function rebuildMessagesFts(db: Db): void {
         lastId = row.id;
       }
     }
-  })();
+  });
 }
 
 function rebuildSessionsFts(db: Db): void {
-  db.transaction(() => {
+  withTransaction(db, () => {
     db.exec("DROP TABLE IF EXISTS sessions_fts");
     db.exec(SESSIONS_FTS_DDL);
     const insert = db.prepare(`
@@ -276,7 +276,7 @@ function rebuildSessionsFts(db: Db): void {
         lastId = row.id;
       }
     }
-  })();
+  });
 }
 
 function ensureTextColumn(db: Db, tableName: string, columnName: string, defaultSql = "''"): void {
@@ -313,7 +313,7 @@ function needsCoverageRebuild(db: Db, _sql: string): boolean {
 }
 
 function rebuildSessionsTable(db: Db): void {
-  db.pragma("foreign_keys = OFF");
+  setPragma(db, "foreign_keys = OFF");
   db.exec(`
     ALTER TABLE sessions RENAME TO sessions_old_source_migration;
     CREATE TABLE sessions (
@@ -460,7 +460,7 @@ function backfillCoverageSource(db: Db): void {
   const rows = db
     .prepare("SELECT id, source_id, selector_json FROM coverage")
     .all() as Array<{ id: number; source_id: string; selector_json: string }>;
-  const update = db.prepare<[string, string, string, number]>(
+  const update = db.prepare(
     "UPDATE coverage SET source_id = ?, selector_key = ?, selector_json = ? WHERE id = ?"
   );
 
@@ -486,7 +486,7 @@ function columnNames(db: Db, tableName: string): Set<string> {
 
 function tableSql(db: Db, tableName: string): string | null {
   const row = db
-    .prepare<[string], { sql: string }>("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1")
-    .get(tableName);
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1")
+    .get(tableName) as { sql: string } | undefined;
   return row?.sql ?? null;
 }

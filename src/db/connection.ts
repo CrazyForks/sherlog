@@ -1,27 +1,16 @@
 import { existsSync } from "node:fs";
-import { createRequire } from "node:module";
-import type BetterSqlite3 from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { IndexSchemaUpgradeRequiredError, IndexUnavailableError } from "./errors";
 import { ensureSchema } from "./schema";
-import { BUSY_TIMEOUT_MS, type Db } from "./shared";
+import { BUSY_TIMEOUT_MS, pragmaValue, setPragma, type Db } from "./shared";
 
 export { IndexSchemaUpgradeRequiredError, IndexUnavailableError } from "./errors";
 
-const require = createRequire(import.meta.url);
+let sqliteOpened = false;
 
-type SqliteDatabaseConstructor = typeof BetterSqlite3;
-let sqliteDatabase: SqliteDatabaseConstructor | undefined;
-
-function loadSqlite(): SqliteDatabaseConstructor {
-  if (!sqliteDatabase) {
-    sqliteDatabase = require("better-sqlite3") as SqliteDatabaseConstructor;
-  }
-  return sqliteDatabase;
-}
-
-/** True only after a read/write connection has actually loaded the native addon. */
+/** True only after a read/write connection has actually opened the SQLite db. */
 export function sqliteNativeModuleLoaded(): boolean {
-  return sqliteDatabase !== undefined;
+  return sqliteOpened;
 }
 
 export function openReadDb(dbPath: string): Db {
@@ -29,11 +18,11 @@ export function openReadDb(dbPath: string): Db {
     throw new IndexUnavailableError(dbPath);
   }
 
-  const Database = loadSqlite();
-  const db = new Database(dbPath, { readonly: true });
-  db.pragma(`busy_timeout = ${BUSY_TIMEOUT_MS}`);
-  db.pragma("query_only = ON");
-  db.pragma("temp_store = MEMORY");
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  sqliteOpened = true;
+  setPragma(db, `busy_timeout = ${BUSY_TIMEOUT_MS}`);
+  setPragma(db, "query_only = ON");
+  setPragma(db, "temp_store = MEMORY");
   return db;
 }
 
@@ -60,13 +49,13 @@ export function withSourceAwareReadDb<T>(dbPath: string, fn: (db: Db) => T): T {
 }
 
 export function openWriteDb(dbPath: string): Db {
-  const Database = loadSqlite();
-  const db = new Database(dbPath);
-  db.pragma(`busy_timeout = ${BUSY_TIMEOUT_MS}`);
-  db.pragma("journal_mode = WAL");
-  db.pragma("synchronous = NORMAL");
-  db.pragma("temp_store = MEMORY");
-  db.pragma("foreign_keys = ON");
+  const db = new DatabaseSync(dbPath);
+  sqliteOpened = true;
+  setPragma(db, `busy_timeout = ${BUSY_TIMEOUT_MS}`);
+  pragmaValue(db, "journal_mode = WAL");
+  setPragma(db, "synchronous = NORMAL");
+  setPragma(db, "temp_store = MEMORY");
+  setPragma(db, "foreign_keys = ON");
   ensureSchema(db);
   return db;
 }
@@ -89,7 +78,7 @@ function assertSourceAwareReadSchema(db: Db, dbPath: string): void {
 
 function tableColumnExists(db: Db, tableName: string, columnName: string): boolean {
   return db
-    .prepare<[string, string], { name: string }>(`
+    .prepare(`
       SELECT name
       FROM pragma_table_info(?)
       WHERE name = ?

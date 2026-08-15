@@ -4,6 +4,10 @@ import { rmSync } from "node:fs";
 
 export const tempDirs: string[] = [];
 
+// node:sqlite prints an ExperimentalWarning on Node 22.x; suppress it in child
+// processes so stderr assertions stay clean. Bun has no such flag.
+const sqliteWarningFlag = process.versions.bun ? [] : ["--disable-warning=ExperimentalWarning"];
+
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
@@ -36,7 +40,7 @@ export function runReadChild(
     `;
     const child = spawn(
       process.execPath,
-      ["--import", "tsx", "--eval", script, queryModuleUrl, dbPath, command, query ?? ""],
+      [...sqliteWarningFlag, "--import", "tsx", "--eval", script, queryModuleUrl, dbPath, command, query ?? ""],
       { cwd: import.meta.dirname, stdio: ["ignore", "ignore", "pipe"] },
     );
 
@@ -58,11 +62,11 @@ export function holdExclusiveLock(
 ): Promise<{ done: Promise<number | null> }> {
   return new Promise((resolve, reject) => {
     const script = `
-      import Database from "better-sqlite3";
+      const { DatabaseSync } = require("node:sqlite");
       const [dbPath, holdMs] = process.argv.slice(1);
-      const db = new Database(dbPath);
-      db.pragma("busy_timeout = 5000");
-      db.pragma("locking_mode = EXCLUSIVE");
+      const db = new DatabaseSync(dbPath);
+      db.exec("PRAGMA busy_timeout = 5000");
+      db.exec("PRAGMA locking_mode = EXCLUSIVE");
       db.exec("BEGIN EXCLUSIVE");
       console.log("locked");
       setTimeout(() => {
@@ -72,7 +76,7 @@ export function holdExclusiveLock(
     `;
     const child = spawn(
       process.execPath,
-      ["--eval", script, dbPath, String(holdMs)],
+      [...sqliteWarningFlag, "--eval", script, dbPath, String(holdMs)],
       { cwd: import.meta.dirname, stdio: ["ignore", "pipe", "pipe"] },
     );
 

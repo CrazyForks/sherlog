@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import Database from "better-sqlite3";
+import { DatabaseSync as Database } from "node:sqlite";
 import { INDEX_VERSION } from "../env";
 import { findSessions } from "../query";
 import { openWriteDb, replaceSession, type Db } from "../db";

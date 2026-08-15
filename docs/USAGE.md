@@ -11,8 +11,20 @@
 | `shlog read-page <sessionUuid>` | Read a session page by offset and limit. |
 | `shlog list` | List indexed sessions without full-text search. |
 | `shlog stats` | Show index statistics. |
+| `shlog doctor` | Diagnose the runtime environment: Node version vs. the `>=22.13.0` floor, the built-in SQLite version, and whether the index database is readable. `--json` for structured output. |
 
 All commands that read indexed content support `--json`. Read commands fail cleanly if the index has not been created yet.
+
+## Runtime requirements
+
+Sherlog requires **Node.js >= 22.13.0** and uses Node's built-in SQLite
+(`node:sqlite`). There are no native addons, so switching Node versions can
+never produce a `NODE_MODULE_VERSION` mismatch, and the CLI installs on macOS,
+Linux, and Windows. If the runtime is older than the floor, the CLI exits with
+one actionable line instead of a module error. On Node 22.x the runtime prints
+a one-line `ExperimentalWarning: SQLite is an experimental feature` to stderr
+once per process; silence it with `NODE_OPTIONS=--disable-warning=ExperimentalWarning`.
+Node 24+ prints nothing.
 
 In source-aware builds, all fixed commands accept `--source <id>`. Public values are `codex`, experimental `claude-code`, and experimental `pi`.
 

@@ -139,8 +139,8 @@ describe("cxs retrieval flow", () => {
 
     const db = openReadDb(dbPath);
     const row = db
-      .prepare<[string], { summaryText: string }>("SELECT summary_text AS summaryText FROM sessions WHERE session_uuid = ? LIMIT 1")
-      .get("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee") as { summaryText: string } | null;
+      .prepare("SELECT summary_text AS summaryText FROM sessions WHERE session_uuid = ? LIMIT 1")
+      .get("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee") as { summaryText: string } | undefined;
     db.close();
 
     expect(row?.summaryText).toContain("排查 fly deploy 失败");

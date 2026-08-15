@@ -1,4 +1,5 @@
 export type { Db, SqlParams } from "./db/shared";
+export { withTransaction } from "./db/shared";
 export {
   IndexSchemaUpgradeRequiredError,
   IndexUnavailableError,

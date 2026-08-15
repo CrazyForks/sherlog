@@ -29,6 +29,26 @@ import {
 import { buildEvidenceReadAction } from "./evidence-read";
 import { getSessionSourceAdapter, listSessionSourceAdapters } from "./sources";
 
+// Runtime floor guard: shlog uses Node's built-in SQLite (node:sqlite),
+// available without flags from Node 22.13.0. Fail fast with an actionable
+// message instead of letting users hit an obscure module error.
+const MIN_NODE_MAJOR = 22;
+const MIN_NODE_MINOR = 13;
+assertRuntimeFloor();
+
+function assertRuntimeFloor(): void {
+  const [major, minor] = process.versions.node.split(".").map((part) => Number(part));
+  const unsupported =
+    Number.isNaN(major) || major < MIN_NODE_MAJOR || (major === MIN_NODE_MAJOR && minor < MIN_NODE_MINOR);
+  if (!unsupported) return;
+  process.stderr.write(
+    `shlog requires Node.js >= ${MIN_NODE_MAJOR}.${MIN_NODE_MINOR} (you're on ${process.versions.node}). ` +
+      `shlog uses Node's built-in SQLite (node:sqlite), which is available without flags from Node 22.13. ` +
+      `Switch with your version manager (fnm/nvm/volta/asdf/mise) or upgrade Node.\n`,
+  );
+  process.exit(1);
+}
+
 // One-shot migration from legacy cxs data dirs to the current shlog state dir.
 // Runs before any subcommand so `shlog stats` etc. see the migrated db, not
 // just `shlog sync`. Idempotent + silent on failure (worst case is a re-sync).
@@ -299,7 +319,7 @@ program
         ? { ...merged, zeroResults: await buildZeroResultsDiagnosis(query, merged.coverage) }
         : merged;
       // performance.now() 自 timeOrigin(进程启动)起算 ≈ 本次端到端耗时,
-      // 含 better-sqlite3 模块加载;shlog 是一次性进程,所以这就是诚实的端到端。
+      // 含 SQLite 连接打开;shlog 是一次性进程,所以这就是诚实的端到端。
       const elapsedMs = Math.round(performance.now());
       if (options.json) {
         console.log(JSON.stringify({
@@ -455,6 +475,67 @@ program
       const { printStats } = await import("./format");
       printStats(summary);
     });
+  });
+
+program
+  .command("doctor")
+  .description("诊断运行时环境健康:Node 版本、内置 SQLite、索引库可读性")
+  .option("--db <path>", "覆盖默认数据库路径", DEFAULT_DB_PATH)
+  .option("--json", "输出 JSON")
+  .action(async (options) => {
+    const report: Record<string, unknown> = {
+      nodeVersion: process.versions.node,
+      enginesFloor: `>=${MIN_NODE_MAJOR}.${MIN_NODE_MINOR}`,
+      platform: `${process.platform}-${process.arch}`,
+    };
+    const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+    try {
+      const { DatabaseSync } = await import("node:sqlite");
+      const probe = new DatabaseSync(":memory:");
+      const version = probe.prepare("SELECT sqlite_version() AS v").get() as { v: string };
+      report.sqlite = { available: true, version: version.v };
+      probe.close();
+    } catch (error) {
+      report.sqlite = { available: false, error: errorMessage(error) };
+    }
+
+    const dbPath: string = options.db;
+    if (existsSync(dbPath)) {
+      try {
+        const { openReadDb } = await import("./db/connection");
+        const db = openReadDb(dbPath);
+        try {
+          const counts = db
+            .prepare("SELECT COUNT(*) AS sessions, COALESCE(SUM(message_count), 0) AS messages FROM sessions")
+            .get() as { sessions: number; messages: number };
+          report.index = { exists: true, readable: true, sessions: counts.sessions, messages: counts.messages };
+        } finally {
+          db.close();
+        }
+      } catch (error) {
+        report.index = { exists: true, readable: false, error: errorMessage(error) };
+      }
+    } else {
+      report.index = { exists: false, path: dbPath };
+    }
+
+    if (options.json) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    const sqlite = report.sqlite as { available: boolean; version?: string };
+    const index = report.index as { exists: boolean; readable?: boolean; sessions?: number; messages?: number };
+    console.log(`node version   : ${report.nodeVersion} (floor ${report.enginesFloor})`);
+    console.log(`platform       : ${report.platform}`);
+    console.log(`sqlite         : ${sqlite.available ? `built-in ${sqlite.version}` : "unavailable"}`);
+    console.log(
+      `index          : ${index.exists && index.readable
+        ? `exists, ${index.sessions} sessions, ${index.messages} messages`
+        : index.exists
+          ? "exists, unreadable"
+          : "not found"}`,
+    );
   });
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {

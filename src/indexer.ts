@@ -18,6 +18,7 @@ import {
   replaceCoverage,
   replaceSession,
   upsertSourceFileMetaCache,
+  withTransaction,
 } from "./db";
 import { persistIndexSidecarAfterWrite } from "./index-sidecar-sqlite";
 import { canonicalizeSelector, selectorSource } from "./selector";
@@ -192,7 +193,7 @@ export async function syncSessions(options: SyncOptions = {}): Promise<SyncSumma
       persistIndexSidecarAfterWrite(db, dbPath);
       return summary;
     } finally {
-      if (db.open) db.close();
+      if (db.isOpen) db.close();
     }
   });
 }
@@ -415,7 +416,8 @@ function applyOperations(
 
   let currentFilePath = "";
   let coverage: CoverageWriteSummary | null = null;
-  const tx = db.transaction(() => {
+  try {
+    withTransaction(db, () => {
     for (const operation of operations) {
       currentFilePath = operation.filePath;
       applyOperation(db, operation, selector.root, selectorSource(selector));
@@ -459,10 +461,7 @@ function applyOperations(
       sourceFileCount: record.sourceFileCount,
       indexedSessionCount: record.indexedSessionCount,
     };
-  });
-
-  try {
-    tx();
+    });
   } catch (error) {
     recordSyncError(summary, currentFilePath || "(unknown file)", error);
     throw new SyncError(summary);

@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { spawn as childSpawn } from "node:child_process";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { DEFAULT_DB_PATH } from "../src/env";
 
 interface LatencyStats {
@@ -566,7 +566,7 @@ function countBy(values: string[]): Record<string, number> {
 
 function collectDbStorage(dbPath: string, fallbackDbSizeBytes: number): DbStorageSummary {
   const dbSizeBytes = safeFileSize(dbPath) ?? fallbackDbSizeBytes;
-  const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+  const db = new DatabaseSync(dbPath, { readOnly: true });
   try {
     const pageSize = pragmaNumber(db, "page_size");
     const pageCount = pragmaNumber(db, "page_count");
@@ -591,9 +591,10 @@ function collectDbStorage(dbPath: string, fallbackDbSizeBytes: number): DbStorag
   }
 }
 
-function pragmaNumber(db: Database.Database, name: string): number {
-  const row = db.pragma(name, { simple: true });
-  return typeof row === "number" ? row : Number(row) || 0;
+function pragmaNumber(db: DatabaseSync, name: string): number {
+  const row = db.prepare(`PRAGMA ${name}`).get() as Record<string, unknown> | undefined;
+  const value = row ? Object.values(row)[0] : undefined;
+  return typeof value === "number" ? value : Number(value) || 0;
 }
 
 function safeFileSize(path: string): number | null {

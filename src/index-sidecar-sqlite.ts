@@ -7,6 +7,7 @@ import {
   type Db,
 } from "./db";
 import { tableExists } from "./db/sql";
+import { pragmaValue } from "./db/shared";
 import { buildSourceFileMetaResolver } from "./db/file-meta-cache";
 import type { SourceFileMetaCacheEntry } from "./db/file-meta-cache";
 import {
@@ -48,7 +49,7 @@ export function snapshotIndexSidecar(db: Db): Omit<IndexSidecar, "writtenAt" | "
 }
 
 export function checkpointIndexWal(db: Db): void {
-  db.pragma("wal_checkpoint(TRUNCATE)");
+  pragmaValue(db, "wal_checkpoint(TRUNCATE)");
 }
 
 /**
@@ -136,7 +137,7 @@ function getLegacyCodexStatsCounts(db: Db): ReturnType<typeof getStatsCounts> {
 
 function tableColumnExists(db: Db, tableName: string, columnName: string): boolean {
   return db
-    .prepare<[string, string], { name: string }>(`
+    .prepare(`
       SELECT name
       FROM pragma_table_info(?)
       WHERE name = ?

@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { createRequire } from "node:module";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,7 +11,6 @@ import {
 } from "./index-sidecar";
 import { collectStatus } from "./status";
 
-const require = createRequire(import.meta.url);
 const tempDirs: string[] = [];
 
 afterEach(() => {
@@ -21,15 +19,12 @@ afterEach(() => {
   }
 });
 
-function sqliteRequireCacheHits(): string[] {
-  return Object.keys(require.cache).filter((key) => key.includes("better-sqlite3"));
-}
-
-describe("process floor: status does not load better-sqlite3", () => {
-  test("sidecar-backed status never loads the native addon until a db is opened", async () => {
+describe("process floor: status does not open the sqlite db", () => {
+  test("sidecar-backed status never opens the db until a connection is opened", async () => {
     const { root, dbPath } = writeSidecarOnlyFixture();
 
-    expect(sqliteRequireCacheHits()).toEqual([]);
+    const { openWriteDb, sqliteNativeModuleLoaded } = await import("./db/connection");
+    expect(sqliteNativeModuleLoaded()).toBe(false);
 
     const metadata = await loadIndexMetadata(dbPath, "codex");
     expect(metadata.opened).toBe(false);
@@ -43,15 +38,11 @@ describe("process floor: status does not load better-sqlite3", () => {
     });
     expect(status.index.exists).toBe(true);
     expect(getLastCoverageProbeStats()?.dbOpens).toBe(0);
-    expect(sqliteRequireCacheHits()).toEqual([]);
-
-    const { openWriteDb, sqliteNativeModuleLoaded } = await import("./db/connection");
     expect(sqliteNativeModuleLoaded()).toBe(false);
 
     const db = openWriteDb(join(root, "..", "opened.sqlite"));
     db.close();
     expect(sqliteNativeModuleLoaded()).toBe(true);
-    expect(sqliteRequireCacheHits().length).toBeGreaterThan(0);
   });
 });
 

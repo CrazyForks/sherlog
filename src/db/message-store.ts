@@ -8,7 +8,7 @@ export function getMessagesForRange(
   endSeq: number,
 ): MessageRecord[] {
   return db
-    .prepare<[number, number, number], MessageRecord>(`
+    .prepare(`
       SELECT
         session_uuid AS sessionUuid,
         seq,
@@ -20,7 +20,7 @@ export function getMessagesForRange(
       WHERE session_id = ? AND seq BETWEEN ? AND ?
       ORDER BY seq
     `)
-    .all(sessionId, startSeq, endSeq) as MessageRecord[];
+    .all(sessionId, startSeq, endSeq) as unknown as MessageRecord[];
 }
 
 export function getMessagesForPage(
@@ -30,7 +30,7 @@ export function getMessagesForPage(
   limit: number,
 ): MessageRecord[] {
   return db
-    .prepare<[number, number, number], MessageRecord>(`
+    .prepare(`
       SELECT
         session_uuid AS sessionUuid,
         seq,
@@ -43,5 +43,5 @@ export function getMessagesForPage(
       ORDER BY seq
       LIMIT ? OFFSET ?
     `)
-    .all(sessionId, limit, offset) as MessageRecord[];
+    .all(sessionId, limit, offset) as unknown as MessageRecord[];
 }

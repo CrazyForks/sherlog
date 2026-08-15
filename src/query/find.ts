@@ -62,7 +62,7 @@ export function findSessions(
 function countScannedMessages(db: Db, selector: Selector | null, sourceId: SessionSourceId): number {
   if (!selector) {
     const row = db
-      .prepare<[SessionSourceId], { n: number }>(
+      .prepare(
         "SELECT COALESCE(SUM(message_count), 0) AS n FROM sessions WHERE source_id = ?",
       )
       .get(sourceId) as { n: number };
@@ -70,7 +70,7 @@ function countScannedMessages(db: Db, selector: Selector | null, sourceId: Sessi
   }
   const where = selectorWhereSql(selector, "s");
   const row = db
-    .prepare<typeof where.params, { n: number }>(
+    .prepare(
       `SELECT COALESCE(SUM(message_count), 0) AS n FROM sessions s WHERE ${where.conditions.join(" AND ")}`,
     )
     .get(...where.params) as { n: number };

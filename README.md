@@ -19,6 +19,19 @@ Install the agent skill separately:
 npx skills add -g catoncat/sherlog
 ```
 
+## Requirements
+
+- **Node.js >= 22.13.0** — Sherlog uses Node's built-in SQLite (`node:sqlite`).
+  There are **no native addons** to compile, download, or load, so the CLI can
+  never hit a Node-ABI mismatch and works on macOS, Linux, and Windows alike.
+- On Node 22.x, the runtime prints a one-line
+  `ExperimentalWarning: SQLite is an experimental feature` to stderr once per
+  process. It is harmless; silence it with
+  `NODE_OPTIONS=--disable-warning=ExperimentalWarning` if your agent inspects
+  stderr. Node 24+ prints nothing.
+- Something looks off? Run `shlog doctor` — it reports the Node version, the
+  built-in SQLite version, and whether the index database is readable.
+
 ## Quick Start
 
 Initialize the default Codex index:

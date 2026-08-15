@@ -57,7 +57,7 @@ export function replaceCoverage(
 export function listCoverageRecords(db: Db, sourceId: SessionSourceId = DEFAULT_SESSION_SOURCE_ID): CoverageRecord[] {
   if (!tableExists(db, "coverage")) return [];
   const rows = db
-    .prepare<[SessionSourceId], CoverageRow>("SELECT * FROM coverage WHERE source_id = ? ORDER BY completed_at DESC, id DESC")
+    .prepare("SELECT * FROM coverage WHERE source_id = ? ORDER BY completed_at DESC, id DESC")
     .all(sourceId) as CoverageRow[];
   return rows.map(rowToCoverageRecord);
 }
@@ -79,7 +79,7 @@ export function coverageStatusForSelector(db: Db, requested: Selector | null): {
 export function countSessionsForSelector(db: Db, selector: Selector): number {
   const where = selectorWhereSql(selector, "sessions");
   const row = db
-    .prepare<typeof where.params, { count: number }>(`
+    .prepare(`
       SELECT COUNT(*) AS count
       FROM sessions
       WHERE ${where.conditions.join(" AND ")}
@@ -96,7 +96,7 @@ export function deleteSessionsForSelectorExceptFilePaths(
 ): { removed: number; retainedCold: number } {
   const where = selectorWhereSql(selector, "sessions");
   const rows = db
-    .prepare<typeof where.params, { id: number; filePath: string; nativeSessionId: string }>(`
+    .prepare(`
       SELECT id, file_path AS filePath, native_session_id AS nativeSessionId
       FROM sessions
       WHERE ${where.conditions.join(" AND ")}
@@ -124,7 +124,7 @@ export function cleanupMismatchedMessagesForSelector(db: Db, selector: Selector)
   const where = selectorWhereSql(selector, "s");
   const conditions = [...where.conditions, "m.session_uuid != s.session_uuid"];
   const predicate = conditions.join(" AND ");
-  db.prepare<typeof where.params>(`
+  db.prepare(`
     DELETE FROM messages_fts
     WHERE rowid IN (
       SELECT m.id
@@ -133,7 +133,7 @@ export function cleanupMismatchedMessagesForSelector(db: Db, selector: Selector)
       WHERE ${predicate}
     )
   `).run(...where.params);
-  const result = db.prepare<typeof where.params>(`
+  const result = db.prepare(`
     DELETE FROM messages
     WHERE id IN (
       SELECT m.id
@@ -186,7 +186,7 @@ type CoverageRow = {
 };
 
 function getCoverageRecordByKey(db: Db, key: string): CoverageRecord | null {
-  const row = db.prepare<[string], CoverageRow>("SELECT * FROM coverage WHERE selector_key = ? LIMIT 1").get(key);
+  const row = db.prepare("SELECT * FROM coverage WHERE selector_key = ? LIMIT 1").get(key) as CoverageRow | undefined;
   return row ? rowToCoverageRecord(row) : null;
 }
 

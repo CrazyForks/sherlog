@@ -3,13 +3,17 @@ import { spawn as childSpawn } from "node:child_process";
 import { appendFileSync, chmodSync, existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import Database from "better-sqlite3";
+import { DatabaseSync as Database } from "node:sqlite";
 import { openWriteDb, replaceCoverage, replaceSession } from "./db";
 import { INDEX_VERSION } from "./env";
 import { syncSessions } from "./indexer";
 
 const tempDirs: string[] = [];
 const unreadableFiles: string[] = [];
+
+// node:sqlite prints an ExperimentalWarning on Node 22.x; suppress it in child
+// processes so stderr assertions stay clean. Bun has no such flag.
+const sqliteWarningFlag = process.versions.bun ? [] : ["--disable-warning=ExperimentalWarning"];
 
 afterEach(() => {
   for (const filePath of unreadableFiles.splice(0)) {
@@ -25,7 +29,7 @@ afterEach(() => {
 });
 
 describe("shlog cli", { timeout: 20_000 }, () => {
-  test("help only shows status/sync/find/read-range/read-page/list/stats", async () => {
+  test("help shows status/sync/find/read-range/read-page/list/stats/doctor", async () => {
     const result = await runCli(["--help"]);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("status");
@@ -35,6 +39,7 @@ describe("shlog cli", { timeout: 20_000 }, () => {
     expect(result.stdout).toContain("read-page");
     expect(result.stdout).toContain("list");
     expect(result.stdout).toContain("stats");
+    expect(result.stdout).toContain("doctor");
     expect(result.stdout).not.toContain("current");
     expect(result.stdout).not.toContain("window");
     expect(result.stdout).not.toContain("\n  session ");
@@ -2212,7 +2217,7 @@ async function runExecutable(
   options: { env?: Record<string, string> } = {},
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const proc = childSpawn(executable, args, { cwd, env: { ...process.env, ...options.env }, stdio: ["ignore", "pipe", "pipe"] });
+    const proc = childSpawn(executable, [...sqliteWarningFlag, ...args], { cwd, env: { ...process.env, ...options.env }, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     proc.stdout!.setEncoding("utf8");
