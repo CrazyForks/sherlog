@@ -1,4 +1,3 @@
-use std::cmp::Ordering;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -115,6 +114,7 @@ impl IndexReader {
     }
 
     pub fn list(&self, query: &SessionListQuery) -> IndexResult<Vec<SessionListEntry>> {
+        self.require_v8("list")?;
         let mut conditions = Vec::new();
         let mut values = Vec::new();
         if let Some(selector) = &query.selector {
@@ -163,6 +163,7 @@ impl IndexReader {
     }
 
     pub fn load_session(&self, session_ref: &SessionRef) -> IndexResult<Option<SessionRecord>> {
+        self.require_v8("load session")?;
         Ok(self
             .load_stored_session(session_ref)?
             .map(|session| public_session(&session)))
@@ -174,6 +175,7 @@ impl IndexReader {
         offset: u64,
         limit: u64,
     ) -> IndexResult<ReadPageSummary> {
+        self.require_v8("read-page")?;
         let session = self.require_stored_session(session_ref)?;
         let messages = self.messages_for_page(
             session.id,
@@ -203,6 +205,7 @@ impl IndexReader {
         before: u64,
         after: u64,
     ) -> IndexResult<ReadRangeSummary> {
+        self.require_v8("read-range")?;
         let session = self.require_stored_session(session_ref)?;
         let before = i64::try_from(before).unwrap_or(i64::MAX);
         let after = i64::try_from(after).unwrap_or(i64::MAX);
@@ -398,27 +401,21 @@ impl IndexReader {
                 "recall session source must be present in RecallSpec.sources".to_owned(),
             ));
         }
+        self.require_v8("recall")?;
         match (self.layout, like_needle) {
             (IndexLayout::V8, Some(needle)) => self.recall_v8_like(spec, needle),
-            (IndexLayout::V7, Some(needle)) => self.recall_v7_like(spec, needle),
             (IndexLayout::V8, None) => self.recall_v8(spec),
-            (IndexLayout::V7, None) => self.recall_v7(spec),
+            (IndexLayout::V7, _) => unreachable!("recall is gated to v8 above"),
         }
     }
 
     /// Export only stored projection. No raw transcript is consulted, so this
     /// remains usable for cold-only sessions during copy migration.
     pub fn export_session_bundle(&self, session_ref: &SessionRef) -> IndexResult<SessionBundle> {
+        self.require_v8("export session bundle")?;
         let session = self.require_stored_session(session_ref)?;
-        let documents = match self.layout {
-            IndexLayout::V8 => self.load_v8_documents(session.id)?,
-            IndexLayout::V7 => self.load_v7_documents(&session)?,
-        };
-        let source_files = if self.layout == IndexLayout::V8 {
-            self.source_files_for_session(&session)?
-        } else {
-            Vec::new()
-        };
+        let documents = self.load_v8_documents(session.id)?;
+        let source_files = self.source_files_for_session(&session)?;
         Ok(SessionBundle {
             session,
             documents,
@@ -427,10 +424,8 @@ impl IndexReader {
     }
 
     pub fn check_invariants(&self) -> IndexResult<InvariantReport> {
-        match self.layout {
-            IndexLayout::V8 => inspect_v8_invariants(&self.connection),
-            IndexLayout::V7 => inspect_v7_invariants(&self.connection),
-        }
+        self.require_v8("check invariants")?;
+        inspect_v8_invariants(&self.connection)
     }
 
     pub fn ensure_invariants(&self) -> IndexResult<InvariantReport> {
@@ -443,21 +438,15 @@ impl IndexReader {
     }
 
     fn load_stored_session(&self, session_ref: &SessionRef) -> IndexResult<Option<StoredSession>> {
-        let document_count = if self.layout == IndexLayout::V8 {
-            "document_count"
-        } else {
-            "message_count + 1"
-        };
-        let sql = format!(
-            "SELECT id, source_id, native_session_id, session_key, session_uuid, file_path, \
+        self.require_v8("load session")?;
+        let sql = "SELECT id, source_id, native_session_id, session_key, session_uuid, file_path, \
              source_root, title, summary_text, compact_text, reasoning_summary_text, cwd, model, \
-             started_at, ended_at, path_date, message_count, {document_count}, raw_file_mtime, \
+             started_at, ended_at, path_date, message_count, document_count, raw_file_mtime, \
              raw_file_size, index_version, updated_at FROM sessions \
-             WHERE source_id=? AND native_session_id=? LIMIT 1"
-        );
+             WHERE source_id=? AND native_session_id=? LIMIT 1";
         self.connection
             .query_row(
-                &sql,
+                sql,
                 params![
                     session_ref.source_id.as_str(),
                     session_ref.native_session_id
@@ -479,17 +468,9 @@ impl IndexReader {
         offset: i64,
         limit: i64,
     ) -> IndexResult<Vec<MessageRecord>> {
-        let sql = match self.layout {
-            IndexLayout::V8 => {
-                "SELECT s.session_uuid, d.seq, d.role, d.body_text, d.timestamp, d.source_kind \
+        let sql = "SELECT s.session_uuid, d.seq, d.role, d.body_text, d.timestamp, d.source_kind \
                  FROM documents d JOIN sessions s ON s.id=d.session_id \
-                 WHERE d.session_id=? AND d.kind='message' ORDER BY d.seq LIMIT ? OFFSET ?"
-            }
-            IndexLayout::V7 => {
-                "SELECT session_uuid, seq, role, content_text, timestamp, source_kind \
-                 FROM messages WHERE session_id=? ORDER BY seq LIMIT ? OFFSET ?"
-            }
-        };
+                 WHERE d.session_id=? AND d.kind='message' ORDER BY d.seq LIMIT ? OFFSET ?";
         let mut statement = self.connection.prepare(sql)?;
         let messages = statement
             .query_map(params![session_id, limit, offset], message_from_row)?
@@ -503,17 +484,9 @@ impl IndexReader {
         start: i64,
         end: i64,
     ) -> IndexResult<Vec<MessageRecord>> {
-        let sql = match self.layout {
-            IndexLayout::V8 => {
-                "SELECT s.session_uuid, d.seq, d.role, d.body_text, d.timestamp, d.source_kind \
+        let sql = "SELECT s.session_uuid, d.seq, d.role, d.body_text, d.timestamp, d.source_kind \
                  FROM documents d JOIN sessions s ON s.id=d.session_id \
-                 WHERE d.session_id=? AND d.kind='message' AND d.seq BETWEEN ? AND ? ORDER BY d.seq"
-            }
-            IndexLayout::V7 => {
-                "SELECT session_uuid, seq, role, content_text, timestamp, source_kind \
-                 FROM messages WHERE session_id=? AND seq BETWEEN ? AND ? ORDER BY seq"
-            }
-        };
+                 WHERE d.session_id=? AND d.kind='message' AND d.seq BETWEEN ? AND ? ORDER BY d.seq";
         let mut statement = self.connection.prepare(sql)?;
         let messages = statement
             .query_map(params![session_id, start, end], message_from_row)?
@@ -567,15 +540,7 @@ impl IndexReader {
     }
 
     fn coverage_version_is_current(&self, index_version: &str) -> bool {
-        match self.layout {
-            IndexLayout::V8 => {
-                self.metadata.coverage_epoch == COVERAGE_EPOCH && index_version == INDEX_VERSION
-            }
-            IndexLayout::V7 => matches!(
-                index_version,
-                "shlog-v7-source-identity" | "cxs-v7-source-identity"
-            ),
-        }
+        self.metadata.coverage_epoch == COVERAGE_EPOCH && index_version == INDEX_VERSION
     }
 
     fn recall_v8(&self, spec: &RecallSpec) -> IndexResult<Vec<CandidateEvidence>> {
@@ -636,138 +601,6 @@ impl IndexReader {
         Ok(candidates)
     }
 
-    fn recall_v7(&self, spec: &RecallSpec) -> IndexResult<Vec<CandidateEvidence>> {
-        let mut candidates = Vec::new();
-        if table_exists(&self.connection, "messages_fts")? {
-            candidates.extend(self.recall_v7_messages(spec)?);
-        }
-        if table_exists(&self.connection, "sessions_fts")? {
-            candidates.extend(self.recall_v7_profiles(spec)?);
-        }
-        sort_candidates(&mut candidates, spec.order);
-        candidates.truncate(spec.limit);
-        Ok(candidates)
-    }
-
-    fn recall_v7_like(
-        &self,
-        spec: &RecallSpec,
-        needle: &str,
-    ) -> IndexResult<Vec<CandidateEvidence>> {
-        let mut candidates = self.recall_v7_messages_like(spec, needle)?;
-        candidates.extend(self.recall_v7_profiles_like(spec, needle)?);
-        sort_candidates(&mut candidates, spec.order);
-        candidates.truncate(spec.limit);
-        Ok(candidates)
-    }
-
-    fn recall_v7_messages(&self, spec: &RecallSpec) -> IndexResult<Vec<CandidateEvidence>> {
-        let mut conditions = vec!["messages_fts MATCH ?".to_owned()];
-        let mut values = vec![fts_match(&spec.terms).into()];
-        add_recall_scope(&mut conditions, &mut values, spec, "s")?;
-        values.push(to_i64(spec.limit as u64, "recall limit")?.into());
-        let order = recall_order_sql(spec.order, "score", "s", Some("m"));
-        let sql = format!(
-            "SELECT m.id, s.id, s.source_id, s.session_key, s.session_uuid, s.title, \
-             s.summary_text, s.compact_text, s.reasoning_summary_text, s.cwd, s.started_at, \
-             s.ended_at, s.message_count, 'message', m.seq, m.role, m.timestamp, m.content_text, \
-             NULL, NULL, bm25(messages_fts) AS score \
-             FROM messages_fts JOIN messages m ON m.id=messages_fts.rowid \
-             JOIN sessions s ON s.id=m.session_id \
-             WHERE {} ORDER BY {order} LIMIT ?",
-            conditions.join(" AND ")
-        );
-        let mut statement = self.connection.prepare(&sql)?;
-        let candidates = statement
-            .query_map(params_from_iter(values), candidate_v8_from_row)?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(candidates)
-    }
-
-    fn recall_v7_messages_like(
-        &self,
-        spec: &RecallSpec,
-        needle: &str,
-    ) -> IndexResult<Vec<CandidateEvidence>> {
-        let pattern = format!("%{}%", escape_like(needle));
-        let mut conditions = vec!["m.content_text LIKE ? ESCAPE '\\'".to_owned()];
-        let mut values = vec![sql_text(&pattern)];
-        add_recall_scope(&mut conditions, &mut values, spec, "s")?;
-        values.push(to_i64(spec.limit as u64, "recall limit")?.into());
-        let order = recall_order_sql(spec.order, "score", "s", Some("m"));
-        let sql = format!(
-            "SELECT m.id, s.id, s.source_id, s.session_key, s.session_uuid, s.title, \
-             s.summary_text, s.compact_text, s.reasoning_summary_text, s.cwd, s.started_at, \
-             s.ended_at, s.message_count, 'message', m.seq, m.role, m.timestamp, m.content_text, \
-             NULL, NULL, 0.0 AS score \
-             FROM messages m JOIN sessions s ON s.id=m.session_id \
-             WHERE {} ORDER BY {order} LIMIT ?",
-            conditions.join(" AND ")
-        );
-        let mut statement = self.connection.prepare(&sql)?;
-        let candidates = statement
-            .query_map(params_from_iter(values), candidate_v8_from_row)?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(candidates)
-    }
-
-    fn recall_v7_profiles(&self, spec: &RecallSpec) -> IndexResult<Vec<CandidateEvidence>> {
-        let mut conditions = vec!["sessions_fts MATCH ?".to_owned()];
-        let mut values = vec![fts_match(&spec.terms).into()];
-        add_recall_scope(&mut conditions, &mut values, spec, "s")?;
-        values.push(to_i64(spec.limit as u64, "recall limit")?.into());
-        let order = recall_order_sql(spec.order, "score", "s", None);
-        let sql = format!(
-            "SELECT NULL, s.id, s.source_id, s.session_key, s.session_uuid, s.title, \
-             s.summary_text, s.compact_text, s.reasoning_summary_text, s.cwd, s.started_at, \
-             s.ended_at, s.message_count, 'session_profile', NULL, NULL, NULL, '', NULL, NULL, \
-             bm25(sessions_fts, 8.0, 3.0, 4.0, 1.2) AS score \
-             FROM sessions_fts JOIN sessions s ON s.id=sessions_fts.rowid \
-             WHERE {} ORDER BY {order} LIMIT ?",
-            conditions.join(" AND ")
-        );
-        let mut statement = self.connection.prepare(&sql)?;
-        let candidates = statement
-            .query_map(params_from_iter(values), candidate_v8_from_row)?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(candidates)
-    }
-
-    fn recall_v7_profiles_like(
-        &self,
-        spec: &RecallSpec,
-        needle: &str,
-    ) -> IndexResult<Vec<CandidateEvidence>> {
-        let pattern = format!("%{}%", escape_like(needle));
-        let mut conditions = vec![
-            "(s.title LIKE ? ESCAPE '\\' OR s.summary_text LIKE ? ESCAPE '\\' OR \
-             s.compact_text LIKE ? ESCAPE '\\' OR s.reasoning_summary_text LIKE ? ESCAPE '\\')"
-                .to_owned(),
-        ];
-        let mut values = (0..4)
-            .map(|_| sql_text(&pattern))
-            .collect::<Vec<SqlValue>>();
-        add_recall_scope(&mut conditions, &mut values, spec, "s")?;
-        values.push(to_i64(spec.limit as u64, "recall limit")?.into());
-        let order = match spec.order {
-            RecallOrder::Started => "s.started_at DESC",
-            RecallOrder::Relevance | RecallOrder::Ended => "s.ended_at DESC",
-        };
-        let sql = format!(
-            "SELECT NULL, s.id, s.source_id, s.session_key, s.session_uuid, s.title, \
-             s.summary_text, s.compact_text, s.reasoning_summary_text, s.cwd, s.started_at, \
-             s.ended_at, s.message_count, 'session_profile', NULL, NULL, NULL, '', NULL, NULL, \
-             0.0 AS score FROM sessions s \
-             WHERE {} ORDER BY {order} LIMIT ?",
-            conditions.join(" AND ")
-        );
-        let mut statement = self.connection.prepare(&sql)?;
-        let candidates = statement
-            .query_map(params_from_iter(values), candidate_v8_from_row)?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(candidates)
-    }
-
     fn load_v8_documents(&self, session_id: i64) -> IndexResult<Vec<StoredDocument>> {
         let mut statement = self.connection.prepare(
             "SELECT id, kind, seq, role, timestamp, source_kind, body_text, title_text, \
@@ -778,51 +611,6 @@ impl IndexReader {
         let documents = statement
             .query_map([session_id], stored_document_from_row)?
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(documents)
-    }
-
-    fn load_v7_documents(&self, session: &StoredSession) -> IndexResult<Vec<StoredDocument>> {
-        let mut documents = vec![StoredDocument {
-            id: None,
-            kind: DocumentKind::SessionProfile,
-            seq: None,
-            role: None,
-            timestamp: None,
-            source_kind: None,
-            body_text: String::new(),
-            title_text: session.title.clone(),
-            summary_text: session.summary_text.clone(),
-            compact_text: session.compact_text.clone(),
-            reasoning_text: session.reasoning_summary_text.clone(),
-            raw_start: None,
-            raw_end: None,
-            projection_epoch: 1,
-        }];
-        let mut statement = self.connection.prepare(
-            "SELECT id, seq, role, timestamp, source_kind, content_text \
-             FROM messages WHERE session_id=? ORDER BY seq",
-        )?;
-        let messages = statement
-            .query_map([session.id], |row| {
-                Ok(StoredDocument {
-                    id: Some(row.get(0)?),
-                    kind: DocumentKind::Message,
-                    seq: Some(row.get(1)?),
-                    role: Some(parse_role(&row.get::<_, String>(2)?)?),
-                    timestamp: Some(row.get(3)?),
-                    source_kind: Some(row.get(4)?),
-                    body_text: row.get(5)?,
-                    title_text: String::new(),
-                    summary_text: String::new(),
-                    compact_text: String::new(),
-                    reasoning_text: String::new(),
-                    raw_start: None,
-                    raw_end: None,
-                    projection_epoch: 1,
-                })
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        documents.extend(messages);
         Ok(documents)
     }
 
@@ -853,9 +641,15 @@ impl IndexReader {
         if self.layout == IndexLayout::V8 {
             Ok(())
         } else {
-            Err(IndexError::InvalidOperation(format!(
-                "{operation} requires a v8 index"
-            )))
+            // Single-branch content contract: v7 is an import format only.
+            // Content-bearing commands fail closed with the typed upgrade
+            // error; the only v7 consumer is the explicit sync migration.
+            Err(IndexError::unsupported(
+                self.metadata.schema_version,
+                format!(
+                    "{operation} requires a native v8 index; the legacy v7 index is migrated by an explicit scoped `shlog sync`"
+                ),
+            ))
         }
     }
 }
@@ -979,55 +773,6 @@ pub(crate) fn inspect_v8_invariants(connection: &Connection) -> IndexResult<Inva
     }
     validate_profile_mirrors(connection, &mut report)?;
     validate_coverage_json(connection, &mut report)?;
-    Ok(report)
-}
-
-fn inspect_v7_invariants(connection: &Connection) -> IndexResult<InvariantReport> {
-    let has_message_fts = table_exists(connection, "messages_fts")?;
-    let has_session_fts = table_exists(connection, "sessions_fts")?;
-    let mut report = InvariantReport {
-        session_count: count(connection, "sessions", None)?,
-        message_document_count: count(connection, "messages", None)?,
-        profile_document_count: if has_session_fts {
-            count(connection, "sessions_fts", None)?
-        } else {
-            0
-        },
-        fts_row_count: if has_message_fts {
-            count(connection, "messages_fts", None)?
-        } else {
-            0
-        },
-        source_file_count: if table_exists(connection, "source_file_meta_cache")? {
-            count(connection, "source_file_meta_cache", None)?
-        } else {
-            0
-        },
-        coverage_count: if table_exists(connection, "coverage")? {
-            count(connection, "coverage", None)?
-        } else {
-            0
-        },
-        violations: Vec::new(),
-    };
-    collect_foreign_key_violations(connection, &mut report)?;
-    let mismatches: i64 = connection.query_row(
-        "SELECT COUNT(*) FROM sessions s WHERE s.message_count<>( \
-         SELECT COUNT(*) FROM messages m WHERE m.session_id=s.id)",
-        [],
-        |row| row.get(0),
-    )?;
-    if mismatches != 0 {
-        report.violations.push(format!(
-            "{mismatches} v7 sessions have message count mismatches"
-        ));
-    }
-    if has_message_fts && report.fts_row_count != report.message_document_count {
-        report.violations.push(format!(
-            "v7 messages_fts has {} rows for {} messages",
-            report.fts_row_count, report.message_document_count
-        ));
-    }
     Ok(report)
 }
 
@@ -1401,27 +1146,6 @@ fn recall_order_sql(
             None => relevance.to_owned(),
         },
     }
-}
-
-fn sort_candidates(candidates: &mut [CandidateEvidence], order: RecallOrder) {
-    candidates.sort_by(|left, right| match order {
-        RecallOrder::Relevance => left
-            .fts_score
-            .partial_cmp(&right.fts_score)
-            .unwrap_or(Ordering::Equal)
-            .then_with(|| right.ended_at.cmp(&left.ended_at))
-            .then_with(|| left.seq.cmp(&right.seq)),
-        RecallOrder::Ended => right.ended_at.cmp(&left.ended_at).then_with(|| {
-            left.fts_score
-                .partial_cmp(&right.fts_score)
-                .unwrap_or(Ordering::Equal)
-        }),
-        RecallOrder::Started => right.started_at.cmp(&left.started_at).then_with(|| {
-            left.fts_score
-                .partial_cmp(&right.fts_score)
-                .unwrap_or(Ordering::Equal)
-        }),
-    });
 }
 
 fn fts_match(terms: &[String]) -> String {

@@ -128,6 +128,7 @@ export function readIndexSidecar(dbPath: string): IndexSidecar | null {
 export function emptyIndexStatus(): StatusSummary["index"] {
   return {
     exists: false,
+    layout: "none",
     sessionCount: 0,
     messageCount: 0,
     earliestStartedAt: null,
@@ -183,6 +184,7 @@ function fileMetaMap(entries: IndexSidecarFileMeta[]): Map<string, SourceFileMet
 function indexStatusFromSlice(dbPath: string, slice: IndexSidecarSourceSlice | undefined): StatusSummary["index"] {
   return {
     exists: true,
+    layout: "legacy_v7",
     sessionCount: slice?.sessionCount ?? 0,
     messageCount: slice?.messageCount ?? 0,
     earliestStartedAt: slice?.earliestStartedAt ?? null,

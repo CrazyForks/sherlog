@@ -25,8 +25,7 @@ pub use global::{
     FindSourceSelection, merge_find_results, merge_find_summaries, public_find_sources,
 };
 pub use query::{
-    LEGACY_SESSION_FTS_WEIGHTS, QueryAnalysis, RecallMode, analyze_query, build_fts_match,
-    escape_like_pattern, quote_fts_term,
+    QueryAnalysis, RecallMode, analyze_query, build_fts_match, escape_like_pattern, quote_fts_term,
 };
 pub use ranking::{
     RetrievalPlan, rank_candidates, rank_candidates_at, rank_candidates_for_sort,

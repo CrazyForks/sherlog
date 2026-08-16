@@ -20,6 +20,7 @@
 - v8 writer 固定使用 rollback `journal_mode=DELETE` 与 `synchronous=FULL`。这是短命 CLI + 显式 single-writer 的有意识取舍：发布态 index 保持单文件，所有只读命令在 DB `0444`、目录 `0555` 时也不会创建 `-wal` / `-shm`；不要改成 `immutable=1` 或 close-time WAL seal，它们在并发 writer/reader 下会读旧数据或留下转换竞态。
 - `sessions` view 故意没有 `INSTEAD OF` trigger：高级只读 SQL 保持兼容，旧 TypeScript writer 对 v8 写入时会 fail closed。
 - 检索主链是 `SQLite candidate recall -> deterministic session ranking -> evidenceRead -> read-range/read-page`。真实 message 与 session profile 是两类 document；profile 命中不得伪装成 message evidence。`read-range --query` 无 message anchor 返回 typed `anchor_not_found`（含 `matchedProfileFields` 与闭包 read-page nextAction），不回退 seq 0；read payload 的 session 记录含 `compactText`/`reasoningSummaryText`。
+- 查询面单分支：find/read/list 等内容命令只讲 v8；legacy v7 是 import 格式。v7 库上内容命令返回 typed `index_schema_upgrade_required` + nextAction `shlog sync`；`status` 正常工作并报告 `index.layout: legacy_v7`（升级 nudge）。迁移只发生在显式 writer 命令，副作用是 coverage 清空（需重新 sync 各 root）、保留 `*.v7.bak.*` 备份、legacy cold-roots.json tombstone、旧 TS writer fail-closed。
 - `find` 的 `evidenceRead.command` 是 `executable:"inherit"` + 闭包 `--source/--db/--json` 的 `args` + `sideEffect:"read_index"`，custom DB 下原样执行必须读回原 candidate。无 `--root/--cwd/--selector` 的 find 解析为各 source 的 canonical default `all(root)`，recall/coverage/scanned 三 scope 一致。
 - v8 tokenizer 使用 UAX #29 lowercase word 与重叠 CJK Unicode-scalar bigram。FTS column 权重为 body 1.0、title 8.0、summary 3.0、compact 4.0、reasoning summary 1.2。
 - `source` / root / cwd / date / session / exclude 约束尽量在 SQL candidate generation 阶段下推，不先召回大集合再在 app 层过滤。
@@ -30,7 +31,7 @@
 - strict sync 遇到选中输入错误时不发布部分 coverage；`--best-effort` 可提交成功文件，但不会伪造 complete coverage。`--prune` 只删除 hot 与 registered cold 都不存在的同 source 投影。
 - v8 `cold_roots` 表是 cold registration 真相。legacy `cold-roots.json` 只作为首次 v7/v8 cutover 的一次性导入输入；导入后使用 tombstone 阻止旧 writer 复活配置。
 - v7 -> v8 migration 只发生在授权 writer 路径，采用 copy/verify/backup/atomic publish；read-only commands 不迁移。cold-only projection 必须保留。
-- 当前 native release pipeline 仅声明 `aarch64-apple-darwin`、`x86_64-apple-darwin`、`x86_64-unknown-linux-gnu`。源码与 pipeline 已 ready，但本次 cutover 尚未发布 native tag/assets；本机全局 `shlog --version` 当前实测仍为旧发布版 `0.4.4`，发布/重装后必须重新核对路径与版本。
+- native release pipeline 声明 `aarch64-apple-darwin`、`x86_64-apple-darwin`、`x86_64-unknown-linux-gnu` 三个目标。v0.5.0 已发布 tag/assets 并完成本机安装验证；后续版本走同一 tag → release workflow → 回读 assets/attestations → installer 重装流程。
 
 不要把下面这些说成已完成：
 
@@ -41,7 +42,6 @@
 - 完整的 incremental/full-replay property/state-machine test 矩阵；当前只有聚焦 transition/migration tests
 - candidate/filter/exact 各阶段完整可观测性与 `weakMatch`/`matchMode` 公共 contract
 - 全正文 typo-tolerant fuzzy、evidence-read frecency
-- native GitHub release/tag/assets 已发布或本机 global CLI 已切换为 native
 - Linux arm64、musl 或 Windows native archive
 - watcher / daemon、LMDB 或第二状态真相源
 
@@ -53,7 +53,7 @@
 - [runner.rs](rust/src/runner.rs): parse/dispatch/error routing
 - [sources/](rust/src/sources): source adapters, inventory and privacy projection
 - [sync/](rust/src/sync): lock, scan/project/stage, append/full transitions, cold retention and publish
-- [index/](rust/src/index): v7 read compatibility, v8 reader/writer/schema/SQL invariants
+- [index/](rust/src/index): v8 reader/writer/schema/SQL invariants；v7 仅作为 migration 的 import 格式（内容命令 fail-closed）
 - [retrieval/](rust/src/retrieval): query analysis, candidate aggregation, ranking, snippets and evidence-read plans
 - [migration/](rust/src/migration): v7 -> v8 copy/verify/atomic publication
 - [selector.rs](rust/src/selector.rs), [coverage.rs](rust/src/coverage.rs), [tokenizer.rs](rust/src/tokenizer.rs): shared invariants

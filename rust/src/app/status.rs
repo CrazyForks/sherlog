@@ -59,6 +59,10 @@ pub(super) fn collect_status(
             (
                 StatusIndex {
                     exists: true,
+                    layout: match reader.layout() {
+                        IndexLayout::V8 => "native_v8".to_owned(),
+                        IndexLayout::V7 => "legacy_v7".to_owned(),
+                    },
                     session_count: stats.session_count,
                     message_count: stats.message_count,
                     earliest_started_at: stats.earliest_started_at,
@@ -289,6 +293,7 @@ fn scan_cached<'a>(
 fn empty_index_status() -> StatusIndex {
     StatusIndex {
         exists: false,
+        layout: "none".to_owned(),
         session_count: 0,
         message_count: 0,
         earliest_started_at: None,

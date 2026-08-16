@@ -179,7 +179,7 @@ coverage 与 content projection 分离：
 
 - sync 只有在 snapshot proof 完整时写 complete record；
 - best-effort errors 不产生虚假 complete coverage；
-- find/list/read/stats 只看 stored index proof；
+- find/list/read/stats 只讲 v8 并只看 stored index proof；v7 库上内容命令 fail-closed 返回 typed `index_schema_upgrade_required`（nextAction 为显式 `shlog sync`），只有 migration 把 v7 当 import 格式消费；
 - 无 `--root/--cwd/--selector` 的 find 解析为各 source 的 canonical default `all(root)`，recall scope == scanned count scope == coverage scope；
 - status 不返回/检索正文、不写 index；inventory cache miss 可流式读取 raw，但仅以 privacy-allowlisted accepted projection 派生 live proof，exact `mtime_ns`/checkpoint cache hit 不重 parse；同 file-set 的 `source_content_changed` 会用持久化 `boundary_digest` 前缀证明区分 proven append（继续 advisory query）与 truncate/prefix/same-size rewrite（`recommendedAction: sync`）；
 - `--prune` 遇 registered cold root missing/unmount/permission 时 fail closed，绝不把不可达当作空集删除 cold-only projection；

@@ -82,7 +82,6 @@ fn query_analysis_matches_ts_for_cjk_paths_and_fts_escaping() {
         }
     );
     assert_eq!(analyze_query("𠮷野家").terms, strings(&["𠮷野", "野家"]));
-    assert_eq!(LEGACY_SESSION_FTS_WEIGHTS, [8.0, 3.0, 4.0, 1.2]);
     assert_eq!(
         analyze_query("汉").recall,
         RecallMode::Like {

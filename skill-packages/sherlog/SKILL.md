@@ -34,6 +34,7 @@ description: "Use proactively for local agent-session history and prior setup ar
 | Sort | `find` 默认 relevance；最新/最近用 `--sort ended`，必要时 `--exclude-session` 防 self-hit。日期自然语言只是 query term，不是 date filter。 |
 | Query refine | 多 term 是 quoted-term AND。零结果先读 `zeroResults.reason`；不要原样重复过长 query。当前没有全正文 typo/fuzzy search。 |
 | Coverage | `find/list` 只报告 stored index proof，`freshness` 为 `not_checked`；需要 live proof 才用同 scope 的 `status --cwd/--selector`。`recommendedAction=query` 不 sync，`recommendedAction=sync` 才同步同范围。 |
+| Legacy index | `status` 的 `index.layout` 为 `legacy_v7` 时：内容命令会返回 typed `index_schema_upgrade_required`（nextAction 为 `shlog sync --db <db> --json`）。跑一次该 sync 即完成迁移（保留 `*.v7.bak.*` 备份、coverage 重建、旧 0.4.4 writer 不再可写），之后所有命令回到 v8。不要绕开这条路径去手工 patch 旧库。 |
 | Cold | v8 truth 是 SQLite `cold_roots`。`cold add` 只登记 presence；`sync` 不从 `.jsonl.zst` 重建。JSON `configPath` 是 legacy tombstone 兼容字段，不是 v8 truth。 |
 | Prune | 默认不用 `--prune`。只有用户明确要删除 hot 与 registered cold 都不存在的 projection 时才执行。registered cold root 不可达（missing/unmounted/permission）时 prune fail-closed，不会把不可读当作不存在。当前 cold-presence destructive prune 只支持 Codex。 |
 

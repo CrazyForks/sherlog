@@ -553,6 +553,10 @@ pub struct StatusContext {
 #[serde(rename_all = "camelCase")]
 pub struct StatusIndex {
     pub exists: bool,
+    /// Storage layout of the opened index: `native_v8`, `legacy_v7`, or
+    /// `none` when no index exists. `legacy_v7` is the upgrade nudge: content
+    /// commands fail closed until one explicit `shlog sync` migrates.
+    pub layout: String,
     pub session_count: u64,
     pub message_count: u64,
     pub earliest_started_at: Option<String>,
@@ -722,6 +726,7 @@ mod tests {
             },
             index: StatusIndex {
                 exists: false,
+                layout: "none".to_owned(),
                 session_count: 0,
                 message_count: 0,
                 earliest_started_at: None,

@@ -819,19 +819,26 @@ fn v7_reader_uses_legacy_sessions_messages_and_coverage_without_writes() {
 
     let reader = IndexReader::open(&path).unwrap();
     assert_eq!(reader.layout(), IndexLayout::V7);
+    // Status-oriented proof reads keep working on legacy layout so `status`
+    // can nudge the user toward the explicit sync migration.
     assert_eq!(reader.stats(SourceId::Codex).unwrap().message_count, 2);
+    assert!(!reader.coverage_status(&selector()).unwrap().complete);
     let session_ref = SessionRef {
         source_id: SourceId::Codex,
         native_session_id: "legacy".to_owned(),
     };
-    assert_eq!(
-        reader.read_page(&session_ref, 1, 20).unwrap().messages[0].seq,
-        1
-    );
-    let like_candidates = reader
+
+    // Content-bearing commands fail closed on v7 with the typed upgrade
+    // error; the only v7 consumer is the explicit sync migration.
+    let read_error = reader.read_page(&session_ref, 1, 20).unwrap_err();
+    assert!(matches!(
+        &read_error,
+        IndexError::UnsupportedSchema { detail, .. } if detail.contains("shlog sync")
+    ));
+    let recall_error = reader
         .recall(&RecallSpec {
-            terms: vec![],
-            like_needle: Some("l".to_owned()),
+            terms: vec!["legacy".to_owned()],
+            like_needle: None,
             sources: vec![SourceId::Codex],
             session: Some(session_ref.clone()),
             selector: None,
@@ -839,21 +846,21 @@ fn v7_reader_uses_legacy_sessions_messages_and_coverage_without_writes() {
             order: RecallOrder::Relevance,
             limit: 10,
         })
-        .unwrap();
-    assert!(
-        like_candidates
-            .iter()
-            .any(|candidate| candidate.kind == DocumentKind::Message)
-    );
-    assert!(
-        like_candidates
-            .iter()
-            .any(|candidate| candidate.kind == DocumentKind::SessionProfile)
-    );
-    let bundle = reader.export_session_bundle(&session_ref).unwrap();
-    assert_eq!(bundle.documents.len(), 3);
-    assert!(reader.coverage_status(&selector()).unwrap().complete);
-    assert!(reader.ensure_invariants().unwrap().is_valid());
+        .unwrap_err();
+    assert!(matches!(
+        &recall_error,
+        IndexError::UnsupportedSchema { .. }
+    ));
+    let bundle_error = reader.export_session_bundle(&session_ref).unwrap_err();
+    assert!(matches!(
+        &bundle_error,
+        IndexError::UnsupportedSchema { .. }
+    ));
+    let invariant_error = reader.ensure_invariants().unwrap_err();
+    assert!(matches!(
+        &invariant_error,
+        IndexError::UnsupportedSchema { .. }
+    ));
 }
 
 #[test]

@@ -919,6 +919,107 @@ fn first_sync_rejects_malformed_legacy_cold_state_without_publishing_v8() {
 }
 
 #[test]
+fn legacy_v7_content_commands_fail_closed_and_status_reports_the_layout() {
+    let directory = TempDir::new().unwrap();
+    let root = directory.path().join("sessions");
+    let id = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    let raw = root
+        .join("2026/08/15")
+        .join(format!("rollout-2026-08-15T00-00-00-{id}.jsonl"));
+    write_codex_session(&raw, id, &[("user_message", "legacy evidence")]);
+    let paths = resolved_paths(&directory, &root);
+    std::fs::create_dir_all(&paths.data_dir).unwrap();
+    create_v7_index(&paths.db_path, &raw, id, &root);
+    let mut services = NativeAppServices::new(paths.clone(), directory.path().to_path_buf());
+
+    // status is the nudge surface: it works and names the legacy layout.
+    let status = json_output(|stdout, stderr| {
+        services.status(
+            &StatusArgs {
+                source: Some("codex".to_owned()),
+                root: Some(root.clone()),
+                selector: None,
+                cwd: None,
+                database: DatabaseArg {
+                    db: paths.db_path.clone(),
+                },
+                inventory: false,
+                json: true,
+            },
+            stdout,
+            stderr,
+        )
+    });
+    assert_eq!(status["index"]["layout"], serde_json::json!("legacy_v7"));
+    assert_eq!(status["index"]["exists"], serde_json::json!(true));
+
+    // Content-bearing commands fail closed with the typed upgrade error.
+    let (code, stdout, stderr) = run_cli(
+        &mut services,
+        vec![
+            "shlog".to_owned(),
+            "find".to_owned(),
+            "legacy".to_owned(),
+            "--db".to_owned(),
+            paths.db_path.to_string_lossy().into_owned(),
+            "--json".to_owned(),
+        ],
+    );
+    assert_eq!(code, 1);
+    assert!(stderr.is_empty());
+    let payload: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
+    assert_eq!(
+        payload["error"]["code"],
+        serde_json::json!("index_schema_upgrade_required")
+    );
+    assert_eq!(
+        payload["error"]["nextAction"]["commands"][0]["argv"],
+        serde_json::json!([
+            "shlog",
+            "sync",
+            "--db",
+            paths.db_path.to_string_lossy(),
+            "--json"
+        ])
+    );
+
+    // One explicit sync migrates and restores normal reads.
+    let (code, _stdout, stderr) = run_cli(
+        &mut services,
+        vec![
+            "shlog".to_owned(),
+            "sync".to_owned(),
+            "--db".to_owned(),
+            paths.db_path.to_string_lossy().into_owned(),
+            "--json".to_owned(),
+        ],
+    );
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+    let found = json_output(|stdout, stderr| {
+        services.find(
+            &FindArgs {
+                query: "legacy evidence".to_owned(),
+                source: Some("codex".to_owned()),
+                limit: 10,
+                root: None,
+                selector: None,
+                cwd: None,
+                sort: CliFindSort::Relevance,
+                exclude_session: vec![],
+                database: DatabaseArg {
+                    db: paths.db_path.clone(),
+                },
+                json: true,
+            },
+            stdout,
+            stderr,
+        )
+    });
+    assert_eq!(found["results"][0]["sessionRef"], serde_json::json!(id));
+}
+
+#[test]
 fn explicit_sync_migrates_v7_before_running_the_v8_writer() {
     let directory = TempDir::new().unwrap();
     let root = directory.path().join("sessions");

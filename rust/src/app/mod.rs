@@ -125,7 +125,7 @@ impl NativeAppServices {
             };
             let excluded_session_uuids =
                 self.resolve_excluded_session_uuids(reader, source, &excluded_sessions)?;
-            let candidates = recall_with_fallback(
+            let candidates = self.recall_with_fallback(
                 reader,
                 &args.query,
                 RecallSpec {
@@ -241,7 +241,7 @@ impl NativeAppServices {
         let top_hit = if explicit_seq.is_none() && query.is_some_and(|value| !value.is_empty()) {
             let analysis = analyze_query(query.expect("query checked above"));
             let like_needle = recall_like_needle(&analysis.recall);
-            let mut candidates = recall_with_fallback(
+            let mut candidates = self.recall_with_fallback(
                 reader,
                 query.expect("query checked above"),
                 RecallSpec {
@@ -545,6 +545,37 @@ impl NativeAppServices {
             }
         }
     }
+    fn recall_with_fallback(
+        &self,
+        reader: &IndexReader,
+        query: &str,
+        spec: RecallSpec,
+    ) -> Result<Vec<CandidateEvidence>, AppError> {
+        let recall = |terms: Vec<String>, like_needle: Option<String>| {
+            let mut request = spec.clone();
+            request.terms = terms;
+            request.like_needle = like_needle;
+            reader.recall(&request)
+        };
+        let map = |error: IndexError| map_index_error(error, reader.path(), &self.cwd, &self.paths);
+        let mut candidates = recall(spec.terms.clone(), spec.like_needle.clone()).map_err(map)?;
+        if !candidates.is_empty() {
+            return Ok(candidates);
+        }
+        let mut seen = HashSet::new();
+        for relaxed in build_relaxed_recall_queries(query) {
+            let analysis = analyze_query(&relaxed);
+            for candidate in recall(analysis.terms, recall_like_needle(&analysis.recall))
+                .map_err(|error| AppError::output(format!("query index: {error}")))?
+            {
+                let key = candidate_key(&candidate);
+                if seen.insert(key) {
+                    candidates.push(candidate);
+                }
+            }
+        }
+        Ok(candidates)
+    }
 }
 
 impl AppServices for NativeAppServices {
@@ -792,37 +823,6 @@ impl AppServices for NativeAppServices {
             write_stats_text(stdout, &summary)
         }
     }
-}
-
-fn recall_with_fallback(
-    reader: &IndexReader,
-    query: &str,
-    spec: RecallSpec,
-) -> Result<Vec<CandidateEvidence>, AppError> {
-    let recall = |terms: Vec<String>, like_needle: Option<String>| {
-        let mut request = spec.clone();
-        request.terms = terms;
-        request.like_needle = like_needle;
-        reader.recall(&request)
-    };
-    let mut candidates = recall(spec.terms.clone(), spec.like_needle.clone())
-        .map_err(|error| AppError::output(format!("query index: {error}")))?;
-    if !candidates.is_empty() {
-        return Ok(candidates);
-    }
-    let mut seen = HashSet::new();
-    for relaxed in build_relaxed_recall_queries(query) {
-        let analysis = analyze_query(&relaxed);
-        for candidate in recall(analysis.terms, recall_like_needle(&analysis.recall))
-            .map_err(|error| AppError::output(format!("query index: {error}")))?
-        {
-            let key = candidate_key(&candidate);
-            if seen.insert(key) {
-                candidates.push(candidate);
-            }
-        }
-    }
-    Ok(candidates)
 }
 
 fn recall_like_needle(mode: &RecallMode) -> Option<String> {

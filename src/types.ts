@@ -372,6 +372,7 @@ export interface StatusSummary {
   sourceInventory: SourceInventory;
   index: {
     exists: boolean;
+    layout: "native_v8" | "legacy_v7" | "none";
     sessionCount: number;
     messageCount: number;
     earliestStartedAt: string | null;

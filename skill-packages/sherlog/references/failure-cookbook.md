@@ -88,6 +88,15 @@ Schema 仍接受 `fresh_miss` / `stale_or_missing_coverage` 作为兼容 reason�
 
 新/未索引 active file 在建立 bounded read 前已变化，Sherlog 无法证明旧 prefix 安全。其他稳定 file 可能已提交，但 complete coverage 未写。稍后执行同范围 sync。
 
+## Legacy v7 index (升级后首次使用)
+
+`status` 的 `index.layout` 为 `legacy_v7` 时，内容命令（find/read/list）返回 typed `index_schema_upgrade_required`，`nextAction.commands[0]` 是闭包 `--db` 的 `shlog sync`。执行一次即完成迁移：
+
+- 迁移保留 `*.v7.bak.*` 一致备份，可用备份回滚；
+- 迁移后 coverage 清空，需要重新 sync 各常用 root/selector；
+- 迁移是单向的：旧 0.4.4 writer 对 v8 fail-closed；
+- 不要为绕过迁移手工 patch 旧库，或反复重试读命令。
+
 ## Strict sync failure
 
 JSON report 的 `errors` 与 `errorDetails[]` 是 per-file/source evidence。strict failure 不发布部分 complete coverage；先修 filesystem/permission/malformed source，再同范围重试。
