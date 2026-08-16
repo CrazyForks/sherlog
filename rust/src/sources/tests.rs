@@ -480,6 +480,62 @@ fn codex_checkpoint_projects_only_appended_documents_and_rejects_rewrites() {
 }
 
 #[test]
+fn dsh_adapter_accepts_real_messages_and_rejects_injected_context() {
+    let temp = tempdir().unwrap();
+    let root = temp.path().join("dsh");
+    fs::create_dir_all(&root).unwrap();
+    let session_dir = root.join("session-dsh-safe");
+    fs::create_dir_all(&session_dir).unwrap();
+    let file = session_dir.join("session.jsonl.zstd");
+    write_zstd_lines(
+        &file,
+        &[
+            json!({"type":"session","version":0,"id":"session-dsh-safe","createdAt":1786870711696i64,"cwd":"/safe/dsh"}).to_string(),
+            json!({"type":"session/title","seq":1,"time":1786870711696i64,"data":{"title":"accepted dsh title"}}).to_string(),
+            json!({"type":"request/header","seq":2,"time":1786870711696i64,"data":{"header":{"config":{"model":"deepseek-v4-flash"}}}}).to_string(),
+            json!({"type":"user/message","seq":3,"time":1786870711697i64,"data":{"source":{"kind":"user"},"role":"user","content":[{"type":"text","text":"accepted dsh user"}]}}).to_string(),
+            json!({"type":"user/message","seq":4,"time":1786870711698i64,"data":{"source":{"kind":"plugin"},"role":"user","content":[{"type":"text","text":"plugin context must not leak"}]}}).to_string(),
+            json!({"type":"user/message","seq":5,"time":1786870711699i64,"data":{"source":{"kind":"skill-catalog"},"role":"user","content":[{"type":"text","text":"skill catalog must not leak"}]}}).to_string(),
+            json!({"type":"assistant/message","seq":6,"time":1786870711700i64,"data":{"message":{"role":"assistant","content":[{"type":"reasoning","text":"reasoning must not leak"},{"type":"text","text":"accepted dsh assistant"},{"type":"tool-call","name":"bash","arguments":"tool call must not leak"}]}}}).to_string(),
+        ],
+    );
+
+    let scan = scan_all(SourceId::Dsh, &root);
+    assert_eq!(scan.files.len(), 1);
+    let projected = expect_projected(project(&scan.files[0], scan.files[0].size, None));
+    assert_eq!(projected.session.source_id, SourceId::Dsh);
+    assert_eq!(projected.session.native_session_id, "session-dsh-safe");
+    assert_eq!(projected.session.cwd, "/safe/dsh");
+    assert_eq!(projected.session.model, "deepseek-v4-flash");
+    assert_eq!(projected.session.title, "accepted dsh title");
+    assert!(projected.read_proof.stable());
+    assert_eq!(projected.read_proof.safe_offset, scan.files[0].size);
+    assert!(
+        projected
+            .documents
+            .iter()
+            .all(|document| document.raw_start == 0 && document.raw_end == 0)
+    );
+
+    let searchable = serde_json::to_string(&projected).unwrap();
+    for accepted in [
+        "accepted dsh user",
+        "accepted dsh assistant",
+        "accepted dsh title",
+    ] {
+        assert!(searchable.contains(accepted), "DSH lost {accepted}");
+    }
+    for rejected in [
+        "plugin context must not leak",
+        "skill catalog must not leak",
+        "reasoning must not leak",
+        "tool call must not leak",
+    ] {
+        assert!(!searchable.contains(rejected), "DSH leaked {rejected}");
+    }
+}
+
+#[test]
 fn accepted_digest_does_not_weaken_private_prefix_rewrite_detection() {
     let temp = tempdir().unwrap();
     let root = temp.path().join("2026/08/15");
@@ -631,6 +687,16 @@ fn codex_line(record_type: &str, payload: Value) -> String {
 
 fn write_lines(path: &Path, lines: &[String]) {
     fs::write(path, format!("{}\n", lines.join("\n"))).unwrap();
+}
+
+fn write_zstd_lines(path: &Path, lines: &[String]) {
+    let mut encoder = zstd::stream::write::Encoder::new(Vec::new(), 0).unwrap();
+    for line in lines {
+        encoder.write_all(line.as_bytes()).unwrap();
+        encoder.write_all(b"\n").unwrap();
+    }
+    let bytes = encoder.finish().unwrap();
+    fs::write(path, bytes).unwrap();
 }
 
 fn append(path: &Path, line: &str) {

@@ -21,6 +21,7 @@ describe("codex source adapter", () => {
       "codex",
       "claude-code",
       "pi",
+      "dsh",
     ]);
     expect(codexSourceAdapter.public).toBe(true);
   });

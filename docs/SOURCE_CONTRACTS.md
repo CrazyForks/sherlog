@@ -1,6 +1,6 @@
 # Source Adapter Contracts
 
-This document defines the searchable projection contract for the native Rust source adapters. It is not a promise that upstream transcript formats are stable. `claude-code` and `pi` remain experimental transcript readers.
+This document defines the searchable projection contract for the native Rust source adapters. It is not a promise that upstream transcript formats are stable. `claude-code`, `pi`, and `dsh` remain experimental transcript readers.
 
 ## Public seam
 
@@ -10,7 +10,7 @@ This document defines the searchable projection contract for the native Rust sou
 - projection converts one byte-bounded `SourceFile` into a privacy-reviewed `SessionProjection`, accepted message documents, `ReadProof`, and an opaque checkpoint.
 - source-specific JSON keys, allowlists, reducer state, and raw-format drift remain private adapter implementation.
 
-The registry is static: `codex`, `claude-code`, `pi`. Adding a runtime plugin is not part of this contract.
+The registry is static: `codex`, `claude-code`, `pi`, `dsh`. Adding a runtime plugin is not part of this contract.
 
 ## Shared invariants
 
@@ -125,6 +125,34 @@ Rejected:
 - malformed/non-object lines.
 
 Pi currently requests full replay when an existing checkpoint is offered (`DeltaUnsupported`).
+
+## DSH adapter (experimental)
+
+Implementation: `rust/src/sources/dsh.rs`.
+
+Source layout: `~/.dsh/sessions/<encoded-cwd>/<session-id>/session.jsonl.zstd`. The file is zstd-compressed JSONL; the adapter treats the compressed file as the raw source and streams decompressed records.
+
+Accepted metadata/profile input:
+
+- `session` record with non-empty cwd and `createdAt` epoch millis -> ISO timestamp; id when available;
+- `session/title` non-empty title;
+- `request/header` non-empty `data.header.config.model`.
+
+Accepted message input:
+
+- `user/message` only when `data.source.kind == "user"` (real user turns; injected plugin/skill-catalog/agent-instructions/subagent context is rejected);
+- `assistant/message` with `data.message.role == "assistant"`;
+- `content[]` items with `type = "text"` only;
+- timestamp from record `time` epoch millis.
+
+Rejected:
+
+- user messages with non-`user` source kind (system/runtime injections);
+- reasoning, tool-call, tool-result, and unsupported content parts;
+- incomplete session/message records;
+- malformed/non-object lines.
+
+DSH currently requests full replay when an existing checkpoint is offered (`DeltaUnsupported`). Raw byte locators are `0` because decompressed JSONL offsets are not linear in the compressed file; `read-*` serves text from SQLite.
 
 ## Derived profile fields
 

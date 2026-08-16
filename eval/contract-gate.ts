@@ -651,7 +651,7 @@ function assertContractObservation(
       expectPath(json, ["results", 0, "sessionRef"], CLAUDE_SESSION_REF, definition.id);
       break;
     case "find-all-sources": {
-      expectContract(deepPathEqual(json, ["sourceIds"], ["codex", "claude-code", "pi"]), definition.id, "all-source find sourceIds changed");
+      expectContract(deepPathEqual(json, ["sourceIds"], ["codex", "claude-code", "pi", "dsh"]), definition.id, "all-source find sourceIds changed");
       const sources = Array.isArray(json?.results)
         ? json.results.map((entry) => isRecord(entry) ? entry.sourceId : null).sort()
         : [];

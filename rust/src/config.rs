@@ -78,6 +78,7 @@ pub struct ResolvedPaths {
     pub default_codex_dir: PathBuf,
     pub default_claude_code_dir: PathBuf,
     pub default_pi_dir: PathBuf,
+    pub default_dsh_dir: PathBuf,
     pub legacy_data_dirs: Vec<PathBuf>,
 }
 
@@ -87,6 +88,7 @@ impl ResolvedPaths {
             SourceId::Codex => &self.default_codex_dir,
             SourceId::ClaudeCode => &self.default_claude_code_dir,
             SourceId::Pi => &self.default_pi_dir,
+            SourceId::Dsh => &self.default_dsh_dir,
         }
     }
 }
@@ -119,6 +121,7 @@ pub fn resolve_paths(env: &EnvSnapshot, cwd: &Path, home: &Path) -> ResolvedPath
         default_codex_dir: resolve_lexical(home.join(".codex/sessions"), cwd),
         default_claude_code_dir: resolve_lexical(home.join(".claude/projects"), cwd),
         default_pi_dir: resolve_lexical(home.join(".pi/agent/sessions"), cwd),
+        default_dsh_dir: resolve_lexical(home.join(".dsh/sessions"), cwd),
         legacy_data_dirs,
     }
 }
@@ -438,6 +441,10 @@ mod tests {
             Path::new("/Users/tester/.pi/agent/sessions")
         );
         assert_eq!(
+            resolved.default_source_root(SourceId::Dsh),
+            Path::new("/Users/tester/.dsh/sessions")
+        );
+        assert_eq!(
             resolved.legacy_data_dirs,
             [
                 PathBuf::from("/state/cxs"),
@@ -580,6 +587,7 @@ mod tests {
             default_codex_dir: base.path().join("codex"),
             default_claude_code_dir: base.path().join("claude"),
             default_pi_dir: base.path().join("pi"),
+            default_dsh_dir: base.path().join("dsh"),
             legacy_data_dirs: vec![first.clone(), second.clone()],
         };
 
@@ -609,6 +617,7 @@ mod tests {
             default_codex_dir: base.path().join("codex"),
             default_claude_code_dir: base.path().join("claude"),
             default_pi_dir: base.path().join("pi"),
+            default_dsh_dir: base.path().join("dsh"),
             legacy_data_dirs: vec![legacy.clone(), legacy.clone()],
         };
 

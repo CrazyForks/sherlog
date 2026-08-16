@@ -199,7 +199,7 @@ impl AppError {
                 format!("Rust CLI scaffold does not implement `{operation}` yet.")
             }
             Self::UnsupportedSource { source } => format!(
-                "unsupported source \"{source}\". Public sources in this release: codex|claude-code|pi."
+                "unsupported source \"{source}\". Public sources in this release: codex|claude-code|pi|dsh."
             ),
             Self::IndexUnavailable { db_path, .. } => format!("index not found: {db_path}"),
             Self::SessionNotFound { session_ref, .. } => {

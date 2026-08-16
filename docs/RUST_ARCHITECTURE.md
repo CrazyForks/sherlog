@@ -129,7 +129,7 @@ v8 的持久 journal policy 是 `DELETE + synchronous=FULL`，不是 WAL。外�
 - malformed/filtered record 遵守 source contract；
 - 不把 tool result、thinking、attachment、diagnostic 等默认写入搜索面。
 
-`claude-code` 与 `pi` 是 experimental raw reader，不是上游格式稳定承诺。
+`claude-code`、`pi` 与 `dsh` 是 experimental raw reader，不是上游格式稳定承诺。
 
 ## Incremental sync
 

@@ -32,7 +32,7 @@ describe("selector", () => {
     });
     expect(() =>
       canonicalizeSelector({ source: "unknown", kind: "all", root: "/tmp/cxs-root" })
-    ).toThrow("selector.source must be codex, claude-code, or pi");
+    ).toThrow("selector.source must be codex, claude-code, pi, or dsh");
   });
 
   test("rejects date ranges with fromDate after toDate", () => {

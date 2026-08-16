@@ -2,7 +2,7 @@
 
 ## 项目定位
 
-`Sherlog`（CLI 命令 `shlog`）是一个面向本机 agent session 日志的渐进式检索 CLI。生产 runtime 已切换为 standalone Rust binary，内置 SQLite/FTS5；使用者运行 CLI 不需要 Node.js。当前公开 source 包括 `codex`、experimental `claude-code` 和 experimental `pi`。
+`Sherlog`（CLI 命令 `shlog`）是一个面向本机 agent session 日志的渐进式检索 CLI。生产 runtime 已切换为 standalone Rust binary，内置 SQLite/FTS5；使用者运行 CLI 不需要 Node.js。当前公开 source 包括 `codex`、experimental `claude-code`、experimental `pi` 和 experimental `dsh`。
 
 当前接受的产品边界：
 

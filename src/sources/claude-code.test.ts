@@ -21,11 +21,12 @@ describe("claude-code source adapter", () => {
 
     expect(adapter.id).toBe("claude-code");
     expect(adapter.public).toBe(true);
-    expect(listSessionSourceAdapters().map((source) => source.id)).toEqual(["codex", "claude-code", "pi"]);
+    expect(listSessionSourceAdapters().map((source) => source.id)).toEqual(["codex", "claude-code", "pi", "dsh"]);
     expect(listSessionSourceAdapters().filter((source) => source.public).map((source) => source.id)).toEqual([
       "codex",
       "claude-code",
       "pi",
+      "dsh",
     ]);
   });
 
@@ -396,6 +397,7 @@ describe("claude-code source adapter", () => {
       "codex",
       "claude-code",
       "pi",
+      "dsh",
     ]);
   });
 });

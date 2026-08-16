@@ -186,6 +186,166 @@ pub(crate) fn scan_json_records(
     Ok(())
 }
 
+/// Metadata scan over a zstd-compressed JSONL file. DSH sessions are stored
+/// as `session.jsonl.zstd`; the adapter treats the compressed file as the raw
+/// source and streams the decompressed records for privacy-reviewed metadata.
+pub(crate) fn scan_zstd_json_records(
+    path: &Path,
+    mut callback: impl FnMut(&Map<String, Value>) -> bool,
+) -> Result<(), SourceError> {
+    let handle = File::open(path).map_err(|source| SourceError::Io {
+        operation: "open source metadata",
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let decoder = zstd::stream::read::Decoder::new(handle).map_err(|source| SourceError::Io {
+        operation: "decompress source metadata",
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let mut reader = BufReader::new(decoder);
+    let mut buffer = Vec::new();
+
+    loop {
+        buffer.clear();
+        let bytes_read =
+            reader
+                .read_until(b'\n', &mut buffer)
+                .map_err(|source| SourceError::Io {
+                    operation: "read source metadata",
+                    path: path.to_path_buf(),
+                    source,
+                })?;
+        if bytes_read == 0 {
+            break;
+        }
+        let content_len = if buffer.last() == Some(&b'\n') {
+            content_len_without_newline(&buffer)
+        } else {
+            buffer.len()
+        };
+        let json = trim_ascii(&buffer[..content_len]);
+        if json.is_empty() {
+            continue;
+        }
+        let Ok(Value::Object(record)) = serde_json::from_slice::<Value>(json) else {
+            continue;
+        };
+        if !callback(&record) {
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// Full-file projection reader for zstd-compressed JSONL sources.
+///
+/// DSH does not currently support append deltas, so this helper always reads
+/// the full compressed file and verifies the raw compressed prefix. The
+/// decompressed JSONL line offsets are not linear in the compressed file;
+/// source documents therefore use `0` raw locators and `read-*` continues to
+/// serve text from SQLite.
+pub(crate) fn read_bounded_zstd_lines(
+    file: &SourceFile,
+    requested_limit: u64,
+    mut callback: impl FnMut(&Map<String, Value>) -> Result<(), FullProjectionReason>,
+) -> Result<BoundedRead, SourceError> {
+    let handle = File::open(&file.file_path).map_err(|source| SourceError::Io {
+        operation: "open source file",
+        path: file.file_path.clone(),
+        source,
+    })?;
+    let opened_metadata = handle.metadata().map_err(|source| SourceError::Io {
+        operation: "stat opened source file",
+        path: file.file_path.clone(),
+        source,
+    })?;
+    let opened = file_stamp(&file.file_path, &opened_metadata);
+    let effective_limit = requested_limit.min(opened.size);
+
+    // Raw compressed bytes are the source-of-truth proof; decompressed JSONL
+    // offsets are not stable raw offsets for a compressed source.
+    let safe_prefix_digest =
+        super::prefix_sha256(&file.file_path, effective_limit).map_err(|source| {
+            SourceError::Io {
+                operation: "hash compressed source file",
+                path: file.file_path.clone(),
+                source,
+            }
+        })?;
+
+    let handle = File::open(&file.file_path).map_err(|source| SourceError::Io {
+        operation: "open source file",
+        path: file.file_path.clone(),
+        source,
+    })?;
+    let decoder =
+        zstd::stream::read::Decoder::new(handle.take(effective_limit)).map_err(|source| {
+            SourceError::Io {
+                operation: "decompress source file",
+                path: file.file_path.clone(),
+                source,
+            }
+        })?;
+    let mut reader = BufReader::new(decoder);
+    let mut buffer = Vec::new();
+    let mut callback_failure = None;
+
+    loop {
+        buffer.clear();
+        let bytes_read =
+            reader
+                .read_until(b'\n', &mut buffer)
+                .map_err(|source| SourceError::Io {
+                    operation: "read source file",
+                    path: file.file_path.clone(),
+                    source,
+                })?;
+        if bytes_read == 0 {
+            break;
+        }
+        if buffer.last() != Some(&b'\n') {
+            // Unterminated tail is not part of the append-safe projection.
+            continue;
+        }
+        let json = trim_ascii(&buffer[..content_len_without_newline(&buffer)]);
+        if json.is_empty() {
+            continue;
+        }
+        if callback_failure.is_some() {
+            continue;
+        }
+        let Ok(Value::Object(record)) = serde_json::from_slice::<Value>(json) else {
+            continue;
+        };
+        if let Err(reason) = callback(&record) {
+            callback_failure = Some(reason);
+        }
+    }
+
+    let completed_metadata = fs::metadata(&file.file_path).map_err(|source| SourceError::Io {
+        operation: "stat completed source file",
+        path: file.file_path.clone(),
+        source,
+    })?;
+    let completed = file_stamp(&file.file_path, &completed_metadata);
+    Ok(BoundedRead {
+        proof: ReadProof {
+            requested_limit,
+            effective_limit,
+            byte_count: effective_limit,
+            safe_offset: effective_limit,
+            content_fingerprint: safe_prefix_digest.clone(),
+            safe_prefix_fingerprint: safe_prefix_digest.clone(),
+            opened,
+            completed,
+        },
+        safe_prefix_digest,
+        prefix_at_parse: None,
+        callback_failure,
+    })
+}
+
 pub(crate) fn metadata_times(metadata: &Metadata) -> (i128, f64) {
     let nanoseconds = match metadata.modified().and_then(|value| {
         value

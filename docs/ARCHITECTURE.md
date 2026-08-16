@@ -11,7 +11,7 @@ query/list/read --------------------------+--> progressive evidence read
 status --(read-only allowlisted inventory scan)--> live coverage diagnosis
 ```
 
-它不是 GUI、watcher、daemon、实时同步服务，也不把 raw grep 当作正常查询路径。当前公开 source 是 `codex`、experimental `claude-code` 与 experimental `pi`。
+它不是 GUI、watcher、daemon、实时同步服务，也不把 raw grep 当作正常查询路径。当前公开 source 是 `codex`、experimental `claude-code`、experimental `pi` 与 experimental `dsh`。
 
 ## Runtime 与命令权限
 

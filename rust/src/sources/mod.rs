@@ -8,6 +8,7 @@
 mod catalog;
 mod claude_code;
 mod codex;
+mod dsh;
 mod jsonl;
 mod pi;
 

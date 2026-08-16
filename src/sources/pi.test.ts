@@ -24,11 +24,12 @@ describe("pi source adapter", () => {
     expect(getSessionSourceAdapter().id).toBe("codex");
     expect(adapter.id).toBe("pi");
     expect(adapter.public).toBe(true);
-    expect(listSessionSourceAdapters().map((source) => source.id)).toEqual(["codex", "claude-code", "pi"]);
+    expect(listSessionSourceAdapters().map((source) => source.id)).toEqual(["codex", "claude-code", "pi", "dsh"]);
     expect(listSessionSourceAdapters().filter((source) => source.public).map((source) => source.id)).toEqual([
       "codex",
       "claude-code",
       "pi",
+      "dsh",
     ]);
   });
 

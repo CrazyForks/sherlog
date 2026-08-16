@@ -180,7 +180,7 @@ async function findViaCli(
   if (item.find?.selector) {
     args.push("--selector", JSON.stringify(item.find.selector));
   } else {
-    args.push("--root", item.find?.root ?? roots[sourceId]);
+    args.push("--root", item.find?.root ?? roots[sourceId as AcceptanceSourceId]);
     if (item.find?.cwd) args.push("--cwd", item.find.cwd);
   }
   if (item.find?.sort) args.push("--sort", item.find.sort);

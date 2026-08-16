@@ -930,7 +930,7 @@ describe("shlog cli", { timeout: 20_000 }, () => {
       sourceIds: string[];
       results: Array<{ sourceId: string; sessionUuid: string; sessionRef: string; matchSeq: number | null }>;
     };
-    expect(findPayload.sourceIds).toEqual(["codex", "claude-code", "pi"]);
+    expect(findPayload.sourceIds).toEqual(["codex", "claude-code", "pi", "dsh"]);
     expect(findPayload.results.map((result) => result.sourceId).sort()).toEqual(["claude-code", "codex"]);
     const claudeHit = findPayload.results.find((result) => result.sourceId === "claude-code");
     expect(claudeHit?.sessionRef).toBe("claude-code:cli-cross-claude");

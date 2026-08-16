@@ -34,6 +34,7 @@ fn resolved_paths(directory: &TempDir, raw_root: &Path) -> ResolvedPaths {
         default_codex_dir: raw_root.to_path_buf(),
         default_claude_code_dir: directory.path().join("missing-claude"),
         default_pi_dir: directory.path().join("missing-pi"),
+        default_dsh_dir: directory.path().join("missing-dsh"),
         legacy_data_dirs: vec![],
     }
 }
@@ -193,6 +194,67 @@ fn write_codex_session(path: &Path, id: &str, messages: &[(&str, &str)]) {
         );
     }
     std::fs::write(path, format!("{}\n", lines.join("\n"))).unwrap();
+}
+
+fn write_dsh_zstd_session(path: &Path, id: &str, messages: &[(&str, &str)]) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let mut lines = vec![
+        serde_json::json!({
+            "type": "session",
+            "version": 0,
+            "id": id,
+            "createdAt": 1786870711696i64,
+            "cwd": "/repo",
+        })
+        .to_string(),
+        serde_json::json!({
+            "type": "session/title",
+            "seq": 0,
+            "time": 1786870711696i64,
+            "data": {"title": "dsh e2e title"},
+        })
+        .to_string(),
+    ];
+    for (index, (kind, message)) in messages.iter().enumerate() {
+        let time = 1786870711696i64 + (index as i64 + 1) * 1000;
+        if *kind == "user" {
+            lines.push(
+                serde_json::json!({
+                    "type": "user/message",
+                    "seq": index + 1,
+                    "time": time,
+                    "data": {
+                        "source": {"kind": "user"},
+                        "role": "user",
+                        "content": [{"type": "text", "text": message}],
+                    },
+                })
+                .to_string(),
+            );
+        } else {
+            lines.push(
+                serde_json::json!({
+                    "type": "assistant/message",
+                    "seq": index + 1,
+                    "time": time,
+                    "data": {
+                        "message": {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": message}],
+                        }
+                    },
+                })
+                .to_string(),
+            );
+        }
+    }
+    let mut encoder = zstd::stream::write::Encoder::new(Vec::new(), 0).unwrap();
+    for line in lines {
+        encoder.write_all(line.as_bytes()).unwrap();
+        encoder.write_all(b"\n").unwrap();
+    }
+    let bytes = encoder.finish().unwrap();
+    std::fs::write(path, bytes).unwrap();
 }
 
 fn cached_source_file_state(file: &SourceFile, root: &Path) -> SourceFileState {
@@ -834,6 +896,84 @@ fn native_sync_handles_first_noop_append_and_imports_pending_cold_roots() {
         .unwrap();
     assert_eq!(page.total_count, 2);
     assert_eq!(page.messages[1].content_text, "append evidence");
+}
+
+#[test]
+fn dsh_sync_find_read_page_round_trip() {
+    let directory = TempDir::new().unwrap();
+    let root = directory.path().join("dsh-sessions");
+    let id = "session-dsh-e2e";
+    let raw = root.join("--repo--").join(id).join("session.jsonl.zstd");
+    write_dsh_zstd_session(
+        &raw,
+        id,
+        &[("user", "dsh e2e query"), ("assistant", "dsh e2e answer")],
+    );
+    let paths = resolved_paths(&directory, &root);
+    let mut services = NativeAppServices::new(paths.clone(), directory.path().to_path_buf());
+    let db = paths.db_path.to_string_lossy().into_owned();
+    let root_text = root.to_string_lossy().into_owned();
+
+    let (code, stdout, stderr) = run_cli(
+        &mut services,
+        vec![
+            "shlog".to_owned(),
+            "sync".to_owned(),
+            "--source".to_owned(),
+            "dsh".to_owned(),
+            "--root".to_owned(),
+            root_text.clone(),
+            "--db".to_owned(),
+            db.clone(),
+            "--json".to_owned(),
+        ],
+    );
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+    let sync: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
+    assert_eq!(sync["added"], 1);
+
+    let (code, stdout, stderr) = run_cli(
+        &mut services,
+        vec![
+            "shlog".to_owned(),
+            "find".to_owned(),
+            "dsh e2e".to_owned(),
+            "--source".to_owned(),
+            "dsh".to_owned(),
+            "--root".to_owned(),
+            root_text,
+            "--db".to_owned(),
+            db.clone(),
+            "--json".to_owned(),
+        ],
+    );
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+    let find: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
+    assert_eq!(find["results"][0]["sourceId"], "dsh");
+    assert_eq!(find["results"][0]["sessionRef"], format!("dsh:{id}"));
+    assert_eq!(find["results"][0]["matchSeq"], 0);
+
+    let (code, stdout, stderr) = run_cli(
+        &mut services,
+        vec![
+            "shlog".to_owned(),
+            "read-page".to_owned(),
+            format!("dsh:{id}"),
+            "--source".to_owned(),
+            "dsh".to_owned(),
+            "--db".to_owned(),
+            db,
+            "--json".to_owned(),
+        ],
+    );
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+    let page: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
+    assert_eq!(page["totalCount"], 2);
+    assert_eq!(page["messages"][0]["contentText"], "dsh e2e query");
+    assert_eq!(page["messages"][1]["contentText"], "dsh e2e answer");
 }
 
 #[test]
