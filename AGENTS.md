@@ -92,7 +92,7 @@ npx skills add -g catoncat/sherlog
 - `SHLOG_BIN` 存在时优先使用，候选不可执行（包括空值）就报错，不回退
 - 否则 `CXS_BIN` 存在时使用，候选不可执行就报错，不回退
 - 两者都不存在时解析 `PATH` 里的 `shlog`
-- 生产 skill 每轮把候选解析为绝对 executable；`evidenceRead` 的 `inherit` 和 typed-error argv 的 portable `shlog` 都替换为该路径，参数保持不变
+- 生产 skill 用 POSIX `sh` 兼容 resolver 每轮把候选解析为绝对 executable，不依赖 Bash/zsh 专属 builtin；`evidenceRead` 的 `inherit` 和 typed-error argv 的 portable `shlog` 都替换为该路径，参数保持不变
 
 ### 发布 / 更新闭环
 

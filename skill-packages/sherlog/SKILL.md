@@ -11,21 +11,42 @@ description: "Search local agent-session history to recover prior decisions, com
 
 每轮先解析一次并记录绝对 executable：
 
-```bash
-if [[ ${SHLOG_BIN+x} == x ]]; then
-  SHLOG_CANDIDATE="$SHLOG_BIN"
-elif [[ ${CXS_BIN+x} == x ]]; then
-  SHLOG_CANDIDATE="$CXS_BIN"
+```sh
+if [ "${SHLOG_BIN+x}" = x ]; then
+  SHLOG_CANDIDATE=$SHLOG_BIN
+elif [ "${CXS_BIN+x}" = x ]; then
+  SHLOG_CANDIDATE=$CXS_BIN
 else
   SHLOG_CANDIDATE=shlog
 fi
 
-if [[ "$SHLOG_CANDIDATE" == */* ]]; then
-  SHLOG="$(cd -- "$(dirname -- "$SHLOG_CANDIDATE")" 2>/dev/null && pwd -P)/$(basename -- "$SHLOG_CANDIDATE")"
-  [[ -f "$SHLOG" && -x "$SHLOG" ]] || { echo "shlog not executable: $SHLOG_CANDIDATE" >&2; exit 1; }
-else
-  SHLOG="$(type -P -- "$SHLOG_CANDIDATE")" || { echo "shlog not found: $SHLOG_CANDIDATE" >&2; exit 1; }
-fi
+case $SHLOG_CANDIDATE in
+  */*) SHLOG=$SHLOG_CANDIDATE ;;
+  *) SHLOG=$(command -v "$SHLOG_CANDIDATE" 2>/dev/null) || {
+    echo "shlog not found: $SHLOG_CANDIDATE" >&2
+    exit 1
+  } ;;
+esac
+
+case $SHLOG in
+  /*) ;;
+  */*)
+    SHLOG_DIR=$(CDPATH= cd -P "$(dirname "$SHLOG")" 2>/dev/null && pwd -P) || {
+      echo "shlog not executable: $SHLOG_CANDIDATE" >&2
+      exit 1
+    }
+    SHLOG=$SHLOG_DIR/$(basename "$SHLOG")
+    ;;
+  *)
+    echo "shlog is not an executable file: $SHLOG_CANDIDATE" >&2
+    exit 1
+    ;;
+esac
+
+[ -f "$SHLOG" ] && [ -x "$SHLOG" ] || {
+  echo "shlog not executable: $SHLOG_CANDIDATE" >&2
+  exit 1
+}
 printf '%s\n' "$SHLOG"
 ```
 
