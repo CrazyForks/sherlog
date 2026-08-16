@@ -75,6 +75,7 @@
 本仓库只维护一份 skill 源码：
 
 - `skill-packages/sherlog`: 发布版 skill 源码，必须匹配将要发布的 `shlog` CLI 行为
+- production description 用一种自然语言说明 capability 与 invocation branch，保留稳定领域词，不维护中英口语 trigger 清单；跨语言召回不足必须先由 invocation eval 的失败样本证明，再调整 description
 
 ### 发布版 Sherlog
 
@@ -88,9 +89,10 @@ npx skills add -g catoncat/sherlog
 
 这个 skill 不会安装 `shlog` CLI 本体，也不会让 native CLI 依赖 Node.js。默认约定：
 
-- 优先使用 `SHLOG_BIN`
-- 兼容回退到 `CXS_BIN`
-- 未设置时回退到 `PATH` 里的 `shlog`
+- `SHLOG_BIN` 存在时优先使用，候选不可执行（包括空值）就报错，不回退
+- 否则 `CXS_BIN` 存在时使用，候选不可执行就报错，不回退
+- 两者都不存在时解析 `PATH` 里的 `shlog`
+- 生产 skill 每轮把候选解析为绝对 executable；`evidenceRead` 的 `inherit` 和 typed-error argv 的 portable `shlog` 都替换为该路径，参数保持不变
 
 ### 发布 / 更新闭环
 
@@ -128,9 +130,8 @@ Dogfood golden 是开发者本机的真实历史检索验收集，不是普通�
 - 不要把 dogfood capture 流程或私有 golden 放进 `skill-packages/sherlog`
 - 不要把 dogfood skill 放进 repo-local `.agents/skills`，也不要在仓库内把维护者 skill 源文件命名为 `SKILL.md`；`npx skills add` 会扫描 `SKILL.md` 并可能把维护者 workflow 暴露给普通用户
 - 普通代码实现任务可以运行已有 dogfood gate，但不能自行新增 golden，也不能自行把 `candidate` promote 为 `hard`
-- `skill-packages/sherlog` 应引导 agent 在每次使用 Sherlog 后做轻量自评：结果可靠、需要 refine、coverage 问题、skill 使用问题，还是值得记录的 dogfood candidate
-- 自评发现可复现的 recall/ranking/context 问题时，只能建议用户显式说 `$sherlog-dogfood 记录这个 case`；不能自动写私有 golden
-- `$sherlog-dogfood` 与 `sherlog` skill 是配套流程：`sherlog` 负责发现 candidate 并留下 handoff 线索；`sherlog-dogfood` 负责交互式采集、eval、以及最后询问是否启动修复或输出修复 handoff
+- `skill-packages/sherlog` 只面向最终用户：自评保持为可观察标准（结论是否有 read 证据、范围结论是否有 coverage proof、不确定是否已说明），不出现 dogfood、私有 golden 或维护者路径
+- dogfood 发现与采集属于 dev-only skill（`dev/skills/sherlog-dogfood/source.md`）：维护者在 dev skill 内决定是否记录、eval 与 promote；生产 skill 不引用它
 
 ## Dogfood 驱动修复流程
 

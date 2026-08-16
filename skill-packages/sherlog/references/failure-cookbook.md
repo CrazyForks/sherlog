@@ -1,13 +1,13 @@
 # Failure Cookbook
 
-唯一的错误恢复决策表。先判断失败发生在哪一层，再执行对应动作；不要把所有问题都用无条件 full sync 处理。
+唯一的错误恢复入口。先判断失败层并读取 error payload/hint，再按表中条件执行；表格与下方细节共同定义动作，不要把所有问题都用无条件 full sync 处理。typed-error `nextAction.commands[].argv[0] == "shlog"` 是 portable placeholder：用本轮记录的绝对 `$SHLOG` 替换它，其余 argv 逐项不变。
 
 | 错误 | 立即动作 |
 | --- | --- |
-| `shlog` 不存在 / 版本过旧 | 安装或升级 CLI（installer 或 Homebrew）；升级后跑一次 `shlog sync` |
+| `shlog` 不存在 / 版本过旧 | 安装或升级 CLI；显式 override 同步更新或取消后重新解析绝对 executable，再重试原命令。仅在后续 index/coverage payload 要求时 sync |
 | `index_unavailable` | 执行 nextAction 里的 bootstrap sync；只有问题明确局限当前 repo 时才 `--cwd` |
-| `index_schema_upgrade_required` | 执行 nextAction 里闭包 `--db` 的 `shlog sync --json` 一次 |
-| `session_not_found` | 按 nextAction 先同范围 `status`；`recommendedAction=sync` 才同范围 sync，最后重试原 read |
+| `index_schema_upgrade_required` | supported `legacy_v7` 才执行闭包 `--db` 的 sync；future/incompatible v8 改用兼容 binary 或可信 backup，不重复 sync |
+| `session_not_found` | 从原 find/user scope 恢复 `--cwd/--selector` 后跑 status；有 `requestedCoverage.recommendedAction=sync` 才同范围 sync。无法恢复 scope 就说明无法证明，不盲目 sync |
 | `anchor_not_found` | 按 nextAction 回退 `read-page`，或改用消息中真实出现的 term |
 | zero results | 同 selector `status`；`query` 则 refine，`sync` 则同范围 sync 后重试 |
 | strict sync failure | 看 `errorDetails[]` 修 source 后同范围重试；不用 `--best-effort` 冒充 complete |
@@ -19,10 +19,9 @@
 curl -fsSL https://github.com/catoncat/sherlog/releases/latest/download/install.sh | sh
 # 或：brew tap catoncat/sherlog && brew install sherlog
 # 已安装 tap 时升级：brew update && brew upgrade sherlog
-shlog sync
 ```
 
-CLI 与 skill 分开安装；CLI 不依赖 Node.js。升级后跑一次 `shlog sync` 完成本地索引升级（自动保留备份）。
+CLI 与 skill 分开安装；CLI 不依赖 Node.js。若 `SHLOG_BIN` / `CXS_BIN` 显式指向缺失或旧 binary，安装 PATH 版本不会覆盖该优先级：更新或取消 override，按 `SKILL.md` 重新解析绝对 executable，再重试原命令。只有随后出现 supported v7 migration 或 coverage `recommendedAction=sync` 时才运行对应 scope 的 sync。
 
 ## `index_unavailable`
 
@@ -31,16 +30,16 @@ CLI 与 skill 分开安装；CLI 不依赖 Node.js。升级后跑一次 `shlog s
 默认 bootstrap：
 
 ```bash
-"${SHLOG_BIN:-${CXS_BIN:-shlog}}" sync --json
+"$SHLOG" sync --json
 ```
 
 只有用户问题明确局限当前 repo 时才用：
 
 ```bash
-"${SHLOG_BIN:-${CXS_BIN:-shlog}}" sync --cwd <repo-cwd> --json
+"$SHLOG" sync --cwd <repo-cwd> --json
 ```
 
-有 `nextAction.commands[].argv` 时优先原样执行。
+有 `nextAction.commands[].argv` 时优先执行：argv[0] 的 portable `shlog` 替换为绝对 `$SHLOG`，其余 argv 逐项不变。
 
 ## `unsupported_source`
 
@@ -57,7 +56,7 @@ CLI 与 skill 分开安装；CLI 不依赖 Node.js。升级后跑一次 `shlog s
 
 ## `index_schema_upgrade_required`
 
-含义：reader/writer发现不支持的 schema/version/epoch。read-only command 不会改 DB；writer 也不会静默混写。
+含义：reader/writer 发现不支持的 schema/version/epoch。该 code 同时覆盖 supported v7 与 future/incompatible v8；read-only command 不会改 DB，writer 也不会静默混写。
 
 处理：
 
@@ -75,7 +74,7 @@ CLI 与 skill 分开安装；CLI 不依赖 Node.js。升级后跑一次 `shlog s
 - source/root selector 未覆盖；
 - session 已被显式 prune。
 
-按 error `nextAction`：先确认 `sessionRef`，再用最窄相关 `--cwd/--selector` 运行同 source/root 的 `status`；`recommendedAction=sync` 时才同步同范围，最后重试原 read argv。不要退化成无 scope 的全量 raw inventory。
+先确认 `sessionRef`，再从原始 find invocation、candidate cwd 或用户问题恢复最窄相关 `--cwd/--selector`，运行同 source/root 的 status。error 自带的 source-only status argv 不含 selector，因此本身不会产生 `requestedCoverage.recommendedAction`；补齐 scope 后只有 `recommendedAction=sync` 才同步同范围，最后重试原 read argv。无法恢复 scope 时说明无法证明 coverage，不退化成无 scope sync 或全量 raw inventory。
 
 ## Zero results
 

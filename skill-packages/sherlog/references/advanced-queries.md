@@ -1,5 +1,7 @@
 # Advanced Queries
 
+本文件所有 shlog 示例使用 `SKILL.md` 已解析并记录的绝对 `$SHLOG`，不重新解析 PATH。
+
 ## Query/tokenizer 语义
 
 Sherlog 不把用户输入原样透传给 FTS5：
@@ -42,13 +44,13 @@ source/root/cwd/date/exact-session/exclude 条件尽量在 SQL candidate generat
 已知 project/time、关键词弱时先 `list`：
 
 ```bash
-"${SHLOG_BIN:-${CXS_BIN:-shlog}}" list --cwd <cwd-fragment> --since <iso> --json
+"$SHLOG" list --cwd <cwd-fragment> --since <iso> --json
 ```
 
 需要内容主题时 `find`：
 
 ```bash
-"${SHLOG_BIN:-${CXS_BIN:-shlog}}" find "specific phrase" --cwd <absolute-cwd> --json
+"$SHLOG" find "specific phrase" --cwd <absolute-cwd> --json
 ```
 
 `list --cwd` 是 case-insensitive substring；`find --cwd` 构造 exact cwd selector。两者 coverage 语义不同。
@@ -60,7 +62,7 @@ v8 公共 metadata surface 是 `sessions` read-only compatibility view；物理 
 先拿 DB path：
 
 ```bash
-DB_PATH="$("${SHLOG_BIN:-${CXS_BIN:-shlog}}" stats --json | jq -r '.dbPath')"
+DB_PATH="$("$SHLOG" stats --json | jq -r '.dbPath')"
 ```
 
 最早 session：
@@ -133,22 +135,3 @@ Codex resume/fork 可能出现 title 相似但 identity 不同的 session。当�
 - 不要先按 title 去重；
 - 看 `sourceId/sessionRef`、cwd、time、matchCount；
 - 用 evidence read 决定是否同一决策链。
-
-## Future optimization constraints
-
-如果未来增加 fast prefilter：
-
-- 必须返回 conservative candidate superset；只能排除可证明不匹配的 item；
-- tokenizer/delta/source state 不确定时纳入 candidate；
-- 必须由 exact/evidence stage 验证；
-- incremental candidate state 必须与 full replay 等价。
-
-当前没有 public `weakMatch`/`matchMode` 或 per-stage candidate count，也没有默认 typo fallback/frecency。不要在 agent workflow 中假设这些字段存在。
-
-## Source of truth
-
-- `rust/src/tokenizer.rs`
-- `rust/src/index/reader.rs`
-- `rust/src/retrieval/query.rs`
-- `rust/src/retrieval/ranking.rs`
-- `rust/src/index/v8.sql`

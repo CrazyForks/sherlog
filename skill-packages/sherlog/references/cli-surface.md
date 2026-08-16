@@ -2,13 +2,7 @@
 
 Production CLI 是 standalone Rust binary。下面只描述固定 public command；不要使用旧 `window/session` alias、sidecar 命令或 npm CLI。
 
-统一写法：
-
-```bash
-SHLOG="${SHLOG_BIN:-${CXS_BIN:-shlog}}"
-```
-
-所有 command 支持 `--db <path>`；结构化输出使用 `--json`。
+先按 `SKILL.md` 的 Executable 规则得到并记录绝对 `$SHLOG`；本文件所有示例复用该值，不重新解析 PATH。所有 command 支持 `--db <path>`；结构化输出使用 `--json`。
 
 ## `status`
 
@@ -141,10 +135,3 @@ CLI 可补默认 root/source。`--selector` 与 `--cwd` 互斥；显式 `--sourc
 - strict sync JSON failure report：stderr。
 - best-effort sync report：stdout，即使带 per-file errors也不代表 complete coverage。
 - CLI parser error（如漏 `find` query）：plain stderr，不包装 JSON。
-
-## Source of truth
-
-- `rust/src/cli.rs`
-- `rust/src/app/selectors.rs`
-- `rust/src/runner.rs`
-- `rust/src/app/output.rs`

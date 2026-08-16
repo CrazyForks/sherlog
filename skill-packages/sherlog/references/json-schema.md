@@ -214,7 +214,7 @@ interface EvidenceReadCommand {
 }
 ```
 
-`executable:"inherit"` 表示复用产生该 payload 的同一 binary，不要用 PATH 上的其他版本替换。总是把 `executable + args` 原样拼接执行；`args` 已闭包 `--source/--db/--json`，自定义 DB 下也能读回原 candidate。`matchSource="session"` 时 `matchSeq=null`；不要构造虚假的 `--seq -1`。
+`executable:"inherit"` 是 sentinel，不是可执行文件名：执行时用本轮已解析并实际运行 `find` 的同一个 binary 替换它（见 `SKILL.md` 的 Executable），`args` 逐项不变。不要按字面执行名为 `inherit` 的程序，也不要改用 PATH 上的其他版本。`args` 已闭包 `--source/--db/--json`，自定义 DB 下能读回原 candidate。`matchSource="session"` 时 `matchSeq=null`；不要构造虚假的 `--seq -1`。
 
 `read-range --query` 在 session 内找不到 message anchor 时返回 typed `anchor_not_found`（`sessionRef`、`sourceId`、`nativeSessionId`、`query`、`matchedProfileFields`、`hint`、`nextAction.commands[]` 为闭包 read-page）。此时不要伪造 `seq 0`，按 `nextAction` 回退 `read-page` 或 refine query。
 
@@ -379,6 +379,8 @@ interface QueryNextAction {
 }
 ```
 
+`QueryNextAction.commands[].argv` 包含程序名；当前 portable 值是 `"shlog"`。执行时用 `SKILL.md` 已记录的绝对 executable 替换 argv[0]，其余 argv 逐项不变。它不是 `evidenceRead.command.executable` 的 `"inherit"` sentinel，但两者必须落到产生当前交互的同一 binary。
+
 ## Error envelope
 
 Typed business/index errors：
@@ -407,11 +409,3 @@ CLI parse error 不保证 JSON envelope；例如缺少 `find` query 是 plain st
 ## SQLite storage truth
 
 v8 internal object：`meta`、`session_rows`、read-only `sessions` view、`source_files`、`documents`、contentless `documents_fts`、`coverage`、`cold_roots`。高级 metadata SQL 只依赖 `sessions` view；不要查询 FTS content columns，也不要手写内部表。
-
-## Source of truth
-
-- `rust/src/model.rs`
-- `rust/src/retrieval/evidence.rs`
-- `rust/src/app/output.rs`
-- `rust/src/error.rs`
-- `rust/src/index/v8.sql`

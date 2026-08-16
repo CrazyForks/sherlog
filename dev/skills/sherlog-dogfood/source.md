@@ -1,11 +1,15 @@
 ---
 name: sherlog-dogfood
-description: "Dev-only interactive workflow for Sherlog maintainers to capture, verify, promote, and hand off private dogfood golden examples from real Codex history. Use only when the user explicitly says $sherlog-dogfood, 记录这个 case, 添加 dogfood case, 记录这个 Sherlog golden, 把这次加入 dogfood, promote dogfood golden, or similar. When triggered, infer the case from the current conversation and ask only for missing essentials; do not make the user fill a template. After capture/eval, offer to start a repair handoff for another agent or continue fixing in the same chat. Do not use for normal Sherlog searches, normal coding tasks, or published sherlog skill package edits."
+description: "Dev-only Sherlog maintainer workflow for private dogfood golden capture, eval, promotion, and repair handoff. Triggered only by explicit maintainer phrases such as $sherlog-dogfood 记录这个 case; not an end-user feature."
 ---
 
 # Sherlog Dogfood
 
-Dev-only interactive workflow for maintaining private Sherlog dogfood golden examples while developing `/Users/rs/water/sherlog`.
+Dev-only interactive workflow for maintaining private Sherlog dogfood golden examples.
+
+## Repo root
+
+运行时解析：从当前目录向上查找同时含 `Cargo.toml`、`rust/`、`skill-packages/sherlog` 的目录；找不到就向用户要 checkout 路径。所有命令都从该 `<repo-root>` 执行，golden 路径恒为 `<repo-root>/data/cxs-dogfood/goldens.local.jsonl`，handoff 里输出解析后的路径。不要在 skill 源码里保存机器绝对路径。
 
 This skill is **not** a user-facing Sherlog feature and must not be copied into `skill-packages/sherlog` or repo-local `.agents/skills`. Focused reproduction must run the in-development native CLI via `cargo run --locked --bin shlog --` (or its `npm run shlog --` wrapper), so it tracks the Rust working tree regardless of which global `shlog` is installed. `npm run shlog:reference --` is the legacy TypeScript differential oracle, not the production candidate. `npm run eval:dogfood` reuses the shared CLI-under-test selector: bind it to the native binary with `--cli-argv-json`, `SHLOG_CLI_ARGV_JSON`, or `SHLOG_BIN_UNDER_TEST`; without an override it defaults to the TypeScript oracle.
 
@@ -48,26 +52,6 @@ Good agent response pattern:
 - summarize evidence
 - offer repair handoff / same-chat fix / stop
 
-## Entry from Sherlog self-review
-
-The `Sherlog` skill is the companion discovery layer for this skill. It may finish a lookup by saying this looks like a dogfood candidate and suggesting:
-
-```text
-$sherlog-dogfood 记录这个 case
-```
-
-If the user confirms with that phrase, or with a short equivalent such as `记录`, `加进去`, or `对，记录这个 case`, treat it as an explicit trigger for this skill.
-
-Use the Sherlog self-review handoff as your starting evidence:
-
-- original query / user ask
-- observed command and flags
-- actual top result or competing wrong result
-- expected session/cwd/title/snippet if mentioned
-- symptom class: `recall-miss`, `ranking-wrong`, `context-wrong`, `selector-coverage`, or `skill-guidance`
-
-Do not ask the user to restate fields that are already present in the handoff. Ask only for the first missing essential that blocks an evidence-backed candidate.
-
 ## Repair handoff workflow
 
 At the end of every successful capture or promotion attempt, explicitly offer one of these next steps:
@@ -86,11 +70,11 @@ When the user asks for a handoff, output a compact block that another agent can 
 ```text
 ## Sherlog dogfood repair handoff
 
-Repo: /Users/rs/water/sherlog
+Repo: <repo-root>
 Case: <id> (<status>)
 Symptom: <recall-miss|ranking-wrong|context-wrong|selector-coverage|skill-guidance>
 Original ask/query: <verbatim or derived query>
-Eval command: SHLOG_BIN_UNDER_TEST=./target/debug/shlog npm run eval:dogfood -- data/cxs-dogfood/goldens.local.jsonl
+Eval command: SHLOG_BIN_UNDER_TEST=./target/debug/shlog npm run eval:dogfood -- <repo-root>/data/cxs-dogfood/goldens.local.jsonl
 Focused repro (in-dev native CLI from repo checkout):
 - cargo run --locked --bin shlog -- find "<query>" --limit 10 --json
 - cargo run --locked --bin shlog -- read-range/read-page ...
@@ -106,7 +90,7 @@ Rules:
 
 If the user says to fix in the same chat, switch to the repo workflow:
 
-1. Work in `/Users/rs/water/sherlog`.
+1. Work in `<repo-root>`（按上面的解析规则）。
 2. Use Mainline if available/required by the repo.
 3. Run the dogfood eval first.
 4. Reproduce the specific case with the in-development native CLI (`cargo run --locked --bin shlog --`).
@@ -120,16 +104,16 @@ If the user says to fix in the same chat, switch to the repo workflow:
 - Normal coding agents may run existing dogfood gates, but must not add new golden cases unless this skill was explicitly triggered.
 - New cases default to `status: "candidate"`.
 - Promote to `status: "hard"` only when the user explicitly asks to promote that case.
-- Store private examples in ignored local data, normally `/Users/rs/water/sherlog/data/cxs-dogfood/goldens.local.jsonl`.
+- Store private examples in ignored local data, normally `<repo-root>/data/cxs-dogfood/goldens.local.jsonl`.
 - Never commit private dogfood examples. Never place them in `skill-packages/sherlog` or repo-local `.agents/skills`.
 - Do not add a dogfood case for an agent mistake if the underlying shlog CLI behaved correctly; record it as a skill-guidance note or ask whether the user wants a skill/doc fix instead.
 
 ## Add candidate workflow
 
-1. Work from the Sherlog repo:
+1. Work from the resolved repo root:
 
    ```bash
-   cd /Users/rs/water/sherlog
+   cd <repo-root>
    ```
 
 2. Capture the real issue from the conversation first.
@@ -161,20 +145,20 @@ If the user says to fix in the same chat, switch to the repo workflow:
 5. Append one JSON object per line to:
 
    ```text
-   data/cxs-dogfood/goldens.local.jsonl
+   <repo-root>/data/cxs-dogfood/goldens.local.jsonl
    ```
 
    Candidate template:
 
    ```json
-   {"id":"short-stable-id","query":"user query","intent":"what this must recover","status":"candidate","origin":{"kind":"observed-user-ask","note":"verbatim user wording, symptom class, command/version, and source pointer"},"expected":{"topK":5,"acceptableSessionUuids":["019d..."],"cwdContains":"/Users/rs/water/...","matchSource":"message","context":{"mode":"auto","mustContain":["exact phrase from read output"]}}}
+   {"id":"short-stable-id","query":"user query","intent":"what this must recover","status":"candidate","origin":{"kind":"observed-user-ask","note":"verbatim user wording, symptom class, command/version, and source pointer"},"expected":{"topK":5,"acceptableSessionUuids":["019d..."],"cwdContains":"<observed-cwd-fragment>","matchSource":"message","context":{"mode":"auto","mustContain":["exact phrase from read output"]}}}
    ```
 
 6. Verify immediately:
 
    ```bash
    cargo build --locked --bin shlog
-   SHLOG_BIN_UNDER_TEST=./target/debug/shlog npm run eval:dogfood -- data/cxs-dogfood/goldens.local.jsonl
+   SHLOG_BIN_UNDER_TEST=./target/debug/shlog npm run eval:dogfood -- <repo-root>/data/cxs-dogfood/goldens.local.jsonl
    ```
 
    Candidate failures are reported but should not block normal development. Hard failures are blocking.
@@ -190,7 +174,7 @@ Only run when the user explicitly asks to promote a specific case.
 
    ```bash
    cargo build --locked --bin shlog
-   SHLOG_BIN_UNDER_TEST=./target/debug/shlog npm run eval:dogfood -- data/cxs-dogfood/goldens.local.jsonl
+   SHLOG_BIN_UNDER_TEST=./target/debug/shlog npm run eval:dogfood -- <repo-root>/data/cxs-dogfood/goldens.local.jsonl
    ```
 
 5. Report the case id, selected session, context mode, and final pass/fail.

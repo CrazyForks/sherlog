@@ -1,10 +1,6 @@
 # Progressive Workflow
 
-始终应用 `SKILL.md` 的 Canonical policy。本文件只给场景、命令与完成标准。
-
-```bash
-SHLOG="${SHLOG_BIN:-${CXS_BIN:-shlog}}"
-```
+场景、命令与完成标准。不变量、绝对 `$SHLOG` 解析与错误恢复以 `SKILL.md` 和 `failure-cookbook.md` 为准；本文件不重新解析 executable。
 
 ## 1. Metadata projection
 
@@ -31,9 +27,9 @@ sqlite3 -readonly "$DB_PATH" \
 "$SHLOG" find "cf tunnel" --json -n 5
 ```
 
-短产品名/通用文件名先加 `--cwd` 或换成更独特 phrase。选择 candidate 时看 `matchSource`、`matchedFields`、`sessionMessageCount`，然后原样执行 `evidenceRead.command`（`executable:"inherit"` + `args`）。
+短产品名/通用文件名先加 `--cwd` 或换成更独特 phrase。
 
-完成：结论来自 `read-*` 返回内容，不只 title/snippet。
+完成：回答中的每个事实都能指到某条 `read-*` 返回的 message/session 内容；未验证的部分已说明不确定。
 
 ## 3. Current project discussion
 
@@ -50,7 +46,7 @@ sqlite3 -readonly "$DB_PATH" \
 "$SHLOG" status --cwd <absolute-repo-cwd> --json
 ```
 
-完成：已读相关 session 的开头/命中上下文，而非只复述 metadata。
+完成：逐个读取回答实际引用的 session；若声称覆盖这 8 个候选，就全部检查，若只抽样就说明选取范围。任何 `read-page.hasMore=true` 且该 session 的目标上下文仍未解决时继续翻页。
 
 ## 4. Latest keyword, excluding self-hit
 
@@ -59,7 +55,7 @@ sqlite3 -readonly "$DB_PATH" \
   --exclude-session <current-sessionRef> -n 5 --json
 ```
 
-随后执行首个合理 candidate 的 `evidenceRead.command`；`anchor_not_found` 时回退 `read-page` 或 refine query。完成：内容确实提到 X，并用 `endedAt` 判断最新。
+按 `endedAt` 顺序执行 candidate 的 `evidenceRead.command`，直到首个内容确认 phrase X 的结果；更靠前但尚未取证的 candidate 仍存在时不能声称“最新”。完成：phrase X 已从 `read-*` 输出确认，且所有更晚 candidate 已取证并排除。
 
 ## 5. Coverage diagnosis
 
@@ -89,16 +85,25 @@ sqlite3 -readonly "$DB_PATH" \
   --max-message-chars 0 --json
 ```
 
-完成：结论来自足够上下文。
+完成：目标结论已被 `read-range`/`read-page` 输出中的具体语句覆盖；若 `read-page` 报 `hasMore=true` 且还没看到目标上下文，继续翻页，不得提前结束。
 
-## 7. Cold retention check
+## 7a. Cold inspection
 
 ```bash
 "$SHLOG" cold list --source codex --json
+```
+
+完成：知道当前 registered roots；不执行任何删除。
+
+## 7b. Authorized prune
+
+先与用户确认删除意图（删除 hot 与 registered cold 都不存在的 projection），确认后才运行：
+
+```bash
 "$SHLOG" sync --source codex --prune --json
 ```
 
-仅在用户明确授权 prune 后运行第二条。检查 `removed` 与 `retainedCold`；registration truth 在 v8 SQLite，而不是 `configPath`。
+完成：检查 `removed` 与 `retainedCold`，并说明删除了什么、保留了什么。
 
 ## 8. Raw full-text fallback
 
@@ -127,10 +132,3 @@ raw fallback 是 agent-side 取证，不是 `shlog` subcommand；不能用它绕
 ```
 
 不要从 bare UUID 猜 source。完成：`sessionRef` 来自 find output，read source 与它一致。
-
-## Source of truth
-
-- `rust/src/app/`
-- `rust/src/retrieval/`
-- `rust/src/index/reader.rs`
-- `rust/src/sync/`
