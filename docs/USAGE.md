@@ -72,6 +72,10 @@ shlog find "X" --cwd /Users/you/work/project --sort ended \
 
 不要只凭 title/snippet 回答内容问题。优先原样执行 JSON 结果的 `evidenceRead.command`（`executable:"inherit"` + `args`，已闭包 `--db/--json`）；message 太长且关键内容被省略时，在同一 read 命令上加 `--max-message-chars 0`。`read-range --query` 无 message anchor 时返回 typed `anchor_not_found`，按 nextAction 回退 `read-page`，不要伪造 seq 0。
 
+## 从 0.4.x 升级（一次性迁移）
+
+0.4.x 的 v7 index 是 legacy import 格式：`status` 会报告 `index.layout: legacy_v7`，内容命令（find/read/list）会返回 typed `index_schema_upgrade_required`，`nextAction` 指向一次显式 `shlog sync`。执行一次 sync 即完成迁移与 coverage 重建；迁移保留 `*.v7.bak.*` 备份、legacy cold-roots.json 被 tombstone、旧 0.4.4 writer 对 v8 fail-closed。没有自动升级命令；版本升级由 installer/brew/npm 等分发层完成。
+
 ## Source
 
 公开值：

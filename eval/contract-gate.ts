@@ -42,6 +42,7 @@ const OPAQUE_EPOCH_JSON_FIELDS = new Map<string, string>([
   ["sourceFileSetFingerprint", "<SOURCE_FILE_SET_FINGERPRINT>"],
   ["currentSourceFileSetFingerprint", "<SOURCE_FILE_SET_FINGERPRINT>"],
   ["score", "<RANK_SCORE>"],
+  ["layout", "<INDEX_LAYOUT>"],
 ]);
 
 export interface ContractGateOptions {

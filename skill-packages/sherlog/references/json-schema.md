@@ -74,6 +74,7 @@ interface StatusPayload {
   };
   index: {
     exists: boolean;
+    layout: "native_v8" | "legacy_v7" | "none";
     sessionCount: number;
     messageCount: number;
     earliestStartedAt: string | null;
@@ -395,7 +396,7 @@ interface ErrorEnvelope {
 常见扩展：
 
 - `index_unavailable`：`dbPath`、`hint`、`nextAction.commands[].argv`；
-- `index_schema_upgrade_required`：`dbPath`、`missingColumns`、`hint`；
+- `index_schema_upgrade_required`：`dbPath`、`missingColumns`、`hint`、`nextAction`（`migrate_legacy_index`，commands 为闭包 `--db` 的 sync）；
 - `session_not_found`：`sessionRef`、`sourceId`、`nativeSessionId`、`dbPath`、`nextAction`；
 - `anchor_not_found`：`sessionRef`、`sourceId`、`nativeSessionId`、`query`、`matchedProfileFields`、`hint`、`nextAction`；
 - `unsupported_source`：`source`；

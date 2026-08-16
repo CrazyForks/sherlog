@@ -296,6 +296,17 @@ impl AppError {
                 "dbPath": db_path,
                 "missingColumns": missing_columns,
                 "hint": "A supported v7 index is migrated only by an explicit scoped `shlog sync`. For a newer or incompatible v8 version/epoch, use a compatible `shlog` binary or restore a trusted backup; repeated sync will not make it compatible.",
+                "nextAction": {
+                    "kind": "migrate_legacy_index",
+                    "reason": "index_schema_upgrade_required",
+                    "commands": [
+                        {
+                            "label": "migrate legacy index with sync",
+                            "recommended": true,
+                            "argv": ["shlog", "sync", "--db", db_path, "--json"],
+                        }
+                    ]
+                }
             }),
             Self::SessionNotFound {
                 session_ref,

@@ -1,10 +1,5 @@
 use crate::tokenizer::{has_cjk, query_terms};
 
-/// Legacy `sessions_fts` bm25 column weights: title, summary, compact,
-/// reasoning summary. The v8 documents adapter should normalize its raw
-/// candidate score to the same scale during differential rollout.
-pub const LEGACY_SESSION_FTS_WEIGHTS: [f64; 4] = [8.0, 3.0, 4.0, 1.2];
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RecallMode {
     Empty,

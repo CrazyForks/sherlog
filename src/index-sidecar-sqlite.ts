@@ -107,6 +107,7 @@ function readIndexStatus(db: Db, dbPath: string, sourceId: SessionSourceId): Ind
       : getStatsCounts(db, sourceId);
   return {
     exists: true,
+    layout: "legacy_v7",
     sessionCount: counts.sessionCount,
     messageCount: counts.messageCount,
     earliestStartedAt: counts.earliestStartedAt,

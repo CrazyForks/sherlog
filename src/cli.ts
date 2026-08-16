@@ -952,7 +952,9 @@ function shellArg(value: string): string {
 
 function emitIndexSchemaUpgradeRequiredError(error: IndexSchemaUpgradeRequiredError, jsonMode: boolean): void {
   const hint =
-    `Run \`${PROGRAM_NAME} sync --source codex --root <sessions-root>\` or the equivalent scoped sync to migrate the index, then retry.`;
+    "A supported v7 index is migrated only by an explicit scoped `shlog sync`. " +
+    "For a newer or incompatible v8 version/epoch, use a compatible `shlog` binary " +
+    "or restore a trusted backup; repeated sync will not make it compatible.";
   if (jsonMode) {
     console.log(
       JSON.stringify(
@@ -963,6 +965,17 @@ function emitIndexSchemaUpgradeRequiredError(error: IndexSchemaUpgradeRequiredEr
             dbPath: error.dbPath,
             missingColumns: error.missingColumns,
             hint,
+            nextAction: {
+              kind: "migrate_legacy_index",
+              reason: "index_schema_upgrade_required",
+              commands: [
+                {
+                  label: "migrate legacy index with sync",
+                  recommended: true,
+                  argv: [PROGRAM_NAME, "sync", "--db", error.dbPath, "--json"],
+                },
+              ],
+            },
           },
         },
         null,

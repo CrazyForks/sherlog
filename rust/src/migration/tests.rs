@@ -541,6 +541,70 @@ fn assert_published_cold_fence(fixture: &Fixture) {
     }
 }
 
+/// Regression for the 0.5.0/0.5.1 migration incident: old JavaScript writers
+/// could persist lone UTF-16 surrogates into TEXT columns (invalid UTF-8
+/// bytes). The import path must normalize them lossily instead of failing the
+/// whole migration on one drifted cell.
+#[test]
+fn migration_tolerates_legacy_lone_surrogate_text() {
+    let fixture = Fixture::new();
+    let connection = Connection::open(&fixture.db).unwrap();
+    // 0xED 0xA0 0xBD is the UTF-8 encoding of the lone high surrogate U+D83D.
+    connection
+        .execute(
+            "UPDATE sessions SET title = CAST(x'6c6f6e6520eda0bd737572' AS TEXT) WHERE native_session_id=?",
+            [HOT_ID],
+        )
+        .unwrap();
+    drop(connection);
+
+    let report = migrate_v7_to_v8(&fixture.request()).unwrap();
+    assert_eq!(report.session_count, 2);
+    let reader = IndexReader::open(&fixture.db).unwrap();
+    assert_eq!(reader.layout(), IndexLayout::V8);
+    let hot = reader
+        .load_session(&SessionRef {
+            source_id: SourceId::Codex,
+            native_session_id: HOT_ID.to_owned(),
+        })
+        .unwrap()
+        .unwrap();
+    assert!(hot.title.contains('\u{FFFD}'), "title: {:?}", hot.title);
+    assert!(hot.title.contains("lone"));
+}
+
+/// Regression for the 0.5.0 v7-read incident: legacy TS schema versions
+/// stored `raw_file_mtime` with REAL storage class. The migration import path
+/// must accept any numeric storage class and normalize it.
+#[test]
+fn migration_tolerates_legacy_real_raw_file_mtime() {
+    let fixture = Fixture::new();
+    let connection = Connection::open(&fixture.db).unwrap();
+    // +0.5 cannot be represented losslessly under INTEGER affinity, so SQLite
+    // stores the column values with REAL storage class, like old TS writes.
+    connection
+        .execute(
+            "UPDATE sessions SET raw_file_mtime = raw_file_mtime + 0.5",
+            [],
+        )
+        .unwrap();
+    let real_rows = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sessions WHERE typeof(raw_file_mtime)='real'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap();
+    assert_eq!(real_rows, 2);
+    drop(connection);
+
+    let report = migrate_v7_to_v8(&fixture.request()).unwrap();
+    assert_eq!(report.session_count, 2);
+    let reader = IndexReader::open(&fixture.db).unwrap();
+    assert_eq!(reader.layout(), IndexLayout::V8);
+    assert_eq!(reader.stats(SourceId::Codex).unwrap().session_count, 2);
+}
+
 struct Fixture {
     _temp: tempfile::TempDir,
     db: PathBuf,

@@ -506,6 +506,41 @@ fn hash_bytes(hasher: &mut Hasher, value: &[u8]) {
     hasher.update(value);
 }
 
+/// Legacy v7 TEXT columns can contain bytes that are not valid UTF-8 (e.g.
+/// lone UTF-16 surrogates persisted by old JavaScript writers). The import
+/// path normalizes them lossily to U+FFFD instead of failing the whole
+/// migration on one drifted cell.
+fn legacy_text(row: &Row<'_>, index: usize) -> rusqlite::Result<String> {
+    Ok(match row.get_ref(index)? {
+        rusqlite::types::ValueRef::Text(bytes) | rusqlite::types::ValueRef::Blob(bytes) => {
+            String::from_utf8_lossy(bytes).into_owned()
+        }
+        value => {
+            return Err(rusqlite::Error::FromSqlConversionFailure(
+                index,
+                value.data_type(),
+                "text".into(),
+            ));
+        }
+    })
+}
+
+fn legacy_optional_text(row: &Row<'_>, index: usize) -> rusqlite::Result<Option<String>> {
+    Ok(match row.get_ref(index)? {
+        rusqlite::types::ValueRef::Null => None,
+        rusqlite::types::ValueRef::Text(bytes) | rusqlite::types::ValueRef::Blob(bytes) => {
+            Some(String::from_utf8_lossy(bytes).into_owned())
+        }
+        value => {
+            return Err(rusqlite::Error::FromSqlConversionFailure(
+                index,
+                value.data_type(),
+                "text".into(),
+            ));
+        }
+    })
+}
+
 struct V7SessionRow {
     id: i64,
     source_id: String,
@@ -532,21 +567,21 @@ impl V7SessionRow {
     fn read(row: &Row<'_>) -> rusqlite::Result<Self> {
         Ok(Self {
             id: row.get(0)?,
-            source_id: row.get(1)?,
-            native_session_id: row.get(2)?,
-            session_key: row.get(3)?,
-            session_uuid: row.get(4)?,
-            file_path: row.get(5)?,
-            source_root: row.get(6)?,
-            title: row.get(7)?,
-            summary_text: row.get(8)?,
-            compact_text: row.get(9)?,
-            reasoning_summary_text: row.get(10)?,
-            cwd: row.get(11)?,
-            model: row.get(12)?,
-            started_at: row.get(13)?,
-            ended_at: row.get(14)?,
-            path_date: row.get(15)?,
+            source_id: legacy_text(row, 1)?,
+            native_session_id: legacy_text(row, 2)?,
+            session_key: legacy_text(row, 3)?,
+            session_uuid: legacy_text(row, 4)?,
+            file_path: legacy_text(row, 5)?,
+            source_root: legacy_text(row, 6)?,
+            title: legacy_text(row, 7)?,
+            summary_text: legacy_text(row, 8)?,
+            compact_text: legacy_text(row, 9)?,
+            reasoning_summary_text: legacy_text(row, 10)?,
+            cwd: legacy_text(row, 11)?,
+            model: legacy_text(row, 12)?,
+            started_at: legacy_text(row, 13)?,
+            ended_at: legacy_text(row, 14)?,
+            path_date: legacy_text(row, 15)?,
             message_count: row.get(16)?,
             raw_file_mtime: row.get(17)?,
             raw_file_size: row.get(18)?,
@@ -567,11 +602,11 @@ impl V7MessageRow {
     fn read(row: &Row<'_>) -> rusqlite::Result<Self> {
         Ok(Self {
             seq: row.get(0)?,
-            role: row.get(1)?,
-            content_text: row.get(2)?,
-            timestamp: row.get(3)?,
-            source_kind: row.get(4)?,
-            session_uuid: row.get(5)?,
+            role: legacy_text(row, 1)?,
+            content_text: legacy_text(row, 2)?,
+            timestamp: legacy_text(row, 3)?,
+            source_kind: legacy_text(row, 4)?,
+            session_uuid: legacy_text(row, 5)?,
         })
     }
 }
@@ -592,16 +627,16 @@ struct V7SourceFileRow {
 impl V7SourceFileRow {
     fn read(row: &Row<'_>) -> rusqlite::Result<Self> {
         Ok(Self {
-            source_id: row.get(0)?,
-            file_path: row.get(1)?,
+            source_id: legacy_text(row, 0)?,
+            file_path: legacy_text(row, 1)?,
             mtime_ms: row.get(2)?,
             size: row.get(3)?,
-            cwd: row.get(4)?,
-            path_date: row.get(5)?,
-            extra_fingerprint: row.get(6)?,
-            native_session_id: row.get(7)?,
-            session_key: row.get(8)?,
-            source_root: row.get(9)?,
+            cwd: legacy_text(row, 4)?,
+            path_date: legacy_optional_text(row, 5)?,
+            extra_fingerprint: legacy_text(row, 6)?,
+            native_session_id: legacy_optional_text(row, 7)?,
+            session_key: legacy_optional_text(row, 8)?,
+            source_root: legacy_optional_text(row, 9)?,
         })
     }
 }

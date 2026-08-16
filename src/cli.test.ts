@@ -1767,7 +1767,14 @@ describe("shlog cli", { timeout: 20_000 }, () => {
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toBe("");
       const payload = JSON.parse(result.stdout) as {
-        error: { code: string; message: string; dbPath: string; missingColumns: string[]; hint: string };
+        error: {
+          code: string;
+          message: string;
+          dbPath: string;
+          missingColumns: string[];
+          hint: string;
+          nextAction: { commands: Array<{ argv: string[] }> };
+        };
       };
       expect(payload.error.code).toBe("index_schema_upgrade_required");
       expect(payload.error.message).toContain(dbPath);
@@ -1778,7 +1785,8 @@ describe("shlog cli", { timeout: 20_000 }, () => {
         "sessions.session_key",
         "coverage.source_id",
       ]);
-      expect(payload.error.hint).toContain("shlog sync --source codex");
+      expect(payload.error.hint).toContain("shlog sync");
+      expect(payload.error.nextAction.commands[0].argv).toEqual(["shlog", "sync", "--db", dbPath, "--json"]);
       expect(result.stdout).not.toContain("SqliteError");
       expect(result.stdout).not.toContain("no such column");
     }

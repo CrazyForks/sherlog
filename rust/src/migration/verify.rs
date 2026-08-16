@@ -429,7 +429,10 @@ fn hash_value(hasher: &mut Hasher, value: ValueRef<'_>) {
         }
         ValueRef::Text(value) => {
             hasher.update(b"T");
-            hash_bytes(hasher, value);
+            // The import path normalizes legacy text lossily (invalid UTF-8,
+            // e.g. lone surrogates, becomes U+FFFD). Digest the normalized
+            // form so v7 and v8 agree on the declared transformation.
+            hash_bytes(hasher, String::from_utf8_lossy(value).as_bytes());
         }
         ValueRef::Blob(value) => {
             hasher.update(b"B");
