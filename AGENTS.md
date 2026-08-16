@@ -87,12 +87,7 @@
 npx skills add -g catoncat/sherlog
 ```
 
-这个 skill 不会安装 `shlog` CLI 本体，也不会让 native CLI 依赖 Node.js。默认约定：
-
-- `SHLOG_BIN` 存在时优先使用，候选不可执行（包括空值）就报错，不回退
-- 否则 `CXS_BIN` 存在时使用，候选不可执行就报错，不回退
-- 两者都不存在时解析 `PATH` 里的 `shlog`
-- 生产 skill 用 POSIX `sh` 兼容 resolver 每轮把候选解析为绝对 executable，不依赖 Bash/zsh 专属 builtin；`evidenceRead` 的 `inherit` 和 typed-error argv 的 portable `shlog` 都替换为该路径，参数保持不变
+这个 skill 不会安装 `shlog` CLI 本体。发布版 skill 直接调用安装在 `PATH` 上的 `shlog`，不再维护 `SHLOG_BIN` / `CXS_BIN` 环境变量 resolver，也不在 skill 内解析绝对 executable 路径。开发期间的 candidate binary 选择是 dev-only 关注点，通过既有 eval/dev 机制（如 `SHLOG_BIN_UNDER_TEST`、`--cli-argv-json`）处理，不属于生产 skill 文案。
 
 ### 发布 / 更新闭环
 

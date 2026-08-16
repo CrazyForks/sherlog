@@ -1,122 +1,32 @@
 # CLI Surface
 
-Production CLI 是 standalone Rust binary。下面只描述固定 public command；不要使用旧 `window/session` alias、sidecar 命令或 npm CLI。
+精确语法、选项和默认值以 `shlog --help` / `shlog <command> --help` 为准。这里只记录 help 通常不会强调的跨命令语义陷阱。
 
-先按 `SKILL.md` 的 Executable 规则得到并记录绝对 `$SHLOG`；本文件所有示例复用该值，不重新解析 PATH。所有 command 支持 `--db <path>`；结构化输出使用 `--json`。
+## Command purpose / side effect
 
-## `status`
+| 命令 | 用途 | 副作用 |
+| --- | --- | --- |
+| `find` | 主题/关键词召回 candidate | 只读 |
+| `list` | 会话清单（项目/时间浏览） | 只读 |
+| `read-range` / `read-page` | 读取会话内容证据 | 只读 |
+| `stats` | 数量/时间/DB 概览 | 只读 |
+| `status` | coverage / freshness / index layout | 只读（不返回正文） |
+| `sync` | 建立/更新 index 与 coverage | 唯一 content/index writer |
+| `cold add/remove` | 冷存 retention state | add/remove 写；list 只读 |
+| `--prune` | 删除 hot/cold 都不存在的 projection | 破坏性，需用户明确授权 |
 
-```bash
-"$SHLOG" status \
-  [--source codex|claude-code|pi] \
-  [--root <dir>] [--cwd <path> | --selector <json>] \
-  [--inventory] [--db <path>] [--json]
-```
+## 跨命令语义陷阱
 
-- 默认 source：Codex。
-- 不返回/检索正文、不写/migrate index。inventory cache miss 可流式读取 raw records/body，但仅让 privacy-allowlisted accepted projection 影响 inventory/fingerprint；rejected/private record 不影响 proof。exact `mtime_ns`/checkpoint cache hit 不重 parse。
-- `--cwd` / `--selector` 才产生 `requestedCoverage`；`--root` 只改变 inventory/default selector root。
-- 默认省略完整 `coverage[]` 与 cwd groups；审计时加 `--inventory`。
+- **`find` vs `list`**：`find` 按内容召回；`list` 按项目/时间浏览，关键词弱时用。
+- **`list --cwd` vs `find --cwd`**：`list --cwd` 是 case-insensitive metadata substring filter；`find --cwd` 构造 exact cwd selector。两者的 coverage 语义不同，不要混用。
+- **same selector**：`status`、必要的 `sync`、retry 必须用相同 source/root/selector，否则 coverage proof 不匹配。
+- **source-qualified `sessionRef`**：跨 source 读取用 `find` 返回的 `sessionRef`（如 `claude-code:<native-id>`）；bare UUID 被默认按 Codex 解释，不要从 UUID 猜 source。
+- **`--max-message-chars 0`**：正文过长会 elision；关键句不可见时用 0 禁用 elision 读取全文。
+- **strict vs `--best-effort`**：strict 遇错误不发布 complete coverage；`--best-effort` 可提交成功 projection，但带 `errorDetails` 且不表示 complete。
+- **`--prune` / `cold remove`**：破坏性；只在用户明确表达删除意图后执行，普通检索不使用。
+- **`--selector` 与 `--cwd` 互斥**；显式 `--source` 必须与 selector source 一致。
 
-## `sync`
-
-```bash
-"$SHLOG" sync \
-  [--source codex|claude-code|pi] \
-  [--root <dir>] [--cwd <path> | --selector <json>] \
-  [--best-effort] [--prune] [--cold-root <dir>]... \
-  [--db <path>] [--json]
-```
-
-- 默认 source：Codex；bare sync 等价于默认 Codex root 的 `all` selector。
-- 唯一 content/index/coverage writer；可创建 v8 或显式 migrate v7。
-- strict 默认：任何不可接受输入错误都使 command 非零，不发布部分 complete coverage。
-- `--best-effort` 可提交成功 projection，但保留 errorDetails 且不伪造 complete coverage。
-- `--prune` 才删除 hot/cold 都不存在的当前-source projection。
-- `--cold-root` 只参与本次 prune，不持久注册。
-
-## `cold`
-
-```bash
-"$SHLOG" cold add --root <dir> [--source codex|claude-code|pi] [--db <path>] [--json]
-"$SHLOG" cold list [--source codex|claude-code|pi] [--db <path>] [--json]
-"$SHLOG" cold remove --root <dir> [--source codex|claude-code|pi] [--db <path>] [--json]
-```
-
-- add/remove 默认 Codex，是 retention-state writer；list 只读。
-- v8 truth：SQLite `cold_roots`。
-- add 需要现有 directory；remove 不删除 directory 或 index row。
-- registration 只保护显式 prune，不摄取 zstd body。
-- 当前 destructive cold presence mapping 只支持 Codex。
-- JSON 的 `configPath` 是 legacy tombstone compatibility，不是 v8 truth。
-
-## `find`
-
-```bash
-"$SHLOG" find <query> \
-  [--source all|codex|claude-code|pi] \
-  [-n|--limit <n>] [--sort relevance|ended|started] \
-  [--root <dir>] [--cwd <path> | --selector <json>] \
-  [--exclude-session <uuid-or-sessionRef>]... \
-  [--db <path>] [--json]
-```
-
-- 默认跨所有 public source；默认 sort `relevance`，limit 10。
-- 用户问“最新/最近 + 关键词”用 `--sort ended`。
-- self-hit 用 `--exclude-session`，可重复。
-- query 只读 SQLite；不扫描 raw、不检查 live freshness、不隐式 sync。coverage freshness 因此为 `not_checked`；需要 live proof 时另跑同 scope `status`。
-- JSON candidate 包含 `sessionRef`、`matchSource`、`matchSeq`、`matchedFields`、`sessionMessageCount` 与 `evidenceRead.command`（`executable:"inherit"`、`args`、`sideEffect`）。
-- `status --json` 的 `index.layout`：`native_v8` / `legacy_v7`（升级 nudge）/ `none`。
-
-## `read-range`
-
-```bash
-"$SHLOG" read-range <sessionRef> \
-  [--source <source>] [--seq <n>] [--query <text>] \
-  [--before <n>] [--after <n>] [--max-message-chars <n>] \
-  [--db <path>] [--json]
-```
-
-- bare id 默认 Codex；source-qualified `sessionRef` 优先。
-- 至少需要有效 `--seq` 或可在该 session 找到 anchor 的 `--query`。
-- before/after 默认各 2。
-- `--max-message-chars` 默认 800；0 禁用 elision。
-- exact session scope 在 SQL candidate generation 下推，避免全局 limit 吞掉目标 anchor。
-
-## `read-page`
-
-```bash
-"$SHLOG" read-page <sessionRef> \
-  [--source <source>] [--offset <n>] [--limit <n>] \
-  [--max-message-chars <n>] [--db <path>] [--json]
-```
-
-- offset 默认 0，limit 默认 20。
-- `--max-message-chars` 默认 800；0 禁用 elision。
-
-## `list`
-
-```bash
-"$SHLOG" list \
-  [--source codex|claude-code|pi] [--cwd <needle>] [--since <iso>] \
-  [--root <dir>] [--selector <json>] \
-  [--sort ended|started|messages] [-n|--limit <n>] \
-  [--db <path>] [--json]
-```
-
-- 默认 source Codex、sort ended、limit 20。
-- `--cwd` 是 case-insensitive metadata substring filter，不构造 cwd selector；需要 exact selector coverage 时传 `--selector`。
-- 无 selector 的 list coverage 是 `not_checked`/incomplete；不会把任意窄 coverage 当全局 complete。
-
-## `stats`
-
-```bash
-"$SHLOG" stats [--source codex|claude-code|pi] [--db <path>] [--json]
-```
-
-默认 Codex。只读 source-scoped counts、time range、top cwd、DB size、index version 与 stored coverage。
-
-## Selector JSON
+## Selector shape
 
 ```json
 {"source":"codex","kind":"all","root":"/abs/sessions"}
@@ -125,13 +35,11 @@ Production CLI 是 standalone Rust binary。下面只描述固定 public command
 {"source":"codex","kind":"cwd_date_range","root":"/abs/sessions","cwd":"/abs/repo","fromDate":"2026-08-01","toDate":"2026-08-15"}
 ```
 
-CLI 可补默认 root/source。`--selector` 与 `--cwd` 互斥；显式 `--source` 必须与 selector source 一致。
+CLI 可补默认 root/source。
 
-## Exit/output
+## Exit / output
 
-- success：0。
-- business/index/sync/parse failure：non-zero。
-- typed business errors + `--json`：通常输出 `{"error":{...}}`；按 contract 可能在 stdout。
-- strict sync JSON failure report：stderr。
-- best-effort sync report：stdout，即使带 per-file errors也不代表 complete coverage。
-- CLI parser error（如漏 `find` query）：plain stderr，不包装 JSON。
+- success：0；failure：non-zero。
+- typed business errors + `--json`：stdout 输出 `{"error":{...}}` envelope。
+- strict sync `--json` 失败：sync 报告写 stderr；`--best-effort` 的 sync 报告写 stdout。
+- CLI parser error（如漏 `<query>`）：plain stderr，不包装 JSON。
