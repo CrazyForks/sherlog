@@ -54,6 +54,7 @@ function assertRuntimeFloor(): void {
 // just `shlog sync`. Idempotent + silent on failure (worst case is a re-sync).
 migrateLegacyDataDirIfNeeded();
 import { DEFAULT_MAX_MESSAGE_CHARS } from "./query/message-elision";
+import { AnchorNotFoundError } from "./query/read";
 import { SessionNotFoundError } from "./query/session-not-found";
 import { canonicalizeSelector, parseSelectorJson, SelectorParseError, selectorSource } from "./selector";
 import { collectStatus } from "./status";
@@ -293,16 +294,20 @@ program
       const sort = normalizeFindSort(options.sort);
       const sourceIds = publicFindSources(options.source, options.selector);
       const summaries = await Promise.all(sourceIds.map(async (sourceId) => {
-        const selector = optionalSelector({ ...options, source: sourceId, rootOnlySelector: true });
+        // A find without an explicit root/cwd/selector resolves to the
+        // source's canonical default all(root): recall scope, coverage scope,
+        // and scanned-message scope must be the exact same selector.
+        const selector =
+          optionalSelector({ ...options, source: sourceId, rootOnlySelector: true }) ??
+          defaultAllSelector(sourceId);
         const summary = findSessions(options.db, query, limit, selector, {
           sourceId,
           sort,
           excludeSessions: options.excludeSession ?? [],
         });
-        const coverageSelector = selector ?? defaultAllSelector(sourceId);
         const coverageAssessment = await assessFindCoverage(
           options.db,
-          coverageSelector,
+          selector,
           "this find",
           summary.results.length,
           summary.coverage,
@@ -326,7 +331,10 @@ program
           ...result,
           results: result.results.map((findResult) => ({
             ...findResult,
-            evidenceRead: buildEvidenceReadAction({ ...findResult, query: result.query }),
+            evidenceRead: buildEvidenceReadAction(
+              { ...findResult, query: result.query },
+              { dbPath: options.db, json: true },
+            ),
           })),
           elapsedMs,
         }, null, 2));
@@ -377,6 +385,7 @@ program
     }, {
       dbPath: options.db,
       retryReadArgv: (error) => buildReadRangeRetryArgv(error.sessionRef, options),
+      anchorNotFoundContext: { dbPath: options.db },
     });
   });
 
@@ -510,7 +519,11 @@ function collectValues(value: string, previous: string[]): string[] {
 async function runReadCommand(
   jsonMode: boolean,
   action: () => void | Promise<void>,
-  sessionNotFoundContext: { dbPath?: string; retryReadArgv?: (error: SessionNotFoundError) => string[] } = {},
+  sessionNotFoundContext: {
+    dbPath?: string;
+    retryReadArgv?: (error: SessionNotFoundError) => string[];
+    anchorNotFoundContext?: { dbPath?: string };
+  } = {},
 ): Promise<void> {
   try {
     await action();
@@ -529,6 +542,10 @@ async function runReadCommand(
     }
     if (error instanceof SessionNotFoundError) {
       emitSessionNotFoundError(error, jsonMode, sessionNotFoundContext);
+      return;
+    }
+    if (error instanceof AnchorNotFoundError) {
+      emitAnchorNotFoundError(error, jsonMode, sessionNotFoundContext.anchorNotFoundContext ?? {});
       return;
     }
     if (error instanceof SelectorParseError) {
@@ -978,6 +995,56 @@ function emitSessionNotFoundError(
             sessionRef: error.sessionRef,
             sourceId: error.sourceId,
             nativeSessionId: error.nativeSessionId,
+            hint,
+            nextAction,
+          },
+        },
+        null,
+        2,
+      ),
+    );
+  } else {
+    console.error(`${error.message}\n${hint}`);
+  }
+  process.exitCode = 1;
+}
+
+function emitAnchorNotFoundError(
+  error: AnchorNotFoundError,
+  jsonMode: boolean,
+  context: { dbPath?: string } = {},
+): void {
+  const hint = error.matchedProfileFields.length === 0
+    ? "No message in this session matched the query. This can happen when the query targets session-level fields or when the session projection lacks the term; read the session projection or refine the query to message terms."
+    : `The query matched only session-level fields (${error.matchedProfileFields.join(", ")}) of this session. There is no message anchor for it; read the session projection (read-page) or refine the query to terms that appear in messages.`;
+  const dbArgv = context.dbPath ? ["--db", context.dbPath] : [];
+  const nextAction = {
+    kind: "read_session_projection",
+    reason: "anchor_not_found",
+    steps: [
+      `Read the session projection of ${error.sessionRef} with read-page to locate the evidence manually.`,
+      "Refine the query to terms that appear in messages and retry read-range.",
+    ],
+    commands: [
+      {
+        label: "read session projection",
+        recommended: true,
+        argv: [PROGRAM_NAME, "read-page", error.sessionRef, ...dbArgv, "--json"],
+      },
+    ],
+  };
+  if (jsonMode) {
+    console.log(
+      JSON.stringify(
+        {
+          error: {
+            code: "anchor_not_found",
+            message: error.message,
+            sessionRef: error.sessionRef,
+            sourceId: error.sourceId,
+            nativeSessionId: error.nativeSessionId,
+            query: error.query,
+            matchedProfileFields: error.matchedProfileFields,
             hint,
             nextAction,
           },

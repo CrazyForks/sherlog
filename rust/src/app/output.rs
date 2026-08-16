@@ -8,7 +8,7 @@ use crate::model::{
     FindSummary, MessageRecord, ReadPageSummary, ReadRangeSummary, SessionListSummary,
     StatsSummary, StatusSummary,
 };
-use crate::retrieval::build_evidence_read_action;
+use crate::retrieval::{EvidenceReadContext, build_evidence_read_action};
 use crate::sync::SyncReport;
 
 pub(super) fn write_json(writer: &mut dyn Write, value: &impl Serialize) -> Result<(), AppError> {
@@ -57,11 +57,17 @@ pub(super) fn write_find_json(
     writer: &mut dyn Write,
     summary: &FindSummary,
     elapsed_ms: u64,
+    db_path: &str,
+    json_output: bool,
 ) -> Result<(), AppError> {
     let mut value = serde_json::to_value(summary).map_err(AppError::output)?;
     let object = value
         .as_object_mut()
         .expect("FindSummary always serializes as an object");
+    let context = EvidenceReadContext {
+        db_path,
+        json: json_output,
+    };
     if let Some(results) = object.get_mut("results").and_then(Value::as_array_mut) {
         for (result_value, result) in results.iter_mut().zip(&summary.results) {
             result_value
@@ -69,8 +75,12 @@ pub(super) fn write_find_json(
                 .expect("FindResult always serializes as an object")
                 .insert(
                     "evidenceRead".to_owned(),
-                    serde_json::to_value(build_evidence_read_action(result, Some(&summary.query)))
-                        .map_err(AppError::output)?,
+                    serde_json::to_value(build_evidence_read_action(
+                        result,
+                        Some(&summary.query),
+                        &context,
+                    ))
+                    .map_err(AppError::output)?,
                 );
         }
     }

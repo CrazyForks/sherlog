@@ -88,7 +88,7 @@ path-like command query 若完整出现在 title，但删除该 phrase 后 title
 - `best_row`：决定相关性分数；
 - `best_display_row`：决定 `snippet`、`matchSource`、`matchSeq` 与 progressive read anchor。
 
-只要存在 message candidate，display row 就硬优先 message；只有 source kind 相同时才比较 row score。session-profile 命中可以帮助召回和排序，但不能伪装成 message 证据。若只有 profile hit，`matchSource=session`、`matchSeq=null`，`evidenceRead` 应使用 query 重新锚定 `read-range` 或回退 `read-page`。
+只要存在 message candidate，display row 就硬优先 message；只有 source kind 相同时才比较 row score。session-profile 命中可以帮助召回和排序，但不能伪装成 message 证据。若只有 profile hit，`matchSource=session`、`matchSeq=null`，`evidenceRead` 应使用 query 重新锚定 `read-range`；无 message anchor 时该 read 返回 typed `anchor_not_found`，agent 按 nextAction 回退 `read-page`，严禁伪造 seq 0。
 
 ## Cross-source merge
 

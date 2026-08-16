@@ -564,6 +564,95 @@ fn unscoped_find_and_list_do_not_treat_narrow_coverage_as_complete() {
 }
 
 #[test]
+fn unscoped_find_searches_the_canonical_default_root_only() {
+    let directory = TempDir::new().unwrap();
+    let root = directory.path().join("sessions");
+    let secondary = directory.path().join("secondary-sessions");
+    let default_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    let secondary_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    write_codex_session(
+        &root
+            .join("2026/08/15")
+            .join(format!("rollout-2026-08-15T00-00-00-{default_id}.jsonl")),
+        default_id,
+        &[("user_message", "needle only in default root")],
+    );
+    write_codex_session(
+        &secondary
+            .join("2026/08/15")
+            .join(format!("rollout-2026-08-15T00-00-00-{secondary_id}.jsonl")),
+        secondary_id,
+        &[("user_message", "needle only in secondary root")],
+    );
+    let paths = resolved_paths(&directory, &root);
+    let mut services = NativeAppServices::new(paths.clone(), directory.path().to_path_buf());
+
+    let mut sync = |target: &Path| {
+        let (code, _stdout, stderr) = run_cli(
+            &mut services,
+            vec![
+                "shlog".to_owned(),
+                "sync".to_owned(),
+                "--source".to_owned(),
+                "codex".to_owned(),
+                "--root".to_owned(),
+                target.to_string_lossy().into_owned(),
+                "--db".to_owned(),
+                paths.db_path.to_string_lossy().into_owned(),
+                "--json".to_owned(),
+            ],
+        );
+        assert_eq!(code, 0);
+        assert!(stderr.is_empty());
+    };
+    sync(&root);
+    sync(&secondary);
+
+    let find_args = |root: Option<&Path>| FindArgs {
+        query: "needle".to_owned(),
+        source: Some("codex".to_owned()),
+        limit: 10,
+        root: root.map(Path::to_path_buf),
+        selector: None,
+        cwd: None,
+        sort: CliFindSort::Relevance,
+        exclude_session: vec![],
+        database: DatabaseArg {
+            db: paths.db_path.clone(),
+        },
+        json: true,
+    };
+
+    let unscoped = json_output(|stdout, stderr| services.find(&find_args(None), stdout, stderr));
+    let refs = unscoped["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|result| result["sessionRef"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(refs, vec![default_id.to_owned()]);
+    assert_eq!(unscoped["scannedMessageCount"], serde_json::json!(1));
+    assert_eq!(
+        unscoped["coverage"]["requested"]["root"],
+        serde_json::json!(root.to_string_lossy())
+    );
+
+    let scoped =
+        json_output(|stdout, stderr| services.find(&find_args(Some(&secondary)), stdout, stderr));
+    let refs = scoped["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|result| result["sessionRef"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(refs, vec![secondary_id.to_owned()]);
+    assert_eq!(
+        scoped["coverage"]["requested"]["root"],
+        serde_json::json!(secondary.to_string_lossy())
+    );
+}
+
+#[test]
 fn single_cjk_find_and_read_range_use_bounded_like_recall() {
     let directory = TempDir::new().unwrap();
     let raw_root = directory.path().join("sessions");

@@ -63,7 +63,7 @@
 
 - `recommendedAction: "query"`：不要 sync；用当前 index refine/retry。若 live status 是 fresh，可把这份 proof 与紧邻的 find miss 组合起来做范围内结论。
 - `recommendedAction: "sync"`：同范围 sync，成功后重试；不要扩大为无关全量 destructive sync。
-- Codex `source_content_changed` + `query`：soft stale，只有答案依赖最新 active tail 时才 sync。
+- Codex `source_content_changed` + `query`：proven append 的 soft stale，只有答案依赖最新 active tail 时才 sync。truncate/prefix rewrite/same-size rewrite 无法证明 append 时，status 会给出 `recommendedAction: "sync"`，不要把它当 soft stale 继续 query。
 
 Refine 时：
 

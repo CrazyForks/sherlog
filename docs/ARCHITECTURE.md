@@ -150,7 +150,7 @@ storage 只返回 candidate evidence；`retrieval` 聚合到 session 后使用 F
 
 - `matchedFields`：message/title/summary/compact/reasoningSummary provenance；
 - `sessionMessageCount`：继续读取的成本提示；
-- `evidenceRead`：应原样执行的 `read-range` 或 `read-page` argv。
+- `evidenceRead.command`：`executable:"inherit"` + 闭包 `--source/--db/--json` 的 `args`（`sideEffect:"read_index"`），应原样拼接执行的 `read-range` 或 `read-page`。
 
 常规回答必须来自 `read-range` / `read-page` projection。只有 projection 明确缺少完整 tool call、patch、长代码或原始事件时，agent 才可先定位 session，再做 agent-side raw fallback；raw fallback 不是 `shlog` 查询能力。
 

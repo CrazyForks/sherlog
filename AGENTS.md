@@ -19,7 +19,8 @@
 - v8 SQLite 是唯一持久化真相源：`meta`、物理表 `session_rows`、只读兼容 view `sessions`、`source_files`、统一 `documents`、contentless `documents_fts`、`coverage`、`cold_roots`。没有 metadata sidecar。
 - v8 writer 固定使用 rollback `journal_mode=DELETE` 与 `synchronous=FULL`。这是短命 CLI + 显式 single-writer 的有意识取舍：发布态 index 保持单文件，所有只读命令在 DB `0444`、目录 `0555` 时也不会创建 `-wal` / `-shm`；不要改成 `immutable=1` 或 close-time WAL seal，它们在并发 writer/reader 下会读旧数据或留下转换竞态。
 - `sessions` view 故意没有 `INSTEAD OF` trigger：高级只读 SQL 保持兼容，旧 TypeScript writer 对 v8 写入时会 fail closed。
-- 检索主链是 `SQLite candidate recall -> deterministic session ranking -> evidenceRead -> read-range/read-page`。真实 message 与 session profile 是两类 document；profile 命中不得伪装成 message evidence。
+- 检索主链是 `SQLite candidate recall -> deterministic session ranking -> evidenceRead -> read-range/read-page`。真实 message 与 session profile 是两类 document；profile 命中不得伪装成 message evidence。`read-range --query` 无 message anchor 返回 typed `anchor_not_found`（含 `matchedProfileFields` 与闭包 read-page nextAction），不回退 seq 0；read payload 的 session 记录含 `compactText`/`reasoningSummaryText`。
+- `find` 的 `evidenceRead.command` 是 `executable:"inherit"` + 闭包 `--source/--db/--json` 的 `args` + `sideEffect:"read_index"`，custom DB 下原样执行必须读回原 candidate。无 `--root/--cwd/--selector` 的 find 解析为各 source 的 canonical default `all(root)`，recall/coverage/scanned 三 scope 一致。
 - v8 tokenizer 使用 UAX #29 lowercase word 与重叠 CJK Unicode-scalar bigram。FTS column 权重为 body 1.0、title 8.0、summary 3.0、compact 4.0、reasoning summary 1.2。
 - `source` / root / cwd / date / session / exclude 约束尽量在 SQL candidate generation 阶段下推，不先召回大集合再在 app 层过滤。
 - 任何新增的快速候选层都必须返回 conservative superset：只能排除可证明不匹配的记录，tokenizer、delta 或 source 状态不确定时必须保守纳入并交给精确层；不得制造 false negative。

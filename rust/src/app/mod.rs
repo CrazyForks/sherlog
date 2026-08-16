@@ -31,13 +31,14 @@ use crate::index::{
 };
 use crate::migration::{ColdConfigFence, MigrationRequest, migrate_v7_to_v8};
 use crate::model::{
-    FindSort, FindSummary, SessionListQuery, SessionListSort, SessionListSummary,
-    SourceCoverageStatus,
+    FindMatchedField, FindSort, FindSummary, SessionListQuery, SessionListSort, SessionListSummary,
+    SessionRecord, SourceCoverageStatus,
 };
 use crate::retrieval::{
-    ElisionOptions, RecallMode, RetrievalPlan, analyze_query, build_relaxed_recall_queries,
-    build_zero_result_diagnosis, build_zero_results_next_action, elide_messages,
-    merge_find_summaries, rank_candidates_for_sort, resolve_read_anchor,
+    ElisionOptions, ReadAnchorError, RecallMode, RetrievalPlan, SessionFieldTexts, analyze_query,
+    build_relaxed_recall_queries, build_zero_result_diagnosis, build_zero_results_next_action,
+    elide_messages, matched_session_fields, merge_find_summaries, rank_candidates_for_sort,
+    resolve_read_anchor,
 };
 use crate::runner::{AppServices, parse_public_source};
 use crate::sync::{
@@ -113,7 +114,15 @@ impl NativeAppServices {
         let mut summaries = Vec::with_capacity(sources.len());
 
         for source in sources {
-            let selector = find_selector(args, source, &self.paths, &self.cwd)?;
+            // A find without an explicit root/cwd/selector resolves to the
+            // source's canonical default `all(root)`. Recall scope, coverage
+            // scope, and scanned-message scope must be the exact same selector,
+            // otherwise uncovered roots would leak into results that the
+            // coverage proof does not describe.
+            let selector = match find_selector(args, source, &self.paths, &self.cwd)? {
+                Some(selector) => selector,
+                None => all_selector(source, None, &self.paths, &self.cwd)?,
+            };
             let excluded_session_uuids =
                 self.resolve_excluded_session_uuids(reader, source, &excluded_sessions)?;
             let candidates = recall_with_fallback(
@@ -123,7 +132,7 @@ impl NativeAppServices {
                     terms: analysis.terms.clone(),
                     like_needle: recall_like_needle(&analysis.recall),
                     sources: vec![source],
-                    selector: selector.clone(),
+                    selector: Some(selector.clone()),
                     session: None,
                     excluded_session_uuids,
                     order: recall_order(sort),
@@ -134,27 +143,13 @@ impl NativeAppServices {
             let coverage_records = reader
                 .coverage_records(source)
                 .map_err(|error| map_index_error(error, reader.path(), &self.cwd, &self.paths))?;
-            let coverage_selector = match selector.as_ref() {
-                Some(selector) => selector.clone(),
-                None => all_selector(source, None, &self.paths, &self.cwd)?,
-            };
-            let coverage = indexed_coverage(&coverage_records, Some(&coverage_selector));
-            let scanned_message_count = match selector.as_ref() {
-                Some(selector) => reader.selector_message_count(selector).map_err(|error| {
-                    map_index_error(error, reader.path(), &self.cwd, &self.paths)
-                })?,
-                None => {
-                    reader
-                        .stats(source)
-                        .map_err(|error| {
-                            map_index_error(error, reader.path(), &self.cwd, &self.paths)
-                        })?
-                        .message_count
-                }
-            };
+            let coverage = indexed_coverage(&coverage_records, Some(&selector));
+            let scanned_message_count = reader
+                .selector_message_count(&selector)
+                .map_err(|error| map_index_error(error, reader.path(), &self.cwd, &self.paths))?;
             let next_action = results
                 .is_empty()
-                .then(|| build_zero_results_next_action(selector.as_ref(), "this find"));
+                .then(|| build_zero_results_next_action(Some(&selector), "this find"));
             summaries.push(FindSummary {
                 query: args.query.clone(),
                 source_ids: vec![source],
@@ -238,7 +233,7 @@ impl NativeAppServices {
     fn read_anchor(
         &self,
         reader: &IndexReader,
-        session_ref: &SessionRef,
+        session: &SessionRecord,
         args: &ReadRangeArgs,
     ) -> Result<i64, AppError> {
         let explicit_seq = args.seq.and_then(|value| value.value());
@@ -252,9 +247,12 @@ impl NativeAppServices {
                 RecallSpec {
                     terms: analysis.terms,
                     like_needle,
-                    sources: vec![session_ref.source_id],
+                    sources: vec![session.source_id],
                     selector: None,
-                    session: Some(session_ref.clone()),
+                    session: Some(SessionRef {
+                        source_id: session.source_id,
+                        native_session_id: session.native_session_id.clone(),
+                    }),
                     excluded_session_uuids: vec![],
                     order: RecallOrder::Relevance,
                     limit: 50,
@@ -272,8 +270,57 @@ impl NativeAppServices {
         } else {
             None
         };
-        resolve_read_anchor(explicit_seq, query, top_hit.as_ref())
-            .map_err(|error| AppError::invalid_arguments(error.to_string()))
+        match resolve_read_anchor(explicit_seq, query, top_hit.as_ref()) {
+            Ok(seq) => Ok(seq),
+            Err(ReadAnchorError::MissingAnchorSpec) => Err(AppError::invalid_arguments(
+                "read-range requires an explicit sessionRef plus either --seq or --query",
+            )),
+            Err(ReadAnchorError::NoMessageHit) => {
+                let query = query.unwrap_or_default();
+                let analysis = analyze_query(query);
+                let matched_profile_fields = matched_session_fields(
+                    SessionFieldTexts {
+                        title: &session.title,
+                        summary: &session.summary_text,
+                        compact: &session.compact_text,
+                        reasoning_summary: &session.reasoning_summary_text,
+                    },
+                    query,
+                    &analysis.terms,
+                )
+                .iter()
+                .map(|field| match field {
+                    FindMatchedField::Title => "title",
+                    FindMatchedField::Summary => "summary",
+                    FindMatchedField::Compact => "compact",
+                    FindMatchedField::ReasoningSummary => "reasoningSummary",
+                    FindMatchedField::Message => "message",
+                })
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+                let session_ref = SessionRef {
+                    source_id: session.source_id,
+                    native_session_id: session.native_session_id.clone(),
+                };
+                let read_page_argv = vec![
+                    "shlog".to_owned(),
+                    "read-page".to_owned(),
+                    session_ref.qualified(),
+                    "--db".to_owned(),
+                    reader.path().to_string_lossy().into_owned(),
+                    "--json".to_owned(),
+                ];
+                Err(AppError::anchor_not_found(
+                    session_ref.qualified(),
+                    session.source_id.as_str(),
+                    &session.native_session_id,
+                    reader.path().to_string_lossy(),
+                    query,
+                    matched_profile_fields,
+                    read_page_argv,
+                ))
+            }
+        }
     }
 
     fn migrate_default_data_dir_for_writer(&self, db_path: &Path) -> Result<(), AppError> {
@@ -602,7 +649,13 @@ impl AppServices for NativeAppServices {
         let summary = self.find_summary(&reader, args)?;
         let elapsed_ms = self.elapsed_ms();
         if args.json {
-            write_find_json(stdout, &summary, elapsed_ms)
+            write_find_json(
+                stdout,
+                &summary,
+                elapsed_ms,
+                &reader.path().to_string_lossy(),
+                args.json,
+            )
         } else {
             write_find_text(stdout, &summary, elapsed_ms)
         }
@@ -616,18 +669,17 @@ impl AppServices for NativeAppServices {
     ) -> Result<(), AppError> {
         let reader = self.reader(&args.database.db)?;
         let session_ref = read_session_ref(&args.session_ref, args.source.as_deref())?;
-        if reader
+        let session = reader
             .load_session(&session_ref)
-            .map_err(|error| map_index_error(error, reader.path(), &self.cwd, &self.paths))?
-            .is_none()
-        {
+            .map_err(|error| map_index_error(error, reader.path(), &self.cwd, &self.paths))?;
+        if session.is_none() {
             return Err(session_not_found_error(
                 &session_ref,
                 reader.path(),
                 read_range_retry_argv(&session_ref, args, reader.path()),
             ));
         }
-        let anchor = self.read_anchor(&reader, &session_ref, args)?;
+        let anchor = self.read_anchor(&reader, &session.expect("checked above"), args)?;
         let mut summary = reader
             .read_range(&session_ref, anchor, args.before as u64, args.after as u64)
             .map_err(|error| map_index_error(error, reader.path(), &self.cwd, &self.paths))?;

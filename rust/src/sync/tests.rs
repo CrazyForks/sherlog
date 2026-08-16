@@ -699,6 +699,50 @@ fn prune_fails_closed_when_a_registered_cold_root_becomes_a_regular_file() {
 }
 
 #[test]
+fn prune_fails_closed_when_a_registered_cold_root_is_missing() {
+    let temp = tempdir().unwrap();
+    let root = temp.path().join("sessions");
+    let id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    let hot = root.join(format!("2026/08/15/rollout-{id}.jsonl"));
+    write_session(
+        &hot,
+        id,
+        "/work",
+        &[("user_message", "must survive a vanished cold archive")],
+    );
+    let db = temp.path().join("index.sqlite");
+    run(SyncRequest::new(&db, selector(&root))).unwrap();
+
+    let cold_root = temp.path().join("cold");
+    fs::create_dir(&cold_root).unwrap();
+    add_cold_root(
+        &db,
+        SourceId::Codex,
+        &cold_root,
+        "2026-08-15T00:00:00.000Z",
+        temp.path(),
+    )
+    .unwrap();
+    fs::rename(&hot, cold_root.join(hot.file_name().unwrap())).unwrap();
+    fs::rename(&cold_root, temp.path().join("cold-vanished")).unwrap();
+    assert!(!cold_root.exists());
+
+    for best_effort in [false, true] {
+        let mut request = SyncRequest::new(&db, selector(&root));
+        request.prune = true;
+        request.best_effort = best_effort;
+        let failure = run(request).unwrap_err();
+        assert!(failure.report.error_details.iter().any(|detail| {
+            detail.file_path == "(cold roots)"
+                && detail
+                    .message
+                    .contains("registered cold root is unavailable")
+        }));
+        assert_eq!(projection_view(&db, id).1.len(), 1);
+    }
+}
+
+#[test]
 fn first_sync_imports_all_source_pending_cold_roots_into_the_published_v8_index() {
     let temp = tempdir().unwrap();
     let root = temp.path().join("sessions");

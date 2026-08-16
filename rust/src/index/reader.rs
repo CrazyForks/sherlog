@@ -1151,6 +1151,8 @@ fn public_session(session: &StoredSession) -> SessionRecord {
         source_root: session.source_root.clone(),
         title: session.title.clone(),
         summary_text: session.summary_text.clone(),
+        compact_text: session.compact_text.clone(),
+        reasoning_summary_text: session.reasoning_summary_text.clone(),
         cwd: session.cwd.clone(),
         model: session.model.clone(),
         started_at: session.started_at.clone(),

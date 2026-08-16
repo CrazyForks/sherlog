@@ -44,6 +44,8 @@ function makeSession(overrides: Partial<SessionRecord> = {}): SessionRecord {
     sourceRoot: "/root/sessions",
     title: "排查 deploy",
     summaryText: "",
+    compactText: "",
+    reasoningSummaryText: "",
     cwd: "/tmp/project-a",
     model: "gpt-5.4",
     startedAt: "2026-04-21T10:00:00.000Z",

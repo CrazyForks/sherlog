@@ -31,7 +31,7 @@ sqlite3 -readonly "$DB_PATH" \
 "$SHLOG" find "cf tunnel" --json -n 5
 ```
 
-短产品名/通用文件名先加 `--cwd` 或换成更独特 phrase。选择 candidate 时看 `matchSource`、`matchedFields`、`sessionMessageCount`，然后原样执行 `evidenceRead.argv`。
+短产品名/通用文件名先加 `--cwd` 或换成更独特 phrase。选择 candidate 时看 `matchSource`、`matchedFields`、`sessionMessageCount`，然后原样执行 `evidenceRead.command`（`executable:"inherit"` + `args`）。
 
 完成：结论来自 `read-*` 返回内容，不只 title/snippet。
 
@@ -59,7 +59,7 @@ sqlite3 -readonly "$DB_PATH" \
   --exclude-session <current-sessionRef> -n 5 --json
 ```
 
-随后执行首个合理 candidate 的 `evidenceRead.argv`。完成：内容确实提到 X，并用 `endedAt` 判断最新。
+随后执行首个合理 candidate 的 `evidenceRead.command`；`anchor_not_found` 时回退 `read-page` 或 refine query。完成：内容确实提到 X，并用 `endedAt` 判断最新。
 
 ## 5. Coverage diagnosis
 

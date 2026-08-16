@@ -17,7 +17,10 @@ mod zero;
 
 pub use candidate::{CandidateEvidence, SessionFieldTexts, matched_session_fields};
 pub use elision::{DEFAULT_MAX_MESSAGE_CHARS, ElisionOptions, elide_messages};
-pub use evidence::{EvidenceReadAction, EvidenceReadReason, build_evidence_read_action};
+pub use evidence::{
+    EvidenceReadAction, EvidenceReadCommand, EvidenceReadContext, EvidenceReadReason,
+    EvidenceReadSideEffect, build_evidence_read_action,
+};
 pub use global::{
     FindSourceSelection, merge_find_results, merge_find_summaries, public_find_sources,
 };

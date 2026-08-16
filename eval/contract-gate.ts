@@ -1,4 +1,4 @@
-import { cpSync, chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, unlinkSync, utimesSync } from "node:fs";
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -101,6 +101,7 @@ interface ContractFixture {
   syncErrorRoot: string;
   unreadablePath: string;
   prunePath: string;
+  rewritePath: string;
   coldRoot: string;
 }
 
@@ -230,9 +231,15 @@ export async function runContractGate(options: ContractGateOptions = {}): Promis
     await run(jsonCase("find-all-sources", (side) => [
       "find", "contract shared beacon", "--source", "all", "--db", side.dbPath, "--json",
     ]));
+    await run(jsonCase("find-unscoped-default-root", (side) => [
+      "find", "contract shared beacon", "--db", side.dbPath, "--json",
+    ]));
     await run(jsonCase("read-range", (side) => [
       "read-range", CLAUDE_SESSION_REF, "--seq", "0", "--before", "0", "--after", "1", "--db", side.dbPath, "--json",
     ]));
+    await run(jsonCase("error-anchor-not-found", (side) => [
+      "read-range", CODEX_SESSION, "--query", "no such contract anchor", "--before", "0", "--after", "0", "--db", side.dbPath, "--json",
+    ], 1));
     await run(jsonCase("read-page", (side) => [
       "read-page", PI_SESSION_REF, "--offset", "0", "--limit", "1", "--db", side.dbPath, "--json",
     ]));
@@ -274,6 +281,20 @@ export async function runContractGate(options: ContractGateOptions = {}): Promis
       "sync", "--source", "codex", "--prune", "--db", side.dbPath, "--json",
     ]));
 
+    // P0.5: a destructive rewrite (truncate) of an indexed file must stop
+    // being an advisory "query anyway" content change. The native candidate
+    // proves append-only via persisted prefix digests and recommends sync;
+    // the legacy TypeScript oracle cannot express that proof and remains
+    // advisory. The semantic divergence is intentional for this case.
+    truncateToFirstLine(fixture.rewritePath);
+    await run(jsonCase("status-destructive-change", (side) => [
+      "status",
+      "--source", "codex",
+      "--selector", JSON.stringify({ source: "codex", kind: "all", root: fixture.codexRoot }),
+      "--db", side.dbPath,
+      "--json",
+    ]));
+
     return {
       referenceCli: executables.reference,
       candidateCli: executables.candidate,
@@ -287,6 +308,7 @@ export async function runContractGate(options: ContractGateOptions = {}): Promis
           "find live freshness -> query-only stored coverage",
           "runtime parser and permission-denied prose -> typed semantic fields",
           "strict incomplete reason -> native source_scan_incomplete",
+          "destructive content change -> native prefix-proof sync recommendation (legacy advisory stays query)",
         ],
       },
       total: cases.length,
@@ -348,6 +370,11 @@ function prepareContractFixture(base: string): ContractFixture {
       "2020", "01", "15",
       `rollout-2020-01-15T01-10-00-${CODEX_PRUNE_SESSION}.jsonl`,
     ),
+    rewritePath: join(
+      codexRoot,
+      "2020", "01", "15",
+      `rollout-2020-01-15T01-00-00-${CODEX_SESSION}.jsonl`,
+    ),
     coldRoot,
   };
 }
@@ -355,6 +382,12 @@ function prepareContractFixture(base: string): ContractFixture {
 function copyFixtureDirectory(source: string, target: string): void {
   mkdirSync(dirname(target), { recursive: true });
   cpSync(source, target, { recursive: true });
+}
+
+function truncateToFirstLine(path: string): void {
+  const lines = readFileSync(path, "utf8").split("\n");
+  const first = lines.find((line) => line.trim().length > 0) ?? "";
+  writeFileSync(path, `${first}\n`);
 }
 
 function setFixedFileTimes(root: string): void {
@@ -466,13 +499,29 @@ function normalizeIntentionalV8Differences(
   const normalized = normalizeOpaqueEpochValues(structuredClone(observation)) as ContractObservation;
   if (id === "help") normalized.stdout = "<FIXED_COMMAND_SURFACE>\n";
 
-  if (id === "find-single-source" || id === "find-all-sources") {
+  if (id === "find-single-source" || id === "find-all-sources" || id === "find-unscoped-default-root") {
     const output = isRecord(normalized.stdout) ? normalized.stdout : null;
     if (output) {
       normalizeQueryOnlyCoverage(output.coverage);
       if (Array.isArray(output.coverageBySource)) {
         for (const entry of output.coverageBySource) {
           if (isRecord(entry)) normalizeQueryOnlyCoverage(entry.coverage);
+        }
+      }
+    }
+  }
+
+  if (id === "status-destructive-change") {
+    // P0.5: the native candidate downgrades an unproven content change from
+    // advisory query to recommended sync using persisted prefix digests; the
+    // legacy oracle stays advisory. Both sides agree on every other field.
+    const output = isRecord(normalized.stdout) ? normalized.stdout : null;
+    const requested = output && isRecord(output.requestedCoverage) ? output.requestedCoverage : null;
+    if (requested) {
+      requested.recommendedAction = "<RECOMMENDED_ACTION>";
+      if (Array.isArray(requested.coveringSelectors)) {
+        for (const entry of requested.coveringSelectors) {
+          if (isRecord(entry)) delete entry.advisory;
         }
       }
     }

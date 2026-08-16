@@ -25,7 +25,7 @@ v8 `documents_fts` 同时索引：
 
 BM25 column weights：`body=1.0`、`title=8.0`、`summary=3.0`、`compact=4.0`、`reasoning=1.2`。
 
-session-profile candidate 只是 recall signal，不是 message evidence。`matchSource="session"`、`matchSeq=null` 时仍执行完整 `evidenceRead.argv`。
+session-profile candidate 只是 recall signal，不是 message evidence。`matchSource="session"`、`matchSeq=null` 时仍执行完整 `evidenceRead.command`；`read-range --query` 无 message anchor 会返回 typed `anchor_not_found`，按 nextAction 回退 `read-page`。
 
 source/root/cwd/date/exact-session/exclude 条件尽量在 SQL candidate generation 下推。不要先拉全库候选再自行过滤，也不要把 session score 当成 message anchor。
 

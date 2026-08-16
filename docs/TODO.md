@@ -27,7 +27,7 @@
 ## P3: Source 与 eval hardening
 
 - [ ] 为 Codex、Claude Code、Pi 增加 source-specific negative privacy fixtures 与 upstream format drift cases。
-- [ ] 补 title/summary/compact/reasoning-only hit、`matchSource=session`、`matchSeq=null` 与 `evidenceRead` 可执行性断言。
+- [x] 补 title/summary/compact/reasoning-only hit、`matchSource=session`、`matchSeq=null` 与 `evidenceRead` 可执行性断言（anchor_not_found + 闭包 command，见 app/tests 与 contract gate）。
 - [ ] 持续验证 default cross-source find、selector isolation、coverage 不跨 source、sessionRef round-trip。
 - [ ] private dogfood 只由用户显式触发 dev-only skill 采集；不通过改 golden 或 hardcode query 修实现。
 

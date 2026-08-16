@@ -463,3 +463,213 @@ fn default_writer_fails_closed_when_legacy_and_destination_both_exist() {
     );
     assert!(!destination.join("index.sqlite").exists());
 }
+
+fn write_codex_file(path: &Path, id: &str, records: &[serde_json::Value]) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let mut lines = Vec::new();
+    lines.push(
+        serde_json::json!({
+            "timestamp": "2026-08-15T00:00:00Z",
+            "type": "session_meta",
+            "payload": {"id": id, "cwd": "/work"},
+        })
+        .to_string(),
+    );
+    for record in records {
+        lines.push(record.to_string());
+    }
+    fs::write(path, format!("{}\n", lines.join("\n"))).unwrap();
+}
+
+fn codex_message(kind: &str, text: &str) -> serde_json::Value {
+    serde_json::json!({
+        "timestamp": "2026-08-15T00:00:01Z",
+        "type": "event_msg",
+        "payload": {"type": kind, "message": text},
+    })
+}
+
+#[test]
+fn prune_fails_closed_when_registered_cold_root_becomes_unavailable() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let sessions = home.join(".codex/sessions/2026/08/15");
+    let id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    let hot = sessions.join(format!("rollout-2026-08-15T00-00-00-{id}.jsonl"));
+    write_codex_file(
+        &hot,
+        id,
+        &[codex_message("user_message", "cold protected evidence")],
+    );
+    let cold_root = temp.path().join("cold");
+    let db = temp.path().join("state").join("index.sqlite");
+    fs::create_dir_all(db.parent().unwrap()).unwrap();
+    let db_arg = db.to_string_lossy().into_owned();
+
+    let sync = run_isolated(
+        &["sync", "--source", "codex", "--db", &db_arg, "--json"],
+        &home,
+    );
+    assert!(sync.status.success());
+
+    fs::create_dir_all(&cold_root).unwrap();
+    let add = run_isolated(
+        &[
+            "cold",
+            "add",
+            "--root",
+            cold_root.to_str().unwrap(),
+            "--source",
+            "codex",
+            "--db",
+            &db_arg,
+            "--json",
+        ],
+        &home,
+    );
+    assert!(add.status.success());
+
+    // Move the raw file into the registered cold root; prune must retain the
+    // cold-only projection.
+    fs::rename(&hot, cold_root.join(format!("rollout-{id}.jsonl"))).unwrap();
+    let prune = run_isolated(
+        &[
+            "sync", "--source", "codex", "--prune", "--db", &db_arg, "--json",
+        ],
+        &home,
+    );
+    assert!(prune.status.success());
+    let payload: serde_json::Value = serde_json::from_slice(&prune.stdout).unwrap();
+    assert_eq!(payload["removed"], serde_json::json!(0));
+    assert_eq!(payload["retainedCold"], serde_json::json!(1));
+
+    // Registered root becomes unavailable: prune must fail closed instead of
+    // treating it as empty and deleting the sole projection.
+    let vanished = temp.path().join("cold-vanished");
+    fs::rename(&cold_root, &vanished).unwrap();
+    let prune = run_isolated(
+        &[
+            "sync", "--source", "codex", "--prune", "--db", &db_arg, "--json",
+        ],
+        &home,
+    );
+    assert_eq!(prune.status.code(), Some(1));
+    let payload: serde_json::Value = serde_json::from_slice(&prune.stderr).unwrap();
+    assert_eq!(payload["removed"], serde_json::json!(0));
+    assert_eq!(payload["errors"], serde_json::json!(1));
+    assert!(
+        payload["errorDetails"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("registered cold root is unavailable")
+    );
+
+    let page = run_isolated(&["read-page", id, "--db", &db_arg, "--json"], &home);
+    assert!(page.status.success());
+    let payload: serde_json::Value = serde_json::from_slice(&page.stdout).unwrap();
+    assert_eq!(payload["session"]["messageCount"], serde_json::json!(1));
+}
+
+#[test]
+fn profile_only_hit_fails_closed_with_typed_anchor_not_found() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let sessions = home.join(".codex/sessions/2026/08/15");
+    let id = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    let raw = sessions.join(format!("rollout-2026-08-15T00-00-00-{id}.jsonl"));
+    write_codex_file(
+        &raw,
+        id,
+        &[
+            codex_message("user_message", "ordinary question about shell scripts"),
+            codex_message("agent_message", "ordinary answer about shell scripts"),
+            serde_json::json!({
+                "timestamp": "2026-08-15T00:00:02Z",
+                "type": "compacted",
+                "payload": {"message": "compacted: user asked about quartz lantern inventory"},
+            }),
+        ],
+    );
+    let db = temp.path().join("state").join("index.sqlite");
+    fs::create_dir_all(db.parent().unwrap()).unwrap();
+    let db_arg = db.to_string_lossy().into_owned();
+
+    let sync = run_isolated(
+        &["sync", "--source", "codex", "--db", &db_arg, "--json"],
+        &home,
+    );
+    assert!(sync.status.success());
+
+    let find = run_isolated(
+        &[
+            "find",
+            "quartz lantern",
+            "--source",
+            "codex",
+            "--db",
+            &db_arg,
+            "--json",
+        ],
+        &home,
+    );
+    assert!(find.status.success());
+    let payload: serde_json::Value = serde_json::from_slice(&find.stdout).unwrap();
+    assert_eq!(payload["results"][0]["sessionRef"], serde_json::json!(id));
+    assert_eq!(
+        payload["results"][0]["matchSource"],
+        serde_json::json!("session")
+    );
+    let command = &payload["results"][0]["evidenceRead"]["command"];
+    assert_eq!(command["executable"], serde_json::json!("inherit"));
+    assert_eq!(command["sideEffect"], serde_json::json!("read_index"));
+    let args = command["args"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    assert!(
+        args.contains(&db_arg),
+        "evidence action must close over --db"
+    );
+
+    // Executing the closed action verbatim must NOT fake seq 0.
+    let mut invocation = shlog();
+    invocation.args(&args);
+    isolated(&mut invocation, &home);
+    let output = invocation.output().expect("shlog should run");
+    assert_eq!(output.status.code(), Some(1));
+    let payload: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        payload["error"]["code"],
+        serde_json::json!("anchor_not_found")
+    );
+    assert_eq!(
+        payload["error"]["sessionRef"],
+        serde_json::json!(format!("codex:{id}"))
+    );
+    let matched = payload["error"]["matchedProfileFields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert!(matched.contains(&"compact"));
+    assert_eq!(
+        payload["error"]["nextAction"]["commands"][0]["argv"],
+        serde_json::json!([
+            "shlog",
+            "read-page",
+            format!("codex:{id}"),
+            "--db",
+            &db_arg,
+            "--json"
+        ])
+    );
+
+    // The projection itself stays readable through read-page.
+    let page = run_isolated(&["read-page", id, "--db", &db_arg, "--json"], &home);
+    assert!(page.status.success());
+    let payload: serde_json::Value = serde_json::from_slice(&page.stdout).unwrap();
+    assert_eq!(payload["session"]["messageCount"], serde_json::json!(2));
+}

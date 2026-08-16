@@ -70,7 +70,7 @@ shlog find "X" --cwd /Users/you/work/project --sort ended \
   --exclude-session codex:<current-session-id> -n 5 --json
 ```
 
-不要只凭 title/snippet 回答内容问题。优先原样执行 JSON 结果的 `evidenceRead.argv`；message 太长且关键内容被省略时，在同一 read 命令上加 `--max-message-chars 0`。
+不要只凭 title/snippet 回答内容问题。优先原样执行 JSON 结果的 `evidenceRead.command`（`executable:"inherit"` + `args`，已闭包 `--db/--json`）；message 太长且关键内容被省略时，在同一 read 命令上加 `--max-message-chars 0`。`read-range --query` 无 message anchor 时返回 typed `anchor_not_found`，按 nextAction 回退 `read-page`，不要伪造 seq 0。
 
 ## Source
 

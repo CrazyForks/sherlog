@@ -12,9 +12,12 @@ mod jsonl;
 mod pi;
 
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::identity::SourceId;
@@ -23,6 +26,30 @@ use crate::model::{MessageRole, SourceFileMeta, SourceInventory, SourceKind, Sou
 pub use catalog::SourceCatalog;
 #[cfg(test)]
 pub(crate) use catalog::inject_metadata_failure;
+
+/// SHA-256 of the first `byte_count` bytes of a file, hex-encoded.
+///
+/// Shared by sync (bounded projection proofs) and status (append-vs-destructive
+/// classification against the persisted `boundary_digest`).
+pub(crate) fn prefix_sha256(path: &Path, byte_count: u64) -> io::Result<String> {
+    let mut file = File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut remaining = byte_count;
+    let mut buffer = [0_u8; 64 * 1024];
+    while remaining > 0 {
+        let limit = usize::try_from(remaining.min(buffer.len() as u64)).unwrap_or(buffer.len());
+        let read = file.read(&mut buffer[..limit])?;
+        if read == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "source prefix shortened during verification",
+            ));
+        }
+        hasher.update(&buffer[..read]);
+        remaining -= read as u64;
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
 
 /// Exact file identity captured by a source scan.
 ///

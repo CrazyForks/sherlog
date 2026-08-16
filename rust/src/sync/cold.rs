@@ -10,6 +10,8 @@ use crate::identity::SourceId;
 pub(crate) enum ColdPresenceError {
     #[error("cold retention is not implemented for source {0}")]
     UnsupportedSource(SourceId),
+    #[error("registered cold root is unavailable: {path:?}")]
+    Missing { path: PathBuf },
     #[error("inspect cold root {path:?}: {message}")]
     Inspect { path: PathBuf, message: String },
     #[error("walk cold root {path:?}: {message}")]
@@ -32,9 +34,14 @@ pub(crate) fn collect_cold_native_ids(
 
     let mut ids = BTreeSet::new();
     for root in roots {
+        // A registered cold root that is currently missing/unmounted must fail
+        // closed: treating it as empty would let an explicit prune delete the
+        // cold-only SQLite projection, which may be the sole remaining copy.
         let metadata = match root.metadata() {
             Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(ColdPresenceError::Missing { path: root.clone() });
+            }
             Err(error) => {
                 return Err(ColdPresenceError::Inspect {
                     path: root.clone(),
@@ -131,5 +138,14 @@ mod tests {
         let error =
             collect_cold_native_ids(SourceId::ClaudeCode, &[PathBuf::from("/cold")]).unwrap_err();
         assert!(matches!(error, ColdPresenceError::UnsupportedSource(_)));
+    }
+
+    #[test]
+    fn missing_registered_root_fails_closed_instead_of_scanning_empty() {
+        let temp = tempdir().unwrap();
+        let missing = temp.path().join("unmounted-volume");
+        let error =
+            collect_cold_native_ids(SourceId::Codex, std::slice::from_ref(&missing)).unwrap_err();
+        assert!(matches!(error, ColdPresenceError::Missing { path } if path == missing));
     }
 }

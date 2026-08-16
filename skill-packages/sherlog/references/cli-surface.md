@@ -71,7 +71,7 @@ SHLOG="${SHLOG_BIN:-${CXS_BIN:-shlog}}"
 - 用户问“最新/最近 + 关键词”用 `--sort ended`。
 - self-hit 用 `--exclude-session`，可重复。
 - query 只读 SQLite；不扫描 raw、不检查 live freshness、不隐式 sync。coverage freshness 因此为 `not_checked`；需要 live proof 时另跑同 scope `status`。
-- JSON candidate 包含 `sessionRef`、`matchSource`、`matchSeq`、`matchedFields`、`sessionMessageCount` 与 `evidenceRead`。
+- JSON candidate 包含 `sessionRef`、`matchSource`、`matchSeq`、`matchedFields`、`sessionMessageCount` 与 `evidenceRead.command`（`executable:"inherit"`、`args`、`sideEffect`）。
 
 ## `read-range`
 

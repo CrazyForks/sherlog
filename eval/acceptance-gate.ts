@@ -233,20 +233,50 @@ async function readContextIfNeeded(
       "--db", dbPath,
       "--json",
     );
-    const range = await runJsonCli<{ messages?: Array<{ role: string; contentText: string }> }>(cli, args);
-    if (!Array.isArray(range.messages)) throw new Error(`CLI under test returned no messages array for ${item.id} read-range`);
-    return { kind: "read-range", text: messagesText(range.messages) };
+    const range = await runCliUnderTest(cli, args, { cwd: ROOT });
+    if (range.exitCode !== 0) {
+      // A profile-only hit has no message anchor: the typed anchor_not_found
+      // error is the contract, and the agent must fall back to the session
+      // projection instead of trusting a fake seq 0.
+      const payload = parseCliJson(range.stdout) as { error?: { code?: string } } | null;
+      if (payload?.error?.code !== "anchor_not_found") {
+        throw new Error(
+          `CLI under test exited ${range.exitCode}: ${JSON.stringify([...cli.argv, ...args])}\n${range.stderr || range.stdout}`,
+        );
+      }
+      return readPageFallback(cli, dbPath, hit.sessionRef, context);
+    }
+    const rangePayload = JSON.parse(range.stdout) as { messages?: Array<{ role: string; contentText: string }> };
+    if (!Array.isArray(rangePayload.messages)) throw new Error(`CLI under test returned no messages array for ${item.id} read-range`);
+    return { kind: "read-range", text: messagesText(rangePayload.messages) };
   }
 
+  return readPageFallback(cli, dbPath, hit.sessionRef, context);
+}
+
+async function readPageFallback(
+  cli: CliUnderTest,
+  dbPath: string,
+  sessionRef: string,
+  context: { offset?: number; limit?: number },
+): Promise<{ kind: "read-page"; text: string }> {
   const page = await runJsonCli<{ messages?: Array<{ role: string; contentText: string }> }>(cli, [
-    "read-page", hit.sessionRef,
+    "read-page", sessionRef,
     "--offset", String(context.offset ?? 0),
     "--limit", String(context.limit ?? 20),
     "--db", dbPath,
     "--json",
   ]);
-  if (!Array.isArray(page.messages)) throw new Error(`CLI under test returned no messages array for ${item.id} read-page`);
+  if (!Array.isArray(page.messages)) throw new Error(`CLI under test returned no messages array for read-page`);
   return { kind: "read-page", text: messagesText(page.messages) };
+}
+
+function parseCliJson(value: string): unknown {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return null;
+  }
 }
 
 async function runJsonCli<T>(cli: CliUnderTest, args: string[]): Promise<T> {
@@ -298,7 +328,7 @@ function acceptanceGoldens(roots: AcceptanceFixtureRoots): DogfoodGolden[] {
     {
       id: "session-only-compact-context",
       query: "durable output queue",
-      intent: "session-level compact recall should still lead to raw transcript context",
+      intent: "session-level compact recall must fail closed to anchor_not_found, then lead to session-projection context via read-page",
       status: "hard",
       expected: {
         topK: 1,

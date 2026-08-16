@@ -180,7 +180,11 @@ coverage 与 content projection 分离：
 - sync 只有在 snapshot proof 完整时写 complete record；
 - best-effort errors 不产生虚假 complete coverage；
 - find/list/read/stats 只看 stored index proof；
-- status 不返回/检索正文、不写 index；inventory cache miss 可流式读取 raw，但仅以 privacy-allowlisted accepted projection 派生 live proof，exact `mtime_ns`/checkpoint cache hit 不重 parse；
+- 无 `--root/--cwd/--selector` 的 find 解析为各 source 的 canonical default `all(root)`，recall scope == scanned count scope == coverage scope；
+- status 不返回/检索正文、不写 index；inventory cache miss 可流式读取 raw，但仅以 privacy-allowlisted accepted projection 派生 live proof，exact `mtime_ns`/checkpoint cache hit 不重 parse；同 file-set 的 `source_content_changed` 会用持久化 `boundary_digest` 前缀证明区分 proven append（继续 advisory query）与 truncate/prefix/same-size rewrite（`recommendedAction: sync`）；
+- `--prune` 遇 registered cold root missing/unmount/permission 时 fail closed，绝不把不可达当作空集删除 cold-only projection；
+- `read-range --query` 在 session 内无 message anchor 时返回 typed `anchor_not_found`（含 `matchedProfileFields` 与闭包 read-page nextAction），不回退 seq 0；read payload 的 SessionRecord 暴露 `compactText`/`reasoningSummaryText`，profile 命中可精确读回；
+- find 的 `evidenceRead.command` 以 `executable:"inherit"` + 闭包 `--source/--db/--json` 的 `args` + `sideEffect:"read_index"` 输出，custom DB 下原样执行可读回原 candidate；
 - `all(root)` implication 只在同 source/root 内成立；
 - analyzer/index 不兼容或 coverage epoch stale 时 suppress coverage。
 

@@ -206,6 +206,8 @@ export interface SessionRecord {
   sourceRoot: string;
   title: string;
   summaryText: string;
+  compactText: string;
+  reasoningSummaryText: string;
   cwd: string;
   model: string;
   startedAt: string;

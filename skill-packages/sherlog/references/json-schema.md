@@ -194,7 +194,7 @@ type EvidenceRead =
       query?: string;
       before: number;
       after: number;
-      argv: string[];
+      command: EvidenceReadCommand;
     }
   | {
       kind: "read-page";
@@ -203,11 +203,19 @@ type EvidenceRead =
       sessionRef: string;
       offset: number;
       limit: number;
-      argv: string[];
+      command: EvidenceReadCommand;
     };
+
+interface EvidenceReadCommand {
+  executable: "inherit";
+  args: string[];
+  sideEffect: "read_index";
+}
 ```
 
-总是执行完整 `evidenceRead.argv`。`matchSource="session"` 时 `matchSeq=null`；不要构造虚假的 `--seq -1`。
+`executable:"inherit"` 表示复用产生该 payload 的同一 binary，不要用 PATH 上的其他版本替换。总是把 `executable + args` 原样拼接执行；`args` 已闭包 `--source/--db/--json`，自定义 DB 下也能读回原 candidate。`matchSource="session"` 时 `matchSeq=null`；不要构造虚假的 `--seq -1`。
+
+`read-range --query` 在 session 内找不到 message anchor 时返回 typed `anchor_not_found`（`sessionRef`、`sourceId`、`nativeSessionId`、`query`、`matchedProfileFields`、`hint`、`nextAction.commands[]` 为闭包 read-page）。此时不要伪造 `seq 0`，按 `nextAction` 回退 `read-page` 或 refine query。
 
 当前 native `find` 不扫描 raw，因此正常 zero-result diagnosis 使用 `coverage_not_confirmed`。需要把同 selector 的 `status.requestedCoverage` live proof 与 find miss 组合起来；不要从 stored `complete` 推断 `fresh_miss`。Schema 保留其他 reason 供兼容/演进。
 
@@ -255,6 +263,8 @@ interface SessionRecord {
   sourceRoot: string;
   title: string;
   summaryText: string;
+  compactText: string;
+  reasoningSummaryText: string;
   cwd: string;
   model: string;
   startedAt: string;
@@ -387,6 +397,7 @@ interface ErrorEnvelope {
 - `index_unavailable`：`dbPath`、`hint`、`nextAction.commands[].argv`；
 - `index_schema_upgrade_required`：`dbPath`、`missingColumns`、`hint`；
 - `session_not_found`：`sessionRef`、`sourceId`、`nativeSessionId`、`dbPath`、`nextAction`；
+- `anchor_not_found`：`sessionRef`、`sourceId`、`nativeSessionId`、`query`、`matchedProfileFields`、`hint`、`nextAction`；
 - `unsupported_source`：`source`；
 - `invalid_selector` / `invalid_cold_root` / `index_error`：message。
 

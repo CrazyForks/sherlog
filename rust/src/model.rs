@@ -331,6 +331,8 @@ pub struct SessionRecord {
     pub source_root: String,
     pub title: String,
     pub summary_text: String,
+    pub compact_text: String,
+    pub reasoning_summary_text: String,
     pub cwd: String,
     pub model: String,
     pub started_at: String,

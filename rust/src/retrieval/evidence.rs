@@ -15,6 +15,37 @@ pub enum EvidenceReadReason {
     SessionLevelMatch,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceReadSideEffect {
+    ReadIndex,
+}
+
+/// Invocation context the evidence action must close over. The agent is
+/// expected to execute `executable + args` verbatim, so the exact DB path,
+/// source qualifier, and output mode that produced the candidate are all
+/// preserved.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EvidenceReadCommand {
+    /// `"inherit"` means: reuse the binary that emitted this payload (or its
+    /// documented prefix) instead of resolving `shlog` from PATH.
+    pub executable: String,
+    /// Arguments WITHOUT the program name.
+    pub args: Vec<String>,
+    pub side_effect: EvidenceReadSideEffect,
+}
+
+impl EvidenceReadCommand {
+    fn new(args: Vec<String>) -> Self {
+        Self {
+            executable: "inherit".to_owned(),
+            args,
+            side_effect: EvidenceReadSideEffect::ReadIndex,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(
     tag = "kind",
@@ -32,7 +63,7 @@ pub enum EvidenceReadAction {
         query: Option<String>,
         before: usize,
         after: usize,
-        argv: Vec<String>,
+        command: EvidenceReadCommand,
     },
     ReadPage {
         reason: EvidenceReadReason,
@@ -40,13 +71,44 @@ pub enum EvidenceReadAction {
         session_ref: String,
         offset: usize,
         limit: usize,
-        argv: Vec<String>,
+        command: EvidenceReadCommand,
     },
 }
 
-pub fn build_evidence_read_action(result: &FindResult, query: Option<&str>) -> EvidenceReadAction {
+/// Closure context for a find invocation. Only these inputs decide the exact
+/// command a later `read-*` call must reproduce.
+pub struct EvidenceReadContext<'a> {
+    pub db_path: &'a str,
+    pub json: bool,
+}
+
+pub fn build_evidence_read_action(
+    result: &FindResult,
+    query: Option<&str>,
+    context: &EvidenceReadContext<'_>,
+) -> EvidenceReadAction {
+    let mut scope = vec![
+        "--source".to_owned(),
+        result.source_id.as_str().to_owned(),
+        "--db".to_owned(),
+        context.db_path.to_owned(),
+    ];
+    if context.json {
+        scope.push("--json".to_owned());
+    }
     if result.match_seq.is_none() {
         if let Some(query) = query.filter(|query| !query.is_empty()) {
+            let mut args = vec![
+                "read-range".to_owned(),
+                result.session_ref.clone(),
+                "--query".to_owned(),
+                query.to_owned(),
+                "--before".to_owned(),
+                DEFAULT_READ_RANGE_BEFORE.to_string(),
+                "--after".to_owned(),
+                DEFAULT_READ_RANGE_AFTER.to_string(),
+            ];
+            args.extend(scope);
             return EvidenceReadAction::ReadRange {
                 reason: EvidenceReadReason::SessionLevelMatch,
                 source_id: result.source_id,
@@ -55,40 +117,30 @@ pub fn build_evidence_read_action(result: &FindResult, query: Option<&str>) -> E
                 query: Some(query.to_owned()),
                 before: DEFAULT_READ_RANGE_BEFORE,
                 after: DEFAULT_READ_RANGE_AFTER,
-                argv: vec![
-                    "shlog".to_owned(),
-                    "read-range".to_owned(),
-                    result.session_ref.clone(),
-                    "--query".to_owned(),
-                    query.to_owned(),
-                    "--before".to_owned(),
-                    DEFAULT_READ_RANGE_BEFORE.to_string(),
-                    "--after".to_owned(),
-                    DEFAULT_READ_RANGE_AFTER.to_string(),
-                ],
+                command: EvidenceReadCommand::new(args),
             };
         }
+        let mut args = vec![
+            "read-page".to_owned(),
+            result.session_ref.clone(),
+            "--offset".to_owned(),
+            DEFAULT_SESSION_PAGE_OFFSET.to_string(),
+            "--limit".to_owned(),
+            DEFAULT_SESSION_PAGE_LIMIT.to_string(),
+        ];
+        args.extend(scope);
         return EvidenceReadAction::ReadPage {
             reason: EvidenceReadReason::SessionLevelMatch,
             source_id: result.source_id,
             session_ref: result.session_ref.clone(),
             offset: DEFAULT_SESSION_PAGE_OFFSET,
             limit: DEFAULT_SESSION_PAGE_LIMIT,
-            argv: vec![
-                "shlog".to_owned(),
-                "read-page".to_owned(),
-                result.session_ref.clone(),
-                "--offset".to_owned(),
-                DEFAULT_SESSION_PAGE_OFFSET.to_string(),
-                "--limit".to_owned(),
-                DEFAULT_SESSION_PAGE_LIMIT.to_string(),
-            ],
+            command: EvidenceReadCommand::new(args),
         };
     }
 
     let seq = result.match_seq.expect("checked above");
-    let mut argv = vec![
-        "shlog".to_owned(),
+    let mut args = vec![
         "read-range".to_owned(),
         result.session_ref.clone(),
         "--seq".to_owned(),
@@ -99,9 +151,10 @@ pub fn build_evidence_read_action(result: &FindResult, query: Option<&str>) -> E
         DEFAULT_READ_RANGE_AFTER.to_string(),
     ];
     if let Some(query) = query.filter(|query| !query.is_empty()) {
-        argv.push("--query".to_owned());
-        argv.push(query.to_owned());
+        args.push("--query".to_owned());
+        args.push(query.to_owned());
     }
+    args.extend(scope);
     EvidenceReadAction::ReadRange {
         reason: EvidenceReadReason::MessageMatch,
         source_id: result.source_id,
@@ -110,6 +163,6 @@ pub fn build_evidence_read_action(result: &FindResult, query: Option<&str>) -> E
         query: query.filter(|query| !query.is_empty()).map(str::to_owned),
         before: DEFAULT_READ_RANGE_BEFORE,
         after: DEFAULT_READ_RANGE_AFTER,
-        argv,
+        command: EvidenceReadCommand::new(args),
     }
 }

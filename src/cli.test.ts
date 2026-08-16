@@ -298,7 +298,7 @@ describe("shlog cli", { timeout: 20_000 }, () => {
     expect(payload.coverage).toEqual([]);
   });
 
-  test("fixed commands accept explicit --source codex and omitted find still sees Codex rows", async () => {
+  test("fixed commands accept explicit --source codex and unscoped find resolves the default root", async () => {
     const base = mkdtempSync(join(tmpdir(), "cxs-cli-source-codex-"));
     tempDirs.push(base);
     const root = join(base, "sessions");
@@ -347,14 +347,19 @@ describe("shlog cli", { timeout: 20_000 }, () => {
     expect(statusPayload.requestedCoverage.coveringSelectors[0]?.selector.source).toBe("codex");
 
     const defaultFind = await runCli(["find", "source codex needle", "--db", dbPath, "--json"]);
-    const explicitFind = await runCli(["find", "source codex needle", "--source", "codex", "--db", dbPath, "--json"]);
+    const explicitFind = await runCli(["find", "source codex needle", "--source", "codex", "--root", root, "--db", dbPath, "--json"]);
     expect(defaultFind.exitCode).toBe(0);
     expect(explicitFind.exitCode).toBe(0);
-    const defaultFindPayload = JSON.parse(defaultFind.stdout) as { results: Array<{ sessionUuid: string }> };
+    const defaultFindPayload = JSON.parse(defaultFind.stdout) as {
+      results: Array<{ sessionUuid: string }>;
+      coverageBySource: Array<{ sourceId: string; coverage: { requested: { root: string } | null } }>;
+    };
     const explicitFindPayload = JSON.parse(explicitFind.stdout) as { results: Array<{ sessionUuid: string }> };
-    expect(explicitFindPayload.results.map((result) => result.sessionUuid)).toEqual(
-      defaultFindPayload.results.map((result) => result.sessionUuid),
-    );
+    // Unscoped find resolves to the canonical default root; a custom-root sync
+    // is not in scope until the find names that root explicitly.
+    expect(defaultFindPayload.results.map((result) => result.sessionUuid)).toEqual([]);
+    expect(defaultFindPayload.coverageBySource.find((entry) => entry.sourceId === "codex")?.coverage.requested?.root)
+      .not.toBe(root);
     expect(explicitFindPayload.results[0]?.sessionUuid).toBe("14141414-1414-4414-8414-141414141414");
 
     const listed = await runCli(["list", "--source", "codex", "--db", dbPath, "--json"]);
@@ -482,7 +487,7 @@ describe("shlog cli", { timeout: 20_000 }, () => {
     }, 1, 1, INDEX_VERSION, "");
     db.close();
 
-    const found = await runCli(["find", "payloadbeacon", "--db", dbPath, "--json"]);
+    const found = await runCli(["find", "payloadbeacon", "--root", base, "--db", dbPath, "--json"]);
     expect(found.exitCode).toBe(0);
     const payload = JSON.parse(found.stdout) as {
       results: Array<{
@@ -497,7 +502,11 @@ describe("shlog cli", { timeout: 20_000 }, () => {
           query: string;
           before: number;
           after: number;
-          argv: string[];
+          command: {
+            executable: string;
+            args: string[];
+            sideEffect: string;
+          };
         };
       }>;
     };
@@ -514,11 +523,54 @@ describe("shlog cli", { timeout: 20_000 }, () => {
       query: "payloadbeacon",
       before: 2,
       after: 2,
+      command: {
+        executable: "inherit",
+        sideEffect: "read_index",
+      },
     });
-    expect(result?.evidenceRead.argv).toEqual(["shlog", "read-range", sessionUuid, "--query", "payloadbeacon", "--before", "2", "--after", "2"]);
+    expect(result?.evidenceRead.command.args).toEqual([
+      "read-range",
+      sessionUuid,
+      "--query",
+      "payloadbeacon",
+      "--before",
+      "2",
+      "--after",
+      "2",
+      "--source",
+      "codex",
+      "--db",
+      dbPath,
+      "--json",
+    ]);
+
+    // Executing the closed action verbatim must NOT fake seq 0: the query has
+    // no message anchor, so it fails closed with a typed anchor_not_found.
+    const actionRun = await runCli([...result!.evidenceRead.command.args]);
+    expect(actionRun.exitCode).toBe(1);
+    const actionPayload = JSON.parse(actionRun.stdout) as {
+      error: {
+        code: string;
+        sessionRef: string;
+        matchedProfileFields: string[];
+        nextAction: { commands: Array<{ argv: string[] }> };
+      };
+    };
+    expect(actionPayload.error.code).toBe("anchor_not_found");
+    expect(actionPayload.error.sessionRef).toBe(`codex:${sessionUuid}`);
+    expect(actionPayload.error.matchedProfileFields).toContain("title");
+    expect(actionPayload.error.nextAction.commands[0]?.argv).toEqual([
+      "shlog",
+      "read-page",
+      `codex:${sessionUuid}`,
+      "--db",
+      dbPath,
+      "--json",
+    ]);
 
     const page = await runCli([
-      ...result?.evidenceRead.argv.slice(1), // drop leading "shlog"
+      "read-page",
+      sessionUuid,
       "--db",
       dbPath,
       "--json",
@@ -625,7 +677,7 @@ describe("shlog cli", { timeout: 20_000 }, () => {
     expect(statusPayload.coverage).toEqual([]);
     expect(statusPayload.requestedCoverage.coveringSelectors[0]?.selector.source).toBe("claude-code");
 
-    const found = await runCli(["find", "source claude needle", "--source", "claude-code", "--db", dbPath, "--json"]);
+    const found = await runCli(["find", "source claude needle", "--source", "claude-code", "--root", root, "--db", dbPath, "--json"]);
     expect(found.exitCode).toBe(0);
     const findPayload = JSON.parse(found.stdout) as { results: Array<{ sessionUuid: string; sessionRef: string; cwd: string }> };
     expect(findPayload.results[0]?.sessionUuid).toBe("claude-code:cli-claude-session");
@@ -752,7 +804,7 @@ describe("shlog cli", { timeout: 20_000 }, () => {
     expect(statusPayload.context.root).toBe(root);
     expect(statusPayload.sourceInventory.totalFiles).toBe(1);
 
-    const found = await runCli(["find", "source pi needle", "--source", "pi", "--db", dbPath, "--json"]);
+    const found = await runCli(["find", "source pi needle", "--source", "pi", "--root", root, "--db", dbPath, "--json"]);
     expect(found.exitCode).toBe(0);
     const findPayload = JSON.parse(found.stdout) as { results: Array<{ sessionUuid: string; sessionRef: string; cwd: string }> };
     expect(findPayload.results[0]?.sessionUuid).toBe("pi:cli-pi-session");
@@ -828,8 +880,11 @@ describe("shlog cli", { timeout: 20_000 }, () => {
   test("find defaults to public cross-source search and returned session refs are directly readable", async () => {
     const base = mkdtempSync(join(tmpdir(), "cxs-cli-cross-source-find-"));
     tempDirs.push(base);
+    const home = join(base, "home");
 
-    const codexRoot = join(base, "codex-sessions");
+    // Unscoped find now searches each source's canonical default root, so the
+    // cross-source fixture must live at the HOME-derived default roots.
+    const codexRoot = join(home, ".codex", "sessions");
     const codexDay = join(codexRoot, "2026", "04", "20");
     mkdirSync(codexDay, { recursive: true });
     writeFileSync(
@@ -840,7 +895,7 @@ describe("shlog cli", { timeout: 20_000 }, () => {
       ].join("\n"),
     );
 
-    const claudeRoot = join(base, "claude-projects");
+    const claudeRoot = join(home, ".claude", "projects");
     const claudeProject = join(claudeRoot, "synthetic-project");
     mkdirSync(claudeProject, { recursive: true });
     writeFileSync(
@@ -864,12 +919,12 @@ describe("shlog cli", { timeout: 20_000 }, () => {
     );
 
     const dbPath = join(base, "index.sqlite");
-    const codexSync = await runCli(["sync", "--source", "codex", "--root", codexRoot, "--db", dbPath, "--json"]);
-    const claudeSync = await runCli(["sync", "--source", "claude-code", "--root", claudeRoot, "--db", dbPath, "--json"]);
+    const codexSync = await runCli(["sync", "--source", "codex", "--db", dbPath, "--json"], { env: { HOME: home } });
+    const claudeSync = await runCli(["sync", "--source", "claude-code", "--db", dbPath, "--json"], { env: { HOME: home } });
     expect(codexSync.exitCode).toBe(0);
     expect(claudeSync.exitCode).toBe(0);
 
-    const found = await runCli(["find", "cross shared", "--db", dbPath, "--json"]);
+    const found = await runCli(["find", "cross shared", "--db", dbPath, "--json"], { env: { HOME: home } });
     expect(found.exitCode).toBe(0);
     const findPayload = JSON.parse(found.stdout) as {
       sourceIds: string[];
@@ -881,7 +936,7 @@ describe("shlog cli", { timeout: 20_000 }, () => {
     expect(claudeHit?.sessionRef).toBe("claude-code:cli-cross-claude");
     expect(claudeHit?.matchSeq).toBe(0);
 
-    const explicitCodex = await runCli(["find", "cross shared", "--source", "codex", "--db", dbPath, "--json"]);
+    const explicitCodex = await runCli(["find", "cross shared", "--source", "codex", "--db", dbPath, "--json"], { env: { HOME: home } });
     expect(explicitCodex.exitCode).toBe(0);
     const explicitCodexPayload = JSON.parse(explicitCodex.stdout) as {
       sourceIds: string[];
@@ -1543,7 +1598,7 @@ describe("shlog cli", { timeout: 20_000 }, () => {
     const dbPath = join(base, "index.sqlite");
     await syncSessions({ dbPath, rootDir: join(base, "sessions") });
 
-    const result = await runCli(["find", "health check", "--db", dbPath]);
+    const result = await runCli(["find", "health check", "--root", join(base, "sessions"), "--db", dbPath]);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("next: shlog read-range 44444444-4444-4444-8444-444444444444 --seq 0");
     expect(result.stdout).toContain("--query 'health check'");
@@ -1611,7 +1666,7 @@ describe("shlog cli", { timeout: 20_000 }, () => {
     const dbPath = join(base, "index.sqlite");
     await syncSessions({ dbPath, rootDir: join(base, "sessions") });
 
-    const newest = await runCli(["find", "xsearch", "--sort", "ended", "--db", dbPath, "--json"]);
+    const newest = await runCli(["find", "xsearch", "--sort", "ended", "--root", join(base, "sessions"), "--db", dbPath, "--json"]);
     expect(newest.exitCode).toBe(0);
     const newestPayload = JSON.parse(newest.stdout) as { sort: string; results: Array<{ sessionUuid: string }> };
     expect(newestPayload.sort).toBe("ended");
@@ -1624,6 +1679,8 @@ describe("shlog cli", { timeout: 20_000 }, () => {
       "ended",
       "--exclude-session",
       "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "--root",
+      join(base, "sessions"),
       "--db",
       dbPath,
       "--json",

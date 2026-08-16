@@ -19,7 +19,7 @@ describe("executable-neutral contract gate", { timeout: 120_000 }, () => {
   test("deep-compares the complete public CLI surface against the TypeScript reference", () => {
     expect(result.referenceCli.source).toBe("typescript-reference");
     expect(result.candidateCli.source).toBe("typescript-reference");
-    expect(result).toMatchObject({ total: 24, passed: 24, failed: 0 });
+    expect(result).toMatchObject({ total: 27, passed: 27, failed: 0 });
     expect(result.cases.map((entry) => entry.id)).toEqual([
       "version",
       "help",
@@ -34,7 +34,9 @@ describe("executable-neutral contract gate", { timeout: 120_000 }, () => {
       "cold-remove",
       "find-single-source",
       "find-all-sources",
+      "find-unscoped-default-root",
       "read-range",
+      "error-anchor-not-found",
       "read-page",
       "list",
       "stats",
@@ -45,6 +47,7 @@ describe("executable-neutral contract gate", { timeout: 120_000 }, () => {
       "sync-strict-error",
       "sync-best-effort",
       "sync-prune",
+      "status-destructive-change",
     ]);
     expect(result.cases.every((entry) => entry.mismatchPaths.length === 0)).toBe(true);
   });

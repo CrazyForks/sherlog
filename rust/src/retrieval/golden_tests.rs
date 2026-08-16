@@ -252,7 +252,11 @@ fn message_elision_counts_javascript_utf16_code_units() {
 #[test]
 fn evidence_read_and_read_anchor_keep_progressive_read_contract() {
     let result = find_result(SourceId::Codex, "session-id", 1);
-    let action = build_evidence_read_action(&result, Some("ranking weights"));
+    let context = EvidenceReadContext {
+        db_path: "/state/index.sqlite",
+        json: true,
+    };
+    let action = build_evidence_read_action(&result, Some("ranking weights"), &context);
     assert_eq!(
         serde_json::to_value(action).unwrap(),
         json!({
@@ -264,14 +268,30 @@ fn evidence_read_and_read_anchor_keep_progressive_read_contract() {
             "query": "ranking weights",
             "before": 2,
             "after": 2,
-            "argv": ["shlog", "read-range", "session-id", "--seq", "7", "--before", "2", "--after", "2", "--query", "ranking weights"]
+            "command": {
+                "executable": "inherit",
+                "args": [
+                    "read-range", "session-id",
+                    "--seq", "7",
+                    "--before", "2",
+                    "--after", "2",
+                    "--query", "ranking weights",
+                    "--source", "codex",
+                    "--db", "/state/index.sqlite",
+                    "--json"
+                ],
+                "sideEffect": "read_index"
+            }
         })
     );
     assert_eq!(
         resolve_read_anchor(None, Some("ranking weights"), Some(&result)),
         Ok(7)
     );
-    assert_eq!(resolve_read_anchor(None, Some("missing"), None), Ok(0));
+    assert_eq!(
+        resolve_read_anchor(None, Some("missing"), None),
+        Err(ReadAnchorError::NoMessageHit)
+    );
     assert!(resolve_read_anchor(None, None, None).is_err());
 }
 
@@ -281,11 +301,15 @@ fn session_level_evidence_actions_choose_query_then_page_fallback() {
     result.match_source = MatchSource::Session;
     result.match_seq = None;
     result.match_role = FindMatchRole::Session;
-    let query_action = build_evidence_read_action(&result, Some("durable output queue"));
+    let context = EvidenceReadContext {
+        db_path: "/state/index.sqlite",
+        json: true,
+    };
+    let query_action = build_evidence_read_action(&result, Some("durable output queue"), &context);
+    let query_value = serde_json::to_value(query_action).unwrap();
     assert_eq!(
-        serde_json::to_value(query_action).unwrap()["argv"],
+        query_value["command"]["args"],
         json!([
-            "shlog",
             "read-range",
             "claude-code:abc",
             "--query",
@@ -293,20 +317,30 @@ fn session_level_evidence_actions_choose_query_then_page_fallback() {
             "--before",
             "2",
             "--after",
-            "2"
+            "2",
+            "--source",
+            "claude-code",
+            "--db",
+            "/state/index.sqlite",
+            "--json"
         ])
     );
-    let page_action = build_evidence_read_action(&result, None);
+    assert_eq!(query_value["command"]["executable"], json!("inherit"));
+    let page_action = build_evidence_read_action(&result, None, &context);
     assert_eq!(
-        serde_json::to_value(page_action).unwrap()["argv"],
+        serde_json::to_value(page_action).unwrap()["command"]["args"],
         json!([
-            "shlog",
             "read-page",
             "claude-code:abc",
             "--offset",
             "0",
             "--limit",
-            "40"
+            "40",
+            "--source",
+            "claude-code",
+            "--db",
+            "/state/index.sqlite",
+            "--json"
         ])
     );
 }

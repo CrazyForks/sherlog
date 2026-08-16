@@ -7,6 +7,17 @@ pub const EXIT_FAILURE: u8 = 1;
 pub const EXIT_INVALID_ARGUMENTS: u8 = 2;
 
 #[derive(Debug)]
+pub struct AnchorNotFound {
+    pub session_ref: String,
+    pub source_id: String,
+    pub native_session_id: String,
+    pub db_path: String,
+    pub query: String,
+    pub matched_profile_fields: Vec<String>,
+    pub read_page_argv: Vec<String>,
+}
+
+#[derive(Debug)]
 pub enum AppError {
     UnsupportedOperation {
         operation: &'static str,
@@ -38,6 +49,7 @@ pub enum AppError {
         db_path: String,
         retry_argv: Vec<String>,
     },
+    AnchorNotFound(Box<AnchorNotFound>),
     IndexFailure {
         message: String,
     },
@@ -127,6 +139,27 @@ impl AppError {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn anchor_not_found(
+        session_ref: impl Into<String>,
+        source_id: impl Into<String>,
+        native_session_id: impl Into<String>,
+        db_path: impl Into<String>,
+        query: impl Into<String>,
+        matched_profile_fields: Vec<String>,
+        read_page_argv: Vec<String>,
+    ) -> Self {
+        Self::AnchorNotFound(Box::new(AnchorNotFound {
+            session_ref: session_ref.into(),
+            source_id: source_id.into(),
+            native_session_id: native_session_id.into(),
+            db_path: db_path.into(),
+            query: query.into(),
+            matched_profile_fields,
+            read_page_argv,
+        }))
+    }
+
     pub fn index_failure(message: impl Into<String>) -> Self {
         Self::IndexFailure {
             message: message.into(),
@@ -152,6 +185,7 @@ impl AppError {
             Self::IndexUnavailable { .. } => "index_unavailable",
             Self::IndexSchemaUpgradeRequired { .. } => "index_schema_upgrade_required",
             Self::SessionNotFound { .. } => "session_not_found",
+            Self::AnchorNotFound(_) => "anchor_not_found",
             Self::IndexFailure { .. } => "index_error",
             Self::CommandFailedSilent => "command_failed",
             Self::InvalidArguments { .. } => "invalid_arguments",
@@ -170,6 +204,21 @@ impl AppError {
             Self::IndexUnavailable { db_path, .. } => format!("index not found: {db_path}"),
             Self::SessionNotFound { session_ref, .. } => {
                 format!("session not found in Sherlog index: {session_ref}")
+            }
+            Self::AnchorNotFound(payload) => {
+                if payload.matched_profile_fields.is_empty() {
+                    format!(
+                        "query \"{}\" matched no message in session {}",
+                        payload.query, payload.session_ref
+                    )
+                } else {
+                    format!(
+                        "query \"{}\" matched only session-level fields ({}) in session {}; there is no message anchor",
+                        payload.query,
+                        payload.matched_profile_fields.join(", "),
+                        payload.session_ref
+                    )
+                }
             }
             Self::CommandFailedSilent => String::new(),
             Self::ColdRoot { message }
@@ -204,6 +253,7 @@ impl AppError {
                 | Self::IndexUnavailable { .. }
                 | Self::IndexSchemaUpgradeRequired { .. }
                 | Self::SessionNotFound { .. }
+                | Self::AnchorNotFound(_)
                 | Self::IndexFailure { .. }
         )
     }
@@ -259,6 +309,14 @@ impl AppError {
                 native_session_id,
                 db_path,
                 retry_argv,
+            ),
+            Self::AnchorNotFound(payload) => self.anchor_not_found_envelope(
+                &payload.session_ref,
+                &payload.source_id,
+                &payload.native_session_id,
+                &payload.query,
+                &payload.matched_profile_fields,
+                &payload.read_page_argv,
             ),
             Self::ColdRoot { message }
             | Self::InvalidSelector { message, .. }
@@ -344,6 +402,51 @@ impl AppError {
                         "label": "retry read command",
                         "recommended": false,
                         "argv": retry_argv,
+                    }
+                ]
+            }
+        })
+    }
+
+    fn anchor_not_found_envelope(
+        &self,
+        session_ref: &str,
+        source_id: &str,
+        native_session_id: &str,
+        query: &str,
+        matched_profile_fields: &[String],
+        read_page_argv: &[String],
+    ) -> Value {
+        let hint = if matched_profile_fields.is_empty() {
+            "No message in this session matched the query. This can happen when the query targets session-level fields or when the session projection lacks the term; read the session projection or refine the query to message terms."
+                .to_owned()
+        } else {
+            format!(
+                "The query matched only session-level fields ({}) of this session. There is no message anchor for it; read the session projection (read-page) or refine the query to terms that appear in messages.",
+                matched_profile_fields.join(", ")
+            )
+        };
+        json!({
+            "code": self.code(),
+            "message": self.message(),
+            "sessionRef": session_ref,
+            "sourceId": source_id,
+            "nativeSessionId": native_session_id,
+            "query": query,
+            "matchedProfileFields": matched_profile_fields,
+            "hint": hint,
+            "nextAction": {
+                "kind": "read_session_projection",
+                "reason": "anchor_not_found",
+                "steps": [
+                    format!("Read the session projection of {session_ref} with read-page to locate the evidence manually."),
+                    "Refine the query to terms that appear in messages and retry read-range."
+                ],
+                "commands": [
+                    {
+                        "label": "read session projection",
+                        "recommended": true,
+                        "argv": read_page_argv,
                     }
                 ]
             }

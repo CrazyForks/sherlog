@@ -10,11 +10,13 @@ use crate::index::{
     SourceFileState,
 };
 use crate::model::{
-    CoverageInventoryStatus, CoverageRecord, StatusContext, StatusIndex, StatusSummary,
+    CoverageInventoryStatus, CoverageRecord, CoverageStaleReason, InventoryStaleReason,
+    RecommendedAction, StatusContext, StatusIndex, StatusSummary,
 };
 use crate::selector::{Selector, selector_implies};
 use crate::sources::{
-    CachedSourceMetadata, ProjectionCheckpoint, SourceCatalog, SourceMetadataCache, SourceScan,
+    CachedSourceMetadata, FileIdentity, ProjectionCheckpoint, SourceCatalog, SourceMetadataCache,
+    SourceScan, prefix_sha256,
 };
 
 use super::map_index_error;
@@ -29,12 +31,12 @@ pub(super) fn collect_status(
     let base_selector = all_selector(source, args.root.as_deref(), paths, cwd)?;
     let requested_selector = status_selector(args, source, paths, cwd)?;
     let db_path = resolve_lexical(&args.database.db, cwd);
-    let (index, records, cache) = match IndexReader::open(&db_path) {
+    let (index, records, proofs) = match IndexReader::open(&db_path) {
         Ok(reader) => {
             let stats = reader
                 .stats(source)
                 .map_err(|error| map_index_error(error, &db_path, cwd, paths))?;
-            let cache = if reader.layout() == IndexLayout::V8
+            let proofs = if reader.layout() == IndexLayout::V8
                 && reader.metadata().coverage_epoch == COVERAGE_EPOCH
             {
                 let mut states = Vec::new();
@@ -50,9 +52,9 @@ pub(super) fn collect_status(
                             .map_err(|error| map_index_error(error, &db_path, cwd, paths))?,
                     );
                 }
-                metadata_cache(&states)
+                stored_file_proofs(&states)
             } else {
-                SourceMetadataCache::default()
+                HashMap::new()
             };
             (
                 StatusIndex {
@@ -65,17 +67,15 @@ pub(super) fn collect_status(
                     last_sync_at: stats.last_sync_at,
                 },
                 stats.coverage,
-                cache,
+                proofs,
             )
         }
-        Err(IndexError::NotFound(_)) => (
-            empty_index_status(),
-            Vec::new(),
-            SourceMetadataCache::default(),
-        ),
+        Err(IndexError::NotFound(_)) => (empty_index_status(), Vec::new(), HashMap::new()),
         Err(error) => return Err(map_index_error(error, &db_path, cwd, paths)),
     };
 
+    let cache =
+        SourceMetadataCache::from_entries(proofs.values().map(StoredFileProof::cache_entry));
     let catalog = SourceCatalog;
     let mut scans = HashMap::<String, SourceScan>::new();
     let base_scan = scan_cached(&catalog, &cache, &base_selector, &mut scans)?;
@@ -96,7 +96,8 @@ pub(super) fn collect_status(
     };
     let mut evaluated = Vec::with_capacity(audit_records.len());
     for record in audit_records {
-        evaluated.push(evaluate_record(record, &catalog, &cache, &mut scans)?);
+        let scan = scan_cached(&catalog, &cache, &record.selector, &mut scans)?;
+        evaluated.push(evaluate_record(record, scan, &proofs)?);
     }
     let coverage = if args.inventory {
         evaluated.clone()
@@ -105,10 +106,17 @@ pub(super) fn collect_status(
     };
     let requested_coverage = if let Some(selector) = requested_selector {
         let requested_scan = scan_cached(&catalog, &cache, &selector, &mut scans)?;
-        Some(evaluate_requested_coverage(
-            &requested_scan.snapshot,
-            &evaluated,
-        ))
+        let mut status = evaluate_requested_coverage(&requested_scan.snapshot, &evaluated);
+        // A same-file-set content change is only safe to keep as an advisory
+        // "query anyway" when every changed file proves append-only against
+        // its persisted prefix digest. Truncate, prefix rewrite, and same-size
+        // rewrites break the proof and must recommend a same-scope sync.
+        if status.stale_reason == CoverageStaleReason::SourceContentChanged
+            && !all_changed_files_prove_append(requested_scan, &proofs)
+        {
+            status.recommended_action = RecommendedAction::Sync;
+        }
+        Some(status)
     } else {
         None
     };
@@ -126,6 +134,107 @@ pub(super) fn collect_status(
         coverage,
         requested_coverage,
     })
+}
+
+/// Per-file persisted proof surface used to classify content changes.
+///
+/// Only states whose epochs and checkpoint survive the same validation as the
+/// sync-side metadata cache participate; everything else is treated as
+/// unprovable, which is the conservative direction.
+#[derive(Clone, Debug)]
+struct StoredFileProof {
+    source_id: crate::identity::SourceId,
+    file_path: String,
+    mtime_ns: i128,
+    size: u64,
+    identity: FileIdentity,
+    path_date: Option<String>,
+    cwd: String,
+    accepted_fingerprint: String,
+    indexed_bytes: u64,
+    boundary_digest: String,
+}
+
+impl StoredFileProof {
+    fn cache_entry(&self) -> CachedSourceMetadata {
+        CachedSourceMetadata {
+            source_id: self.source_id,
+            file_path: self.file_path.clone().into(),
+            mtime_ns: self.mtime_ns,
+            size: self.size,
+            file_identity: self.identity.clone(),
+            path_date: self.path_date.clone(),
+            cwd: self.cwd.clone(),
+            accepted_fingerprint: self.accepted_fingerprint.clone(),
+        }
+    }
+}
+
+fn stored_file_proofs(states: &[SourceFileState]) -> HashMap<String, StoredFileProof> {
+    states
+        .iter()
+        .filter_map(|state| {
+            if state.projection_epoch != PROJECTION_EPOCH
+                || state.analyzer_epoch != ANALYZER_EPOCH
+                || state.coverage_epoch != COVERAGE_EPOCH
+            {
+                return None;
+            }
+            let checkpoint = state
+                .reducer_checkpoint
+                .as_deref()
+                .and_then(|value| serde_json::from_slice::<ProjectionCheckpoint>(value).ok())?;
+            if checkpoint.source_id != state.source_id {
+                return None;
+            }
+            let mtime_ns = i128::from(state.mtime_ns.filter(|value| *value > 0)?);
+            Some((
+                state.file_path.clone(),
+                StoredFileProof {
+                    source_id: state.source_id,
+                    file_path: state.file_path.clone(),
+                    mtime_ns,
+                    size: state.size,
+                    identity: checkpoint.file_identity,
+                    path_date: state.path_date.clone(),
+                    cwd: state.cwd.clone(),
+                    accepted_fingerprint: state.extra_fingerprint.clone(),
+                    indexed_bytes: state.indexed_bytes,
+                    boundary_digest: state.boundary_digest.clone(),
+                },
+            ))
+        })
+        .collect()
+}
+
+/// True when every file that changed since the stored state proves append-only:
+/// the current file is at least as large, and its persisted indexed prefix
+/// still hashes to the stored boundary digest.
+fn all_changed_files_prove_append(
+    scan: &SourceScan,
+    proofs: &HashMap<String, StoredFileProof>,
+) -> bool {
+    for file in &scan.files {
+        let Some(proof) = proofs.get(file.file_path.to_string_lossy().as_ref()) else {
+            continue;
+        };
+        if file.mtime_ns == proof.mtime_ns
+            && file.size == proof.size
+            && file.identity == proof.identity
+        {
+            continue;
+        }
+        if file.size < proof.size || proof.boundary_digest.is_empty() {
+            return false;
+        }
+        let Ok(digest) = prefix_sha256(&file.file_path, proof.indexed_bytes) else {
+            return false;
+        };
+        if digest != proof.boundary_digest {
+            return false;
+        }
+    }
+    true
 }
 
 fn cache_selectors(
@@ -149,42 +258,18 @@ fn cache_selectors(
         .collect()
 }
 
-fn metadata_cache(states: &[SourceFileState]) -> SourceMetadataCache {
-    SourceMetadataCache::from_entries(states.iter().filter_map(|state| {
-        if state.projection_epoch != PROJECTION_EPOCH
-            || state.analyzer_epoch != ANALYZER_EPOCH
-            || state.coverage_epoch != COVERAGE_EPOCH
-        {
-            return None;
-        }
-        let checkpoint = state
-            .reducer_checkpoint
-            .as_deref()
-            .and_then(|value| serde_json::from_slice::<ProjectionCheckpoint>(value).ok())?;
-        if checkpoint.source_id != state.source_id {
-            return None;
-        }
-        Some(CachedSourceMetadata {
-            source_id: state.source_id,
-            file_path: state.file_path.clone().into(),
-            mtime_ns: i128::from(state.mtime_ns.filter(|value| *value > 0)?),
-            size: state.size,
-            file_identity: checkpoint.file_identity,
-            path_date: state.path_date.clone(),
-            cwd: state.cwd.clone(),
-            accepted_fingerprint: state.extra_fingerprint.clone(),
-        })
-    }))
-}
-
 fn evaluate_record(
     record: &CoverageRecord,
-    catalog: &SourceCatalog,
-    cache: &SourceMetadataCache,
-    scans: &mut HashMap<String, SourceScan>,
+    scan: &SourceScan,
+    proofs: &HashMap<String, StoredFileProof>,
 ) -> Result<CoverageInventoryStatus, AppError> {
-    let scan = scan_cached(catalog, cache, &record.selector, scans)?;
-    Ok(evaluate_coverage_record(record, &scan.snapshot))
+    let mut status = evaluate_coverage_record(record, &scan.snapshot);
+    if status.stale_reason == InventoryStaleReason::SourceContentChanged
+        && !all_changed_files_prove_append(scan, proofs)
+    {
+        status.advisory = false;
+    }
+    Ok(status)
 }
 
 fn scan_cached<'a>(
