@@ -120,6 +120,7 @@
       font-family: var(--mono);
       font-size: 0.9em;
       color: var(--code-fg);
+      overflow-wrap: anywhere;
     }
 
     pre {
@@ -130,7 +131,9 @@
       font-family: var(--mono);
       font-size: 13px;
       line-height: 1.7;
-      overflow-x: auto;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      overflow-x: hidden;
       margin-bottom: 8px;
       border: 1px solid var(--border);
     }
@@ -175,7 +178,9 @@
   <main>
     <section>
       <h2><span class="en">1. Update the CLI</span><span class="zh">1. 更新 CLI</span></h2>
-      <pre><code>curl -fsSL https://github.com/catoncat/sherlog/releases/latest/download/install.sh | sh</code></pre>
+      <pre><code>curl -fsSL \
+  https://github.com/catoncat/sherlog/releases/latest/download/install.sh \
+  | sh</code></pre>
       <p><span class="en">or</span><span class="zh">或</span> <code>brew install https://github.com/catoncat/sherlog/releases/latest/download/sherlog.rb</code></p>
     </section>
 
