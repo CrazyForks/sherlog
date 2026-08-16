@@ -295,7 +295,8 @@
       </div>
       <div class="install-label" style="margin-top: 20px;"><span class="en">or Homebrew</span><span class="zh">或 Homebrew</span></div>
       <div class="cmd">
-        <pre><code>brew install https://github.com/catoncat/sherlog/releases/download/v0.5.1/sherlog.rb</code></pre>
+        <pre><code>brew install \
+  https://github.com/catoncat/sherlog/releases/download/v0.5.1/sherlog.rb</code></pre>
         <button type="button" class="copy-btn" onclick="copyCmd(this)" aria-label="Copy command">Copy</button>
       </div>
 
@@ -390,7 +391,9 @@ shlog read-range &lt;sessionRef&gt; --seq &lt;matchSeq&gt;   # read the surround
 
   <script>
     async function copyCmd(button) {
-      const text = button.parentElement.querySelector('code').textContent;
+      const text = button.parentElement.querySelector('code').textContent
+        .replace(/\\\s*\n\s*/g, ' ')
+        .trim();
       try {
         await navigator.clipboard.writeText(text);
       } catch (_) {
