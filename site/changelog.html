@@ -191,26 +191,39 @@
   <header>
     <h1>changelog</h1>
     <div class="lede">
-      <span class="en">Release history and native-cutover status for Sherlog. Published artifacts live on <a href="https://github.com/catoncat/sherlog/releases">GitHub Releases</a>.</span>
-      <span class="zh">Sherlog 的版本历史与原生切换状态。已发布产物见 <a href="https://github.com/catoncat/sherlog/releases">GitHub Releases</a>。</span>
+      <span class="en">Release history for Sherlog. Published artifacts live on <a href="https://github.com/catoncat/sherlog/releases">GitHub Releases</a>.</span>
+      <span class="zh">Sherlog 的版本历史。已发布产物见 <a href="https://github.com/catoncat/sherlog/releases">GitHub Releases</a>。</span>
     </div>
   </header>
 
   <main>
     <section>
       <div class="release-header">
-        <span class="release-version">v0.5.0</span>
-        <span class="release-date">unreleased</span>
+        <span class="release-version">v0.5.1</span>
+        <span class="release-date">2026-08-16</span>
       </div>
       <ul class="en">
-        <li><strong>Standalone Rust runtime.</strong> The production CLI in the current source tree is a native Rust binary with bundled SQLite/FTS5. Node.js and the TypeScript implementation remain only as development contract/evaluation oracles.</li>
-        <li><strong>Native distribution is source-ready.</strong> Release automation builds and tests macOS arm64/x64 and Linux x64 GNU archives, with SHA-256 checksums, SPDX SBOMs, GitHub attestations, a no-Node installer, and a rendered Homebrew formula.</li>
-        <li><strong>Not published yet.</strong> No native tag or native assets have been released from this cutover. Build the current checkout with <code>cargo build --release --locked -p sherlog-cli --bin shlog</code>; installer URLs become live only after the next native tag is published.</li>
+        <li><strong>Single-branch query surface.</strong> v7 is now an import format only: content commands fail closed on a legacy index with a typed <code>index_schema_upgrade_required</code> whose nextAction is one explicit <code>shlog sync</code>. <code>status</code> reports <code>index.layout</code> (<code>native_v8</code> / <code>legacy_v7</code> / <code>none</code>) as the upgrade nudge.</li>
+        <li><strong>Legacy-data drift hardening.</strong> Migration accepts REAL <code>raw_file_mtime</code> values and normalizes invalid UTF-8 text (lone UTF-16 surrogates from old JavaScript writers) lossily; verification digests match the normalized projection. Real-world migration: 7,786 sessions / 360k messages, 0 errors.</li>
       </ul>
       <ul class="zh">
-        <li><strong>Standalone Rust runtime。</strong>当前源码树中的生产 CLI 已是内置 SQLite/FTS5 的原生 Rust binary。Node.js 与 TypeScript 实现只保留为开发阶段的 contract / eval oracle。</li>
-        <li><strong>原生分发源码已就绪。</strong>Release automation 会分别构建并测试 macOS arm64/x64 与 Linux x64 GNU archive，同时生成 SHA-256、SPDX SBOM、GitHub attestation、无需 Node 的 installer，以及带真实校验值的 Homebrew formula。</li>
-        <li><strong>尚未发布。</strong>这次切换还没有创建 native tag 或发布 native assets。当前请用 <code>cargo build --release --locked -p sherlog-cli --bin shlog</code> 构建 checkout；installer URL 只会在下一个 native tag 发布后生效。</li>
+        <li><strong>查询面单分支。</strong>v7 只作为 import 格式：legacy 索引上的内容命令 fail-closed，返回 typed <code>index_schema_upgrade_required</code>，nextAction 指向一次显式 <code>shlog sync</code>。升级提示由 <code>status</code> 的 <code>index.layout</code>（<code>native_v8</code> / <code>legacy_v7</code> / <code>none</code>）承担。</li>
+        <li><strong>legacy 数据漂移加固。</strong>迁移接受 REAL 型 <code>raw_file_mtime</code>，并把非法 UTF-8 文本（旧 JS writer 写出的孤立 UTF-16 surrogate）归一化处理；verify digest 与归一化后的投影一致。真实库迁移：7,786 sessions / 360k messages，0 errors。</li>
+      </ul>
+    </section>
+
+    <section>
+      <div class="release-header">
+        <span class="release-version">v0.5.0</span>
+        <span class="release-date">2026-08-16</span>
+      </div>
+      <ul class="en">
+        <li><strong>First native release.</strong> The production CLI is a standalone Rust binary with bundled SQLite/FTS5; Node.js and TypeScript remain only as development oracles. macOS arm64/x64 and Linux x64 GNU archives ship with SHA-256 checksums, SPDX SBOMs, GitHub attestations, a no-Node installer, and a rendered Homebrew formula.</li>
+        <li><strong>Native index v8.</strong> <code>source_files + sessions + documents + documents_fts + coverage + cold_roots</code> become the single SQLite truth; v7 indexes are copied, verified, and atomically migrated by an explicit sync with a retained <code>.v7.bak</code> backup. Old writers fail closed.</li>
+      </ul>
+      <ul class="zh">
+        <li><strong>首个原生发布。</strong>生产 CLI 为内置 SQLite/FTS5 的 standalone Rust binary；Node.js / TypeScript 仅保留为开发 oracle。macOS arm64/x64 与 Linux x64 GNU archive 附带 SHA-256、SPDX SBOM、GitHub attestation、无需 Node 的 installer 与 Homebrew formula。</li>
+        <li><strong>原生 v8 索引。</strong><code>source_files + sessions + documents + documents_fts + coverage + cold_roots</code> 成为 SQLite 唯一真相；v7 索引由显式 sync copy/verify/atomic 迁移并保留 <code>.v7.bak</code> 备份，旧 writer fail-closed。</li>
       </ul>
     </section>
 
@@ -404,8 +417,8 @@
   </main>
 
   <footer>
-    <span class="en">Standalone Rust source &middot; native release pending &middot; historical npm releases retained below</span>
-    <span class="zh">Standalone Rust 源码 &middot; 原生发布待创建 &middot; 下方保留历史 npm 版本记录</span>
+    <span class="en">Standalone Rust source &middot; native v0.5.1 published &middot; historical npm releases retained below</span>
+    <span class="zh">Standalone Rust 源码 &middot; 原生 v0.5.1 已发布 &middot; 下方保留历史 npm 版本记录</span>
   </footer>
 
   <script>

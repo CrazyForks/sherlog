@@ -3,18 +3,18 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sherlog — agent session search</title>
-  <meta name="description" content="Search local Codex, Claude Code, and Pi session history with a standalone Rust CLI.">
+  <title>Sherlog — local memory for coding agents</title>
+  <meta name="description" content="Search Codex, Claude Code, and Pi session history with a standalone Rust CLI. No Node.js, no cloud.">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
 
   <!-- Open Graph / Twitter Card -->
   <meta property="og:type" content="website">
-  <meta property="og:title" content="Sherlog — agent session search">
-  <meta property="og:description" content="Search local Codex, Claude Code, and Pi session history. Standalone Rust, purely local, and built for Agents.">
+  <meta property="og:title" content="Sherlog — local memory for coding agents">
+  <meta property="og:description" content="Search Codex, Claude Code, and Pi session history. Fast, purely local, built for agents.">
   <meta property="og:url" content="https://sherlog.net/">
   <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="Sherlog — agent session search">
-  <meta name="twitter:description" content="Search local Codex, Claude Code, and Pi session history. Standalone Rust, purely local, and built for Agents.">
+  <meta name="twitter:title" content="Sherlog — local memory for coding agents">
+  <meta name="twitter:description" content="Search Codex, Claude Code, and Pi session history. Fast, purely local, built for agents.">
 
   <!-- Apply theme + lang before paint to avoid FOUC -->
   <script>
@@ -286,7 +286,7 @@
       border-color: var(--fg);
     }
 
-    @media (hover: none), (pointer: coarse) {
+    @media (hover: none), (pointer: coarse), (max-width: 680px) {
       .copy-btn {
         opacity: 1;
       }
@@ -297,7 +297,7 @@
 <body>
 
   <div class="top-controls">
-    <a href="/changelog.html"><span class="en">Changelog</span><span class="zh">更新日志</span></a>
+    <a href="/changelog"><span class="en">Changelog</span><span class="zh">更新日志</span></a>
     <a href="https://github.com/catoncat/sherlog">GitHub</a>
     <a href="https://github.com/catoncat/sherlog/releases"><span class="en">Releases</span><span class="zh">发布</span></a>
     <span class="lang-toggle">
@@ -310,54 +310,75 @@
   <header>
     <h1>sherlog</h1>
     <div class="lede">
-      <span class="en">Search your local Codex, Claude Code, and Pi session history.<br>Standalone Rust, purely local, and built for Agents.</span>
-      <span class="zh">极速搜索本地 Codex、Claude Code 和 Pi 历史对话。<br>Standalone Rust，纯本地运行，专为 Agent 打造。</span>
+      <span class="en">The local memory layer for coding agents.<br>Search Codex, Claude Code, and Pi session history from your terminal — no cloud, no embeddings, no docs tax.</span>
+      <span class="zh">给 Coding Agent 用的本地记忆层。<br>在终端里极速搜索 Codex、Claude Code 和 Pi 的历史对话——不上云、不用向量库、不用写文档。</span>
     </div>
   </header>
 
   <div class="install-group">
     <p>
-      <span class="en"><strong>Native cutover status:</strong> the Rust source is ready, but no native release assets have been published yet. Build from source now; the installer becomes live with the next native tag.</span>
-      <span class="zh"><strong>原生切换状态：</strong>Rust 源码已经就绪，但原生 release assets 尚未发布。当前请从源码构建；installer 会在下一个 native tag 发布后生效。</span>
+      <span class="en"><strong>Latest native release: v0.5.1.</strong> macOS arm64/x64 · Linux x64 GNU. No Node.js, no build from source, no sudo.</span>
+      <span class="zh"><strong>最新原生版本：v0.5.1。</strong>macOS arm64/x64 · Linux x64 GNU。无需 Node.js，无需从源码编译，无需 sudo。</span>
     </p>
-    <div class="install-label"><span class="en">1. Build current source now</span><span class="zh">1. 现在从源码构建</span></div>
-    <div class="cmd">
-      <pre><code>git clone https://github.com/catoncat/sherlog.git &amp;&amp; cd sherlog
-cargo build --release --locked -p sherlog-cli --bin shlog
-./target/release/shlog --help</code></pre>
-      <button type="button" class="copy-btn" onclick="copyCmd(this)" aria-label="Copy command">Copy</button>
-    </div>
-    <div class="install-label" style="margin-top: 20px;"><span class="en">2. After the next native tag: install latest without Node.js</span><span class="zh">2. 下一个 native tag 发布后：无需 Node.js 安装 latest</span></div>
+    <div class="install-label"><span class="en">1. Install the native CLI</span><span class="zh">1. 安装原生 CLI</span></div>
     <div class="cmd">
       <pre><code>curl -fsSL https://github.com/catoncat/sherlog/releases/latest/download/install.sh | sh</code></pre>
       <button type="button" class="copy-btn" onclick="copyCmd(this)" aria-label="Copy command">Copy</button>
     </div>
-    <div class="install-label" style="margin-top: 20px;"><span class="en">3. Pin a published native version (replace X.Y.Z)</span><span class="zh">3. 固定已发布的原生版本（替换 X.Y.Z）</span></div>
+    <div class="install-label" style="margin-top: 20px;"><span class="en">2. Or via Homebrew (macOS / Linux x64)</span><span class="zh">2. 或用 Homebrew（macOS / Linux x64）</span></div>
     <div class="cmd">
-      <pre><code>curl -fsSL https://github.com/catoncat/sherlog/releases/download/vX.Y.Z/install.sh \
-  | SHERLOG_VERSION=X.Y.Z sh</code></pre>
+      <pre><code>brew install https://github.com/catoncat/sherlog/releases/download/v0.5.1/sherlog.rb</code></pre>
       <button type="button" class="copy-btn" onclick="copyCmd(this)" aria-label="Copy command">Copy</button>
     </div>
-    <div class="install-label" style="margin-top: 20px;"><span class="en">4. Optional: install the Agent Skill separately</span><span class="zh">4. 可选：单独安装 Agent Skill</span></div>
+    <div class="install-label" style="margin-top: 20px;"><span class="en">3. Pin a specific version (optional)</span><span class="zh">3. 固定版本（可选）</span></div>
+    <div class="cmd">
+      <pre><code>curl -fsSL https://github.com/catoncat/sherlog/releases/download/v0.5.1/install.sh \
+  | SHERLOG_VERSION=0.5.1 sh</code></pre>
+      <button type="button" class="copy-btn" onclick="copyCmd(this)" aria-label="Copy command">Copy</button>
+    </div>
+    <div class="install-label" style="margin-top: 20px;"><span class="en">4. Install the Agent Skill (optional)</span><span class="zh">4. 安装 Agent Skill（可选）</span></div>
     <div class="cmd">
       <pre><code>npx skills add -g catoncat/sherlog</code></pre>
       <button type="button" class="copy-btn" onclick="copyCmd(this)" aria-label="Copy command">Copy</button>
     </div>
     <p style="margin-top: 16px;">
       <span class="en">The external skill installer is separate from the CLI. Sherlog's production runtime does not require Node.js.</span>
-      <span class="zh">外部 skill installer 与 CLI 相互独立；Sherlog 的生产 runtime 不依赖 Node.js。</span>
+      <span class="zh">外部 skill installer 与 CLI 相互独立；Sherlog 的生产运行时不需要 Node.js。</span>
+    </p>
+    <p>
+      <span class="en"><strong>Upgrading from 0.4.x?</strong> Run <code>shlog sync</code> once. The legacy index migrates to the native format automatically: a <code>.v7.bak</code> backup is kept, coverage is rebuilt for the synced scope, and the old 0.4.4 writer no longer touches the index. Content commands point at this migration with a typed <code>index_schema_upgrade_required</code> nextAction.</span>
+      <span class="zh"><strong>从 0.4.x 升级？</strong>跑一次 <code>shlog sync</code> 即可。旧索引会自动迁移为原生格式：保留 <code>.v7.bak</code> 备份、同步范围内 coverage 重建、旧 0.4.4 writer 不再写入。内容命令会以 typed <code>index_schema_upgrade_required</code> + nextAction 指路这次迁移。</span>
     </p>
   </div>
 
   <main>
     <section>
       <h2>
+        <span class="en">Quick Start</span>
+        <span class="zh">快速开始</span>
+      </h2>
+      <p>
+        <span class="en">Build the index once, find the session that matters, then read the surrounding dialogue.</span>
+        <span class="zh">先建一次索引，找到关键会话，再阅读上下文对话。</span>
+      </p>
+      <pre><code># 1. Build the local index once
+shlog sync
+
+# 2. Find the session that matters
+shlog find "JWT server sessions" --json
+
+# 3. Read the surrounding context
+shlog read-range &lt;sessionRef&gt; --seq 18</code></pre>
+    </section>
+
+    <section>
+      <h2>
         <span class="en">Why not Embeddings?</span>
         <span class="zh">为什么不用 Embedding？</span>
       </h2>
       <p>
-        <span class="en"><strong>Because this is built for Agents.</strong> Embeddings try to do semantic reasoning for humans, but an Agent is <em>already</em> a world-class reasoning engine. Chunking logs into a vector database destroys the causal timeline (Command &rarr; Error &rarr; Fix). <code>Sherlog</code> simply uses fast full-text search (FTS) to drop a bookmark, and lets the Agent use its own intelligence to read the surrounding timeline.</span>
-        <span class="zh"><strong>因为这是给 Agent 用的。</strong>Embedding 试图替人类做语义理解，但 Agent 本身就是最顶级的语义引擎。把对话切碎塞进向量库，会彻底破坏“执行命令 &rarr; 报错 &rarr; 修复”的因果时间线。<code>Sherlog</code> 只用极速的 FTS 全文检索提供锚点，把阅读和推理的权力完整交还给 Agent。</span>
+        <span class="en"><strong>Because agents are already the semantic engine.</strong> Embeddings try to do semantic thinking for humans, but an Agent is a world-class reasoner. Chunking logs into a vector database destroys the causal timeline (Command &rarr; Error &rarr; Fix). <code>Sherlog</code> uses fast full-text search to drop a bookmark in the timeline, then lets the Agent read the surrounding conversation itself.</span>
+        <span class="zh"><strong>因为 Agent 本身就是最强的语义引擎。</strong>Embedding 试图替人类做语义理解，但 Agent 本来就是顶级推理器。把对话切碎塞进向量库，会破坏“执行命令 &rarr; 报错 &rarr; 修复”的因果时间线。<code>Sherlog</code> 用极速全文检索在时间线上放下锚点，把上下文阅读交还给 Agent。</span>
       </p>
     </section>
 
@@ -367,8 +388,8 @@ cargo build --release --locked -p sherlog-cli --bin shlog
         <span class="zh">为什么不用 ripgrep？</span>
       </h2>
       <p>
-        <span class="en"><code>rg</code> dumps raw JSONL lines. Agents need conversational context, not unparsed strings. <code>Sherlog</code> understands the session structure: it finds the exact message, then provides primitives (<code>read-range</code>, <code>read-page</code>) for the Agent to page through the surrounding dialogue cleanly.</span>
-        <span class="zh"><code>rg</code> 只能搜出杂乱无章的单行 JSONL 文本。而 Agent 需要的是“对话上下文”，不是干瘪的字符串。<code>Sherlog</code> 真正理解会话结构：它先精确定位 (<code>find</code>)，再让 Agent 像人一样干净地翻阅上下文对话 (<code>read-range</code>, <code>read-page</code>)。</span>
+        <span class="en"><code>rg</code> finds raw JSONL lines. Agents need conversational context, not unparsed strings. <code>Sherlog</code> understands session structure: it finds the exact message, then provides <code>read-range</code> and <code>read-page</code> for the Agent to page through the dialogue cleanly.</span>
+        <span class="zh"><code>rg</code> 只能翻出杂乱的原生 JSONL 行；Agent 需要的是对话上下文。<code>Sherlog</code> 真正理解会话结构：先精确定位消息，再用 <code>read-range</code> / <code>read-page</code> 让 Agent 干净地翻阅上下文。</span>
       </p>
     </section>
 
@@ -378,8 +399,8 @@ cargo build --release --locked -p sherlog-cli --bin shlog
         <span class="zh">零文档整理负担</span>
       </h2>
       <p>
-        <span class="en">You don't need to stop and write clean notes. The raw history of how you and your agent solved a problem last time is directly searchable next time.</span>
-        <span class="zh">不再需要停下手中的活去整理一份干净的文档或 Runbook。你和 Agent 解决上一个问题的原始对话过程，就是最直接的记忆，随时可供下次查阅。</span>
+        <span class="en">Your raw agent history is already the best runbook. Don’t stop to write clean notes. The conversation where you and your agent solved a problem last time is directly searchable next time.</span>
+        <span class="zh">你和 Agent 的历史对话，就是最好的 Runbook。不用停下来整理文档。上次怎么解决问题的，下次直接搜得到。</span>
       </p>
     </section>
 
@@ -389,66 +410,110 @@ cargo build --release --locked -p sherlog-cli --bin shlog
         <span class="zh">高度可组合的基础组件</span>
       </h2>
       <p>
-        <span class="en">You don't have to use <code>Sherlog</code> end-to-end. It's a CLI that outputs standard JSON. Use it to locate the exact session, then pipe it to <code>jq</code>, read the raw file, or pass the context to other tools like Mainline. It's a retrieval engine, not a walled garden.</span>
-        <span class="zh">你不必被 <code>Sherlog</code> 绑定到底。它是一个标准的 CLI，支持 JSON 输出。你可以用它找到目标会话的精确位置，然后用 <code>jq</code> 处理数据，直接读取原始文件，或者把召回的上下文交接给其他工具（如 Mainline）。它是一个底层的检索引擎，而不是一个封闭的生态。</span>
+        <span class="en">Sherlog is a retrieval primitive, not a walled garden. It outputs standard JSON. Pipe it to <code>jq</code>, read the raw file, or hand the context to other tools like Mainline.</span>
+        <span class="zh">Sherlog 是底层检索组件，不是封闭生态。它输出标准 JSON，可以接 <code>jq</code>、直接读原文，也可以把上下文交给 Mainline 等其它工具。</span>
       </p>
     </section>
 
     <section>
       <h2>
         <span class="en">How it works in practice</span>
-        <span class="zh">Agent 召回上下文示例</span>
+        <span class="zh">实际工作流示例</span>
       </h2>
       <p>
         <span class="en">When an Agent joins a new task, it searches past conversations to understand <em>why</em> decisions were made or <em>how</em> past workflows were executed.</span>
-        <span class="zh">当 Agent 接手任务时，它会搜索历史对话，来搞清楚当时的“架构决策背景”或是“具体的工作流”。</span>
+        <span class="zh">当 Agent 接手任务时，它会搜索历史对话，搞清楚当时的“架构决策背景”或“具体工作流”。</span>
       </p>
       
       <div class="en">
         <div class="install-label" style="margin-top: 24px;">Step 1: Recall Context</div>
-        <pre><code>$ shlog find "auth session migration"
+        <pre><code>$ shlog find "JWT server sessions" --json
 
 {
   "rank": 1,
-  "title": "Refactoring auth flow",
-  "matchSeq": 18,
-  "snippet": "Let's migrate from <mark>JWT</mark> to <mark>server sessions</mark>..."
+  "sourceId": "codex",
+  "sessionRef": "9f8e7d6c-...",
+  "title": "The current auth flow uses signed tokens.",
+  "matchSource": "message",
+  "matchSeq": 2,
+  "matchedFields": ["message"],
+  "snippet": "Let's migrate from &lt;mark&gt;JWT&lt;/mark&gt; to &lt;mark&gt;server sessions&lt;/mark&gt;. We can use Redis.",
+  "evidenceRead": {
+    "kind": "read-range",
+    "reason": "message_match",
+    "sessionRef": "9f8e7d6c-...",
+    "seq": 2,
+    "query": "JWT server sessions",
+    "before": 2,
+    "after": 2,
+    "command": {
+      "executable": "inherit",
+      "args": ["read-range", "9f8e7d6c-...", "--seq", "2", "--before", "2", "--after", "2", "--query", "JWT server sessions", "--source", "codex", "--db", "/Users/you/.local/state/shlog/index.sqlite", "--json"],
+      "sideEffect": "read_index"
+    }
+  }
 }</code></pre>
 
         <div class="install-label" style="margin-top: 24px;">Step 2: Progressive Read</div>
-        <pre><code>$ shlog read-range a1b2c3d4-0000-0000-0000-e5f6g7h8i9j0 --seq 18
+        <pre><code>$ shlog read-range 9f8e7d6c-... --seq 2
 
-# The Agent reads the surrounding dialogue to understand the context:
-[seq: 17] Agent: The JWT tokens are getting too large due to role-based claims.
-[seq: 18] User: Let's migrate from JWT to server sessions. We can use Redis.
-[seq: 19] Agent: Good idea. I'll update auth.middleware.ts to check Redis instead of verifying JWT signatures.</code></pre>
+shlog read-range 9f8e7d6c-...
+The current auth flow uses signed tokens. · /Users/you/project
+anchor=2 · range=0-4
+
+   [0] U The current auth flow uses signed tokens.
+   [1] A The JWT tokens are getting too large.
+&gt;&gt; [2] U Let's migrate from JWT to server sessions. We can use Redis.
+   [3] A Good idea. I'll update auth.middleware.ts to check Redis instead.</code></pre>
       </div>
 
       <div class="zh">
-        <div class="install-label" style="margin-top: 24px;">Step 1: 召回相关历史对话 (Recall Context)</div>
-        <pre><code>$ shlog find "权限 session 迁移"
+        <div class="install-label" style="margin-top: 24px;">Step 1: 召回相关历史对话</div>
+        <pre><code>$ shlog find "JWT 服务端 session" --json
 
 {
   "rank": 1,
-  "title": "重构登录逻辑",
-  "matchSeq": 18,
-  "snippet": "我们从 <mark>JWT</mark> 迁移到 <mark>服务端 session</mark> 吧..."
+  "sourceId": "codex",
+  "sessionRef": "9f8e7d6c-...",
+  "title": "当前登录流程使用签名 token。",
+  "matchSource": "message",
+  "matchSeq": 2,
+  "matchedFields": ["message"],
+  "snippet": "我们从 &lt;mark&gt;JWT&lt;/mark&gt; 迁移到 &lt;mark&gt;服务端 session&lt;/mark&gt; 吧。用 Redis 存。",
+  "evidenceRead": {
+    "kind": "read-range",
+    "reason": "message_match",
+    "sessionRef": "9f8e7d6c-...",
+    "seq": 2,
+    "query": "JWT 服务端 session",
+    "before": 2,
+    "after": 2,
+    "command": {
+      "executable": "inherit",
+      "args": ["read-range", "9f8e7d6c-...", "--seq", "2", "--before", "2", "--after", "2", "--query", "JWT 服务端 session", "--source", "codex", "--db", "/Users/you/.local/state/shlog/index.sqlite", "--json"],
+      "sideEffect": "read_index"
+    }
+  }
 }</code></pre>
 
-        <div class="install-label" style="margin-top: 24px;">Step 2: 渐进式翻阅对话 (Progressive Read)</div>
-        <pre><code>$ shlog read-range a1b2c3d4-0000-0000-0000-e5f6g7h8i9j0 --seq 18
+        <div class="install-label" style="margin-top: 24px;">Step 2: 渐进式翻阅对话</div>
+        <pre><code>$ shlog read-range 9f8e7d6c-... --seq 2
 
-# Agent 顺藤摸瓜，直接还原了当时的架构决策现场：
-[seq: 17] Agent: 发现权限字段太多，导致 JWT token 超载。
-[seq: 18] User: 我们从 JWT 迁移到服务端 session 吧。用 Redis 存。
-[seq: 19] Agent: 好主意。我这就去改 auth.middleware.ts，把 JWT 校验换成 Redis 查询。</code></pre>
+shlog read-range 9f8e7d6c-...
+当前登录流程使用签名 token。 · /Users/you/project
+anchor=2 · range=0-4
+
+   [0] U 当前登录流程使用签名 token。
+   [1] A 发现权限字段太多，JWT token 超载。
+&gt;&gt; [2] U 我们从 JWT 迁移到服务端 session 吧。用 Redis 存。
+   [3] A 好主意。我这就去改 auth.middleware.ts，把 JWT 校验换成 Redis 查询。</code></pre>
       </div>
     </section>
   </main>
 
   <footer>
-    <span class="en">Standalone Rust source &middot; macOS arm64/x64 &middot; Linux x64 GNU &middot; native release pending</span>
-    <span class="zh">Standalone Rust 源码 &middot; macOS arm64/x64 &middot; Linux x64 GNU &middot; 原生发布待创建</span>
+    <span class="en">Standalone Rust &middot; v0.5.1 native release &middot; macOS arm64/x64 &middot; Linux x64 GNU</span>
+    <span class="zh">Standalone Rust &middot; v0.5.1 原生发布 &middot; macOS arm64/x64 &middot; Linux x64 GNU</span>
   </footer>
 
   <script>

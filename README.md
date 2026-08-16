@@ -6,21 +6,18 @@
 
 ## Native Runtime Status
 
-The product runtime in this checkout is a standalone Rust CLI with bundled SQLite/FTS5. Node.js and the TypeScript implementation remain only as development contract/evaluation oracles; they are not part of the production runtime.
+The production runtime is a standalone Rust CLI with bundled SQLite/FTS5. Node.js and the TypeScript implementation remain only as development contract/evaluation oracles; they are not part of the production runtime.
 
-The native release pipeline and installer are source-ready, but **no native release tag or native assets have been published from this cutover yet**. Existing releases predate the Rust cutover. Until the next native tag is published, build the current source:
-
-```bash
-git clone https://github.com/catoncat/sherlog.git
-cd sherlog
-cargo build --release --locked -p sherlog-cli --bin shlog
-./target/release/shlog --help
-```
-
-After the next native tag is published, install the latest native release without Node.js:
+**v0.5.1 is the current native release.** Install the latest without Node.js:
 
 ```bash
 curl -fsSL https://github.com/catoncat/sherlog/releases/latest/download/install.sh | sh
+```
+
+Or via Homebrew (macOS / Linux x64):
+
+```bash
+brew install https://github.com/catoncat/sherlog/releases/download/v0.5.1/sherlog.rb
 ```
 
 To pin a published native version, replace `X.Y.Z` with that release number:
@@ -32,6 +29,8 @@ curl -fsSL https://github.com/catoncat/sherlog/releases/download/vX.Y.Z/install.
 
 The installer defaults to `$HOME/.local/bin`, verifies SHA-256, installs both `shlog` and the `sherlog` alias, and never invokes `sudo`. Set `SHERLOG_INSTALL_DIR` to choose another user-writable directory; replacing an existing command requires explicit `SHERLOG_FORCE=1`.
 
+**Upgrading from 0.4.x:** run `shlog sync` once. The legacy index migrates to v8 automatically — a `.v7.bak` backup is kept, coverage is rebuilt for the synced scope, and old 0.4.4 writers fail closed. Content commands on a not-yet-migrated index return a typed `index_schema_upgrade_required` nextAction pointing at that sync; `status` reports `index.layout: legacy_v7`.
+
 Install the optional agent skill separately. This uses the external `skills` package manager; it does not make the Sherlog CLI depend on Node.js:
 
 ```bash
@@ -40,8 +39,8 @@ npx skills add -g catoncat/sherlog
 
 ## Supported native targets
 
-The first native release publishes archives for macOS arm64, macOS x64, and
-Linux x64 GNU. Linux arm64, musl, and Windows archives are not declared yet.
+Native releases publish archives for macOS arm64, macOS x64, and Linux x64
+GNU. Linux arm64, musl, and Windows archives are not declared yet.
 Node.js >= 22.13 is required only when developing or running the TypeScript
 differential oracle in this repository; it is not a user runtime dependency.
 
