@@ -14,10 +14,18 @@ The production runtime is a standalone Rust CLI with bundled SQLite/FTS5. Node.j
 curl -fsSL https://github.com/catoncat/sherlog/releases/latest/download/install.sh | sh
 ```
 
-Or via Homebrew (macOS / Linux x64):
+Or via the Sherlog Homebrew tap (macOS / Linux x64):
 
 ```bash
-brew install https://github.com/catoncat/sherlog/releases/download/v0.5.1/sherlog.rb
+brew tap catoncat/sherlog
+brew install sherlog
+```
+
+Upgrade later with:
+
+```bash
+brew update
+brew upgrade sherlog
 ```
 
 To pin a published native version, replace `X.Y.Z` with that release number:

@@ -1,6 +1,28 @@
 # Failure Cookbook
 
-先判断失败发生在哪一层：CLI parse、index availability/schema、coverage proof、recall refine、content read、sync source proof、cold retention。不要把所有问题都用无条件 full sync 处理。
+唯一的错误恢复决策表。先判断失败发生在哪一层，再执行对应动作；不要把所有问题都用无条件 full sync 处理。
+
+| 错误 | 立即动作 |
+| --- | --- |
+| `shlog` 不存在 / 版本过旧 | 安装或升级 CLI（installer 或 Homebrew）；升级后跑一次 `shlog sync` |
+| `index_unavailable` | 执行 nextAction 里的 bootstrap sync；只有问题明确局限当前 repo 时才 `--cwd` |
+| `index_schema_upgrade_required` | 执行 nextAction 里闭包 `--db` 的 `shlog sync --json` 一次 |
+| `session_not_found` | 按 nextAction 先同范围 `status`；`recommendedAction=sync` 才同范围 sync，最后重试原 read |
+| `anchor_not_found` | 按 nextAction 回退 `read-page`，或改用消息中真实出现的 term |
+| zero results | 同 selector `status`；`query` 则 refine，`sync` 则同范围 sync 后重试 |
+| strict sync failure | 看 `errorDetails[]` 修 source 后同范围重试；不用 `--best-effort` 冒充 complete |
+| `invalid_cold_root` / cold prune failure | 修正 path 或恢复可读性；destructive prune fail-closed，不绕过 |
+
+## `shlog` 不存在或版本过旧
+
+```bash
+curl -fsSL https://github.com/catoncat/sherlog/releases/latest/download/install.sh | sh
+# 或：brew tap catoncat/sherlog && brew install sherlog
+# 已安装 tap 时升级：brew update && brew upgrade sherlog
+shlog sync
+```
+
+CLI 与 skill 分开安装；CLI 不依赖 Node.js。升级后跑一次 `shlog sync` 完成本地索引升级（自动保留备份）。
 
 ## `index_unavailable`
 
@@ -141,10 +163,3 @@ v8 registration truth 是 SQLite `cold_roots`；不要根据 JSON `configPath` �
 4. 回答时区分 index projection 与 raw transcript evidence。
 
 这是 agent-side fallback，不是 Sherlog query error recovery 的默认路径。
-
-## Source of truth
-
-- `rust/src/error.rs`
-- `rust/src/app/status.rs`
-- `rust/src/sync/`
-- `rust/src/migration/`

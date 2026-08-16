@@ -289,14 +289,16 @@
         <button type="button" class="copy-btn" onclick="copyCmd(this)" aria-label="Copy command">Copy</button>
       </div>
       <div class="install-label" style="margin-top: 20px;"><span class="en">2. CLI</span><span class="zh">2. CLI</span></div>
-      <div class="cmd">
-        <pre><code>curl -fsSL https://github.com/catoncat/sherlog/releases/latest/download/install.sh | sh</code></pre>
+      <div class="cmd" data-copy="curl -fsSL https://github.com/catoncat/sherlog/releases/latest/download/install.sh | sh">
+        <pre><code>curl -fsSL
+https://github.com/catoncat/sherlog/releases/latest/download/install.sh
+| sh</code></pre>
         <button type="button" class="copy-btn" onclick="copyCmd(this)" aria-label="Copy command">Copy</button>
       </div>
       <div class="install-label" style="margin-top: 20px;"><span class="en">or Homebrew</span><span class="zh">或 Homebrew</span></div>
-      <div class="cmd">
-        <pre><code>brew install \
-  https://github.com/catoncat/sherlog/releases/download/v0.5.1/sherlog.rb</code></pre>
+      <div class="cmd" data-copy="brew tap catoncat/sherlog&#10;brew install sherlog">
+        <pre><code>brew tap catoncat/sherlog
+brew install sherlog</code></pre>
         <button type="button" class="copy-btn" onclick="copyCmd(this)" aria-label="Copy command">Copy</button>
       </div>
 
@@ -307,10 +309,15 @@
         <span class="en">Quick start</span>
         <span class="zh">快速开始</span>
       </h2>
-      <div class="cmd">
-        <pre><code>shlog sync                                   # first install: index the default Codex root
-shlog find "JWT server sessions" --json      # recall the exact session
-shlog read-range &lt;sessionRef&gt; --seq &lt;matchSeq&gt;   # read the surrounding context</code></pre>
+      <div class="cmd" data-copy="shlog sync&#10;shlog find &quot;JWT server sessions&quot; --json&#10;shlog read-range &lt;sessionRef&gt; --seq &lt;matchSeq&gt;">
+        <pre><code># First install: index the default Codex root
+shlog sync
+
+# Recall the exact session
+shlog find "JWT server sessions" --json
+
+# Read the surrounding context
+shlog read-range &lt;sessionRef&gt; --seq &lt;matchSeq&gt;</code></pre>
         <button type="button" class="copy-btn" onclick="copyCmd(this)" aria-label="Copy command">Copy</button>
       </div>
     </section>
