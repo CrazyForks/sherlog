@@ -92,15 +92,12 @@
 
     .lang-toggle {
       display: inline-flex;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      overflow: hidden;
+      align-items: baseline;
+      gap: 4px;
     }
 
-    .lang-toggle button { padding: 3px 10px; line-height: 1.4; }
-    .lang-toggle button + button { border-left: 1px solid var(--border); }
-    .lang-toggle button.active { background: var(--fg); color: var(--bg); }
-    .lang-toggle button.active:hover { color: var(--bg); }
+    .lang-toggle button { padding: 0; line-height: inherit; }
+    .lang-toggle button.active { color: var(--fg); }
 
     .theme-btn { font-size: 16px; line-height: 1; }
 
@@ -179,11 +176,13 @@
 
   <div class="top-controls">
     <a href="/">Home</a>
+    <a href="/upgrade"><span class="en">Upgrade</span><span class="zh">升级迁移</span></a>
     <a href="https://github.com/catoncat/sherlog">GitHub</a>
     <a href="https://github.com/catoncat/sherlog/releases"><span class="en">Releases</span><span class="zh">发布</span></a>
     <span class="lang-toggle">
-      <button type="button" onclick="setLang('en')" id="btn-en" aria-label="English">EN</button>
       <button type="button" onclick="setLang('zh')" id="btn-zh" aria-label="中文">中</button>
+      <span aria-hidden="true">/</span>
+      <button type="button" onclick="setLang('en')" id="btn-en" aria-label="English">EN</button>
     </span>
     <button type="button" onclick="toggleTheme()" id="btn-theme" class="theme-btn" aria-label="Toggle theme">◐</button>
   </div>
@@ -203,12 +202,12 @@
         <span class="release-date">2026-08-16</span>
       </div>
       <ul class="en">
-        <li><strong>Single-branch query surface.</strong> v7 is now an import format only: content commands fail closed on a legacy index with a typed <code>index_schema_upgrade_required</code> whose nextAction is one explicit <code>shlog sync</code>. <code>status</code> reports <code>index.layout</code> (<code>native_v8</code> / <code>legacy_v7</code> / <code>none</code>) as the upgrade nudge.</li>
-        <li><strong>Legacy-data drift hardening.</strong> Migration accepts REAL <code>raw_file_mtime</code> values and normalizes invalid UTF-8 text (lone UTF-16 surrogates from old JavaScript writers) lossily; verification digests match the normalized projection. Real-world migration: 7,786 sessions / 360k messages, 0 errors.</li>
+        <li><strong>Guided upgrades for older indexes.</strong> Search commands on an older local index point to one <code>shlog sync</code> that migrates it with a backup; <code>status</code> reports the index format before you act.</li>
+        <li><strong>More tolerant migration.</strong> Older local data with historical formatting quirks now upgrades cleanly instead of stopping the whole run.</li>
       </ul>
       <ul class="zh">
-        <li><strong>查询面单分支。</strong>v7 只作为 import 格式：legacy 索引上的内容命令 fail-closed，返回 typed <code>index_schema_upgrade_required</code>，nextAction 指向一次显式 <code>shlog sync</code>。升级提示由 <code>status</code> 的 <code>index.layout</code>（<code>native_v8</code> / <code>legacy_v7</code> / <code>none</code>）承担。</li>
-        <li><strong>legacy 数据漂移加固。</strong>迁移接受 REAL 型 <code>raw_file_mtime</code>，并把非法 UTF-8 文本（旧 JS writer 写出的孤立 UTF-16 surrogate）归一化处理；verify digest 与归一化后的投影一致。真实库迁移：7,786 sessions / 360k messages，0 errors。</li>
+        <li><strong>旧索引升级引导。</strong>在旧索引上搜索时，命令会指向一次 <code>shlog sync</code> 完成带备份的迁移；<code>status</code> 会先显示当前索引格式。</li>
+        <li><strong>迁移更宽容。</strong>带历史格式瑕疵的旧数据也能顺利升级，不再中断整个迁移。</li>
       </ul>
     </section>
 

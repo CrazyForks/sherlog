@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Upgrade — Sherlog</title>
+  <meta name="description" content="How to upgrade Sherlog.">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Upgrade — Sherlog">
+  <meta property="og:description" content="How to upgrade Sherlog.">
+  <meta property="og:url" content="https://sherlog.net/upgrade">
+  <meta name="twitter:card" content="summary">
+
+  <script>
+    (function () {
+      var t = localStorage.getItem('sherlog-theme');
+      if (t === 'dark' || (!t && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+        document.documentElement.classList.add('dark');
+      }
+      var l = localStorage.getItem('sherlog-lang');
+      if (l) document.documentElement.setAttribute('lang', l);
+    })();
+  </script>
+
+  <style>
+    :root {
+      --bg: #ffffff;
+      --fg: #111111;
+      --muted: #555555;
+      --border: #e5e5e5;
+      --code-bg: #f4f4f4;
+      --code-fg: #111;
+      --accent: #000000;
+      --sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", Helvetica, Arial, sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+
+    html.dark {
+      --bg: #0d1117;
+      --fg: #c9d1d9;
+      --muted: #8b949e;
+      --border: #30363d;
+      --code-bg: #161b22;
+      --code-fg: #c9d1d9;
+      --accent: #58a6ff;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: var(--sans);
+      font-size: 16px;
+      line-height: 1.6;
+      max-width: 680px;
+      margin: 0 auto;
+      padding: 40px 24px 80px;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    html[lang="en"] .zh { display: none; }
+    html[lang="zh"] .en { display: none; }
+
+    header { margin-bottom: 40px; }
+
+    .top-controls {
+      display: flex;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+      gap: 16px;
+      margin-bottom: 24px;
+      font-size: 14px;
+    }
+
+    .top-controls a, .top-controls button {
+      color: var(--muted);
+      text-decoration: none;
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-family: var(--sans);
+    }
+
+    .top-controls a:hover, .top-controls button:hover { color: var(--fg); }
+
+    .lang-toggle {
+      display: inline-flex;
+      align-items: baseline;
+      gap: 4px;
+    }
+
+    .lang-toggle button { padding: 0; line-height: inherit; }
+    .lang-toggle button.active { color: var(--fg); }
+
+    .theme-btn { font-size: 16px; line-height: 1; }
+
+    h1 {
+      font-size: 30px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      margin-bottom: 32px;
+      font-family: var(--mono);
+    }
+
+    h2 {
+      font-size: 15px;
+      font-weight: 600;
+      margin-bottom: 10px;
+    }
+
+    section { margin-bottom: 32px; }
+    p { margin-bottom: 10px; }
+
+    code {
+      background: var(--code-bg);
+      padding: 0.2em 0.4em;
+      border-radius: 4px;
+      font-family: var(--mono);
+      font-size: 0.9em;
+      color: var(--code-fg);
+    }
+
+    pre {
+      background: var(--code-bg);
+      color: var(--code-fg);
+      padding: 16px 18px;
+      border-radius: 8px;
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.7;
+      overflow-x: auto;
+      margin-bottom: 8px;
+      border: 1px solid var(--border);
+    }
+
+    pre code { background: none; padding: 0; border-radius: 0; font-size: inherit; color: inherit; }
+
+    footer {
+      margin-top: 48px;
+      padding-top: 20px;
+      border-top: 1px solid var(--border);
+      font-size: 13px;
+      color: var(--muted);
+      font-family: var(--mono);
+    }
+
+    footer a { color: var(--muted); text-decoration: none; margin-right: 14px; }
+    footer a:hover { color: var(--fg); text-decoration: underline; }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+  <div class="top-controls">
+    <a href="/"><span class="en">Home</span><span class="zh">首页</span></a>
+    <a href="/changelog"><span class="en">Changelog</span><span class="zh">更新日志</span></a>
+    <a href="https://github.com/catoncat/sherlog">GitHub</a>
+    <a href="https://github.com/catoncat/sherlog/releases"><span class="en">Releases</span><span class="zh">发布</span></a>
+    <span class="lang-toggle">
+      <button type="button" onclick="setLang('zh')" id="btn-zh" aria-label="中文">中</button>
+      <span aria-hidden="true">/</span>
+      <button type="button" onclick="setLang('en')" id="btn-en" aria-label="English">EN</button>
+    </span>
+    <button type="button" onclick="toggleTheme()" id="btn-theme" class="theme-btn" aria-label="Toggle theme">◐</button>
+  </div>
+
+  <header>
+    <h1>upgrade</h1>
+  </header>
+
+  <main>
+    <section>
+      <h2><span class="en">1. Update the CLI</span><span class="zh">1. 更新 CLI</span></h2>
+      <pre><code>curl -fsSL https://github.com/catoncat/sherlog/releases/latest/download/install.sh | sh</code></pre>
+      <p><span class="en">or</span><span class="zh">或</span> <code>brew install https://github.com/catoncat/sherlog/releases/latest/download/sherlog.rb</code></p>
+    </section>
+
+    <section>
+      <h2><span class="en">2. Refresh your local index</span><span class="zh">2. 刷新本地索引</span></h2>
+      <pre><code>shlog sync</code></pre>
+      <p><span class="en">Your index is upgraded automatically, with a backup.</span><span class="zh">索引会自动升级，并保留备份。</span></p>
+    </section>
+  </main>
+
+  <footer>
+    <a href="/"><span class="en">Home</span><span class="zh">首页</span></a>
+    <a href="/changelog"><span class="en">Changelog</span><span class="zh">更新日志</span></a>
+    <a href="https://github.com/catoncat/sherlog">GitHub</a>
+    <a href="https://github.com/catoncat/sherlog/releases"><span class="en">Releases</span><span class="zh">发布</span></a>
+  </footer>
+
+  <script>
+    function setLang(l) {
+      document.documentElement.setAttribute('lang', l);
+      document.getElementById('btn-en').classList.toggle('active', l === 'en');
+      document.getElementById('btn-zh').classList.toggle('active', l === 'zh');
+      localStorage.setItem('sherlog-lang', l);
+    }
+
+    function toggleTheme() {
+      const isDark = document.documentElement.classList.toggle('dark');
+      localStorage.setItem('sherlog-theme', isDark ? 'dark' : 'light');
+    }
+
+    const savedLang = localStorage.getItem('sherlog-lang') || 'en';
+    setLang(savedLang);
+  </script>
+</body>
+</html>

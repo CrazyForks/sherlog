@@ -3,18 +3,18 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sherlog — local memory for coding agents</title>
-  <meta name="description" content="Search Codex, Claude Code, and Pi session history with a standalone Rust CLI. No Node.js, no cloud.">
+  <title>Sherlog — local agent session search</title>
+  <meta name="description" content="Search local Codex, Claude Code, and Pi session history with a standalone Rust CLI.">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
 
   <!-- Open Graph / Twitter Card -->
   <meta property="og:type" content="website">
-  <meta property="og:title" content="Sherlog — local memory for coding agents">
-  <meta property="og:description" content="Search Codex, Claude Code, and Pi session history. Fast, purely local, built for agents.">
+  <meta property="og:title" content="Sherlog — local agent session search">
+  <meta property="og:description" content="Search Codex, Claude Code, and Pi session history. Standalone Rust, purely local, standard JSON.">
   <meta property="og:url" content="https://sherlog.net/">
   <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="Sherlog — local memory for coding agents">
-  <meta name="twitter:description" content="Search Codex, Claude Code, and Pi session history. Fast, purely local, built for agents.">
+  <meta name="twitter:title" content="Sherlog — local agent session search">
+  <meta name="twitter:description" content="Search Codex, Claude Code, and Pi session history. Standalone Rust, purely local, standard JSON.">
 
   <!-- Apply theme + lang before paint to avoid FOUC -->
   <script>
@@ -37,7 +37,7 @@
       --code-bg: #f4f4f4;
       --code-fg: #111;
       --accent: #000000;
-      
+
       --sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", Helvetica, Arial, sans-serif;
       --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
     }
@@ -69,15 +69,14 @@
     html[lang="en"] .zh { display: none; }
     html[lang="zh"] .en { display: none; }
 
-    header {
-      margin-bottom: 48px;
-    }
+    header { margin-bottom: 32px; }
 
     .top-controls {
       display: flex;
       justify-content: flex-end;
+      flex-wrap: wrap;
       gap: 16px;
-      margin-bottom: 40px;
+      margin-bottom: 24px;
       font-size: 14px;
     }
 
@@ -89,70 +88,66 @@
       cursor: pointer;
       font-family: var(--sans);
     }
-    
-    .top-controls a:hover, .top-controls button:hover {
-      color: var(--fg);
-    }
-    
+
+    .top-controls a:hover, .top-controls button:hover { color: var(--fg); }
+
     .lang-toggle {
       display: inline-flex;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      overflow: hidden;
+      align-items: baseline;
+      gap: 4px;
     }
 
-    .lang-toggle button {
-      padding: 3px 10px;
-      line-height: 1.4;
-    }
+    .lang-toggle button { padding: 0; line-height: inherit; }
+    .lang-toggle button.active { color: var(--fg); }
 
-    .lang-toggle button + button {
-      border-left: 1px solid var(--border);
-    }
-
-    .lang-toggle button.active {
-      background: var(--fg);
-      color: var(--bg);
-    }
-
-    .lang-toggle button.active:hover {
-      color: var(--bg);
-    }
-
-    .theme-btn {
-      font-size: 16px;
-      line-height: 1;
-    }
+    .theme-btn { font-size: 16px; line-height: 1; }
 
     h1 {
       font-size: 34px;
       font-weight: 600;
       letter-spacing: -0.02em;
-      margin-bottom: 14px;
+      margin-bottom: 12px;
       font-family: var(--mono);
     }
 
     .lede {
-      font-size: 18px;
-      color: var(--muted);
-      margin-bottom: 32px;
-      line-height: 1.5;
+      font-size: 20px;
+      margin-bottom: 10px;
+      line-height: 1.45;
       text-wrap: balance;
     }
 
-    pre {
-      background: var(--code-bg);
-      color: var(--code-fg);
-      padding: 20px;
-      border-radius: 8px;
-      font-family: var(--mono);
-      font-size: 13px;
-      line-height: 1.7;
-      overflow-x: auto;
-      margin-bottom: 48px;
-      border: 1px solid var(--border);
+    .sub {
+      font-size: 15px;
+      color: var(--muted);
+      margin-bottom: 28px;
     }
-    
+
+    .banner {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      margin-bottom: 40px;
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    .banner strong { color: var(--fg); }
+    .banner a { margin-left: 8px; white-space: nowrap; }
+
+    h2 {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+      color: var(--muted);
+    }
+
+    section { margin-bottom: 36px; }
+
+    p { margin-bottom: 12px; }
+    strong { font-weight: 600; }
     code {
       background: var(--code-bg);
       padding: 0.2em 0.4em;
@@ -161,99 +156,26 @@
       font-size: 0.9em;
       color: var(--code-fg);
     }
-    
-    pre code {
-      background: none;
-      padding: 0;
-      border-radius: 0;
-      font-size: inherit;
-      color: inherit;
-    }
-    
-    mark {
-      background-color: rgba(255, 212, 0, 0.4);
-      color: inherit;
-      padding: 0 4px;
-      border-radius: 3px;
-    }
-    
-    html.dark mark {
-      background-color: rgba(255, 212, 0, 0.2);
-    }
 
-    section {
-      margin-bottom: 40px;
-      padding-top: 36px;
-      border-top: 1px solid var(--border);
-    }
-
-    section:first-of-type {
-      padding-top: 0;
-      border-top: none;
-    }
-
-    h2 {
-      font-size: 13px;
-      font-weight: 600;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-      margin-bottom: 14px;
-      color: var(--muted);
-    }
-
-    p {
-      margin-bottom: 16px;
-      color: var(--fg);
-    }
-
-    strong {
-      font-weight: 600;
-    }
-
-    footer {
-      margin-top: 64px;
-      padding-top: 24px;
-      border-top: 1px solid var(--border);
-      font-size: 14px;
-      color: var(--muted);
+    pre {
+      background: var(--code-bg);
+      color: var(--code-fg);
+      padding: 18px 20px;
+      border-radius: 8px;
       font-family: var(--mono);
-    }
-
-    a {
-      color: var(--accent);
-      text-decoration: none;
-    }
-    
-    a:hover {
-      text-decoration: underline;
-    }
-
-    .install-group {
-      margin-bottom: 48px;
-    }
-
-    .install-label {
       font-size: 13px;
-      color: var(--muted);
-      margin-bottom: 8px;
-      font-weight: 600;
-    }
-    
-    .install-group pre {
-      margin-bottom: 16px;
-    }
-
-    .install-group pre:last-child {
-      margin-bottom: 0;
+      line-height: 1.75;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      overflow-x: hidden;
+      margin-bottom: 12px;
+      border: 1px solid var(--border);
     }
 
-    .cmd {
-      position: relative;
-    }
+    pre code { background: none; padding: 0; border-radius: 0; font-size: inherit; color: inherit; }
 
-    .cmd pre {
-      padding-right: 56px;
-    }
+    .cmd { position: relative; }
+    .cmd pre { padding-right: 56px; }
 
     .copy-btn {
       position: absolute;
@@ -271,38 +193,69 @@
       transition: opacity 0.12s ease, color 0.12s ease;
     }
 
-    .cmd:hover .copy-btn,
-    .copy-btn:focus-visible {
-      opacity: 1;
-    }
-
-    .copy-btn:hover {
-      color: var(--fg);
-    }
-
-    .copy-btn.copied {
-      opacity: 1;
-      color: var(--fg);
-      border-color: var(--fg);
-    }
+    .cmd:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
+    .copy-btn:hover { color: var(--fg); }
+    .copy-btn.copied { opacity: 1; color: var(--fg); border-color: var(--fg); }
 
     @media (hover: none), (pointer: coarse), (max-width: 680px) {
-      .copy-btn {
-        opacity: 1;
-      }
+      .copy-btn { opacity: 1; }
     }
 
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: var(--mono);
+      font-size: 13px;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 7px 0;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    td:first-child { white-space: nowrap; padding-right: 20px; }
+    td:last-child { color: var(--muted); font-family: var(--sans); font-size: 14px; }
+
+    .install-label { font-size: 13px; color: var(--muted); margin-bottom: 8px; font-weight: 600; }
+    .note { font-size: 14px; color: var(--muted); }
+
+    footer {
+      margin-top: 48px;
+      padding-top: 20px;
+      border-top: 1px solid var(--border);
+      font-size: 13px;
+      color: var(--muted);
+      font-family: var(--mono);
+    }
+
+    footer a { color: var(--muted); text-decoration: none; margin-right: 14px; }
+    footer a:hover { color: var(--fg); text-decoration: underline; }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
 
   <div class="top-controls">
     <a href="/changelog"><span class="en">Changelog</span><span class="zh">更新日志</span></a>
+    <a href="/upgrade"><span class="en">Upgrade</span><span class="zh">升级迁移</span></a>
     <a href="https://github.com/catoncat/sherlog">GitHub</a>
     <a href="https://github.com/catoncat/sherlog/releases"><span class="en">Releases</span><span class="zh">发布</span></a>
     <span class="lang-toggle">
-      <button type="button" onclick="setLang('en')" id="btn-en" aria-label="English">EN</button>
       <button type="button" onclick="setLang('zh')" id="btn-zh" aria-label="中文">中</button>
+      <span aria-hidden="true">/</span>
+      <button type="button" onclick="setLang('en')" id="btn-en" aria-label="English">EN</button>
     </span>
     <button type="button" onclick="toggleTheme()" id="btn-theme" class="theme-btn" aria-label="Toggle theme">◐</button>
   </div>
@@ -310,65 +263,55 @@
   <header>
     <h1>sherlog</h1>
     <div class="lede">
-      <span class="en">The local memory layer for coding agents.<br>Search Codex, Claude Code, and Pi session history from your terminal — no cloud, no embeddings, no docs tax.</span>
-      <span class="zh">给 Coding Agent 用的本地记忆层。<br>在终端里极速搜索 Codex、Claude Code 和 Pi 的历史对话——不上云、不用向量库、不用写文档。</span>
+      <span class="en">Search your local agent session history.</span>
+      <span class="zh">搜索本地 Agent 会话历史。</span>
+    </div>
+    <div class="sub">
+      <span class="en">For agents and their humans. Codex · Claude Code · Pi, purely local, standard JSON.</span>
+      <span class="zh">服务 Agent，也服务人。Codex · Claude Code · Pi，纯本地，标准 JSON。</span>
     </div>
   </header>
 
-  <div class="install-group">
-    <p>
-      <span class="en"><strong>Latest native release: v0.5.1.</strong> macOS arm64/x64 · Linux x64 GNU. No Node.js, no build from source, no sudo.</span>
-      <span class="zh"><strong>最新原生版本：v0.5.1。</strong>macOS arm64/x64 · Linux x64 GNU。无需 Node.js，无需从源码编译，无需 sudo。</span>
-    </p>
-    <div class="install-label"><span class="en">1. Install the native CLI</span><span class="zh">1. 安装原生 CLI</span></div>
-    <div class="cmd">
-      <pre><code>curl -fsSL https://github.com/catoncat/sherlog/releases/latest/download/install.sh | sh</code></pre>
-      <button type="button" class="copy-btn" onclick="copyCmd(this)" aria-label="Copy command">Copy</button>
-    </div>
-    <div class="install-label" style="margin-top: 20px;"><span class="en">2. Or via Homebrew (macOS / Linux x64)</span><span class="zh">2. 或用 Homebrew（macOS / Linux x64）</span></div>
-    <div class="cmd">
-      <pre><code>brew install https://github.com/catoncat/sherlog/releases/download/v0.5.1/sherlog.rb</code></pre>
-      <button type="button" class="copy-btn" onclick="copyCmd(this)" aria-label="Copy command">Copy</button>
-    </div>
-    <div class="install-label" style="margin-top: 20px;"><span class="en">3. Pin a specific version (optional)</span><span class="zh">3. 固定版本（可选）</span></div>
-    <div class="cmd">
-      <pre><code>curl -fsSL https://github.com/catoncat/sherlog/releases/download/v0.5.1/install.sh \
-  | SHERLOG_VERSION=0.5.1 sh</code></pre>
-      <button type="button" class="copy-btn" onclick="copyCmd(this)" aria-label="Copy command">Copy</button>
-    </div>
-    <div class="install-label" style="margin-top: 20px;"><span class="en">4. Install the Agent Skill (optional)</span><span class="zh">4. 安装 Agent Skill（可选）</span></div>
-    <div class="cmd">
-      <pre><code>npx skills add -g catoncat/sherlog</code></pre>
-      <button type="button" class="copy-btn" onclick="copyCmd(this)" aria-label="Copy command">Copy</button>
-    </div>
-    <p style="margin-top: 16px;">
-      <span class="en">The external skill installer is separate from the CLI. Sherlog's production runtime does not require Node.js.</span>
-      <span class="zh">外部 skill installer 与 CLI 相互独立；Sherlog 的生产运行时不需要 Node.js。</span>
-    </p>
-    <p>
-      <span class="en"><strong>Upgrading from 0.4.x?</strong> Run <code>shlog sync</code> once. The legacy index migrates to the native format automatically: a <code>.v7.bak</code> backup is kept, coverage is rebuilt for the synced scope, and the old 0.4.4 writer no longer touches the index. Content commands point at this migration with a typed <code>index_schema_upgrade_required</code> nextAction.</span>
-      <span class="zh"><strong>从 0.4.x 升级？</strong>跑一次 <code>shlog sync</code> 即可。旧索引会自动迁移为原生格式：保留 <code>.v7.bak</code> 备份、同步范围内 coverage 重建、旧 0.4.4 writer 不再写入。内容命令会以 typed <code>index_schema_upgrade_required</code> + nextAction 指路这次迁移。</span>
-    </p>
+  <div class="banner">
+    <span class="en"><strong>v0.5.1</strong> &middot; <a href="/changelog">Changelog</a> &middot; <a href="/upgrade">Upgrade</a></span>
+    <span class="zh"><strong>v0.5.1</strong> &middot; <a href="/changelog">更新日志</a> &middot; <a href="/upgrade">升级</a></span>
   </div>
 
   <main>
     <section>
       <h2>
-        <span class="en">Quick Start</span>
+        <span class="en">Install</span>
+        <span class="zh">安装</span>
+      </h2>
+      <div class="install-label"><span class="en">1. Agent skill</span><span class="zh">1. Agent skill</span></div>
+      <div class="cmd">
+        <pre><code>npx skills add -g catoncat/sherlog</code></pre>
+        <button type="button" class="copy-btn" onclick="copyCmd(this)" aria-label="Copy command">Copy</button>
+      </div>
+      <div class="install-label" style="margin-top: 20px;"><span class="en">2. CLI</span><span class="zh">2. CLI</span></div>
+      <div class="cmd">
+        <pre><code>curl -fsSL https://github.com/catoncat/sherlog/releases/latest/download/install.sh | sh</code></pre>
+        <button type="button" class="copy-btn" onclick="copyCmd(this)" aria-label="Copy command">Copy</button>
+      </div>
+      <div class="install-label" style="margin-top: 20px;"><span class="en">or Homebrew</span><span class="zh">或 Homebrew</span></div>
+      <div class="cmd">
+        <pre><code>brew install https://github.com/catoncat/sherlog/releases/download/v0.5.1/sherlog.rb</code></pre>
+        <button type="button" class="copy-btn" onclick="copyCmd(this)" aria-label="Copy command">Copy</button>
+      </div>
+
+    </section>
+
+    <section>
+      <h2>
+        <span class="en">Quick start</span>
         <span class="zh">快速开始</span>
       </h2>
-      <p>
-        <span class="en">Build the index once, find the session that matters, then read the surrounding dialogue.</span>
-        <span class="zh">先建一次索引，找到关键会话，再阅读上下文对话。</span>
-      </p>
-      <pre><code># 1. Build the local index once
-shlog sync
-
-# 2. Find the session that matters
-shlog find "JWT server sessions" --json
-
-# 3. Read the surrounding context
-shlog read-range &lt;sessionRef&gt; --seq 18</code></pre>
+      <div class="cmd">
+        <pre><code>shlog sync                                   # first install: index the default Codex root
+shlog find "JWT server sessions" --json      # recall the exact session
+shlog read-range &lt;sessionRef&gt; --seq &lt;matchSeq&gt;   # read the surrounding context</code></pre>
+        <button type="button" class="copy-btn" onclick="copyCmd(this)" aria-label="Copy command">Copy</button>
+      </div>
     </section>
 
     <section>
@@ -415,105 +358,34 @@ shlog read-range &lt;sessionRef&gt; --seq 18</code></pre>
       </p>
     </section>
 
+
     <section>
       <h2>
-        <span class="en">How it works in practice</span>
-        <span class="zh">实际工作流示例</span>
+        <span class="en">Commands</span>
+        <span class="zh">命令</span>
       </h2>
-      <p>
-        <span class="en">When an Agent joins a new task, it searches past conversations to understand <em>why</em> decisions were made or <em>how</em> past workflows were executed.</span>
-        <span class="zh">当 Agent 接手任务时，它会搜索历史对话，搞清楚当时的“架构决策背景”或“具体工作流”。</span>
-      </p>
-      
-      <div class="en">
-        <div class="install-label" style="margin-top: 24px;">Step 1: Recall Context</div>
-        <pre><code>$ shlog find "JWT server sessions" --json
-
-{
-  "rank": 1,
-  "sourceId": "codex",
-  "sessionRef": "9f8e7d6c-...",
-  "title": "The current auth flow uses signed tokens.",
-  "matchSource": "message",
-  "matchSeq": 2,
-  "matchedFields": ["message"],
-  "snippet": "Let's migrate from &lt;mark&gt;JWT&lt;/mark&gt; to &lt;mark&gt;server sessions&lt;/mark&gt;. We can use Redis.",
-  "evidenceRead": {
-    "kind": "read-range",
-    "reason": "message_match",
-    "sessionRef": "9f8e7d6c-...",
-    "seq": 2,
-    "query": "JWT server sessions",
-    "before": 2,
-    "after": 2,
-    "command": {
-      "executable": "inherit",
-      "args": ["read-range", "9f8e7d6c-...", "--seq", "2", "--before", "2", "--after", "2", "--query", "JWT server sessions", "--source", "codex", "--db", "/Users/you/.local/state/shlog/index.sqlite", "--json"],
-      "sideEffect": "read_index"
-    }
-  }
-}</code></pre>
-
-        <div class="install-label" style="margin-top: 24px;">Step 2: Progressive Read</div>
-        <pre><code>$ shlog read-range 9f8e7d6c-... --seq 2
-
-shlog read-range 9f8e7d6c-...
-The current auth flow uses signed tokens. · /Users/you/project
-anchor=2 · range=0-4
-
-   [0] U The current auth flow uses signed tokens.
-   [1] A The JWT tokens are getting too large.
-&gt;&gt; [2] U Let's migrate from JWT to server sessions. We can use Redis.
-   [3] A Good idea. I'll update auth.middleware.ts to check Redis instead.</code></pre>
-      </div>
-
-      <div class="zh">
-        <div class="install-label" style="margin-top: 24px;">Step 1: 召回相关历史对话</div>
-        <pre><code>$ shlog find "JWT 服务端 session" --json
-
-{
-  "rank": 1,
-  "sourceId": "codex",
-  "sessionRef": "9f8e7d6c-...",
-  "title": "当前登录流程使用签名 token。",
-  "matchSource": "message",
-  "matchSeq": 2,
-  "matchedFields": ["message"],
-  "snippet": "我们从 &lt;mark&gt;JWT&lt;/mark&gt; 迁移到 &lt;mark&gt;服务端 session&lt;/mark&gt; 吧。用 Redis 存。",
-  "evidenceRead": {
-    "kind": "read-range",
-    "reason": "message_match",
-    "sessionRef": "9f8e7d6c-...",
-    "seq": 2,
-    "query": "JWT 服务端 session",
-    "before": 2,
-    "after": 2,
-    "command": {
-      "executable": "inherit",
-      "args": ["read-range", "9f8e7d6c-...", "--seq", "2", "--before", "2", "--after", "2", "--query", "JWT 服务端 session", "--source", "codex", "--db", "/Users/you/.local/state/shlog/index.sqlite", "--json"],
-      "sideEffect": "read_index"
-    }
-  }
-}</code></pre>
-
-        <div class="install-label" style="margin-top: 24px;">Step 2: 渐进式翻阅对话</div>
-        <pre><code>$ shlog read-range 9f8e7d6c-... --seq 2
-
-shlog read-range 9f8e7d6c-...
-当前登录流程使用签名 token。 · /Users/you/project
-anchor=2 · range=0-4
-
-   [0] U 当前登录流程使用签名 token。
-   [1] A 发现权限字段太多，JWT token 超载。
-&gt;&gt; [2] U 我们从 JWT 迁移到服务端 session 吧。用 Redis 存。
-   [3] A 好主意。我这就去改 auth.middleware.ts，把 JWT 校验换成 Redis 查询。</code></pre>
-      </div>
+      <table>
+        <tr>
+          <th>command</th>
+          <th><span class="en">purpose</span><span class="zh">用途</span></th>
+        </tr>
+        <tr><td>find</td><td><span class="en">full-text recall, returns session + message anchor</span><span class="zh">全文召回，返回 session 与 message 锚点</span></td></tr>
+        <tr><td>read-range · read-page</td><td><span class="en">progressive read around an anchor / by page</span><span class="zh">围绕锚点 / 按页渐进读取</span></td></tr>
+        <tr><td>sync</td><td><span class="en">explicit index build/update, the only content writer</span><span class="zh">显式建/更新索引，唯一的 content writer</span></td></tr>
+        <tr><td>status</td><td><span class="en">coverage, freshness, index state</span><span class="zh">coverage、freshness 与索引状态</span></td></tr>
+        <tr><td>cold</td><td><span class="en">register cold/archive roots for prune retention</span><span class="zh">登记冷存/归档 root，供 prune 保留</span></td></tr>
+        <tr><td>list · stats</td><td><span class="en">session inventory and index statistics</span><span class="zh">会话清单与索引统计</span></td></tr>
+      </table>
     </section>
   </main>
 
   <footer>
-    <span class="en">Standalone Rust &middot; v0.5.1 native release &middot; macOS arm64/x64 &middot; Linux x64 GNU</span>
-    <span class="zh">Standalone Rust &middot; v0.5.1 原生发布 &middot; macOS arm64/x64 &middot; Linux x64 GNU</span>
+    <span class="en">v0.5.1</span>
+    <span class="zh">v0.5.1</span>
+    <a href="/changelog"><span class="en">Changelog</span><span class="zh">更新日志</span></a>
+    <a href="/upgrade"><span class="en">Upgrade</span><span class="zh">升级迁移</span></a>
+    <a href="https://github.com/catoncat/sherlog">GitHub</a>
+    <a href="https://github.com/catoncat/sherlog/releases"><span class="en">Releases</span><span class="zh">发布</span></a>
   </footer>
 
   <script>
