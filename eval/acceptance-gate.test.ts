@@ -1,9 +1,15 @@
-import { describe, expect, test } from "vitest";
-import { runAcceptanceGate } from "./acceptance-gate";
+import { beforeAll, describe, expect, test } from "vitest";
+import { runAcceptanceGate, type AcceptanceGateResult } from "./acceptance-gate";
 
 describe("acceptance gate", () => {
-  test("passes synthetic evidence-level retrieval fixtures", async () => {
-    const result = await runAcceptanceGate();
+  let result: AcceptanceGateResult;
+
+  beforeAll(async () => {
+    result = await runAcceptanceGate();
+  }, 60_000);
+
+  test("passes synthetic evidence-level retrieval fixtures through the CLI executable seam", () => {
+    expect(result.cliUnderTest.argv.length).toBeGreaterThan(0);
 
     expect(result.sync.added).toBe(11);
     expect(result.sourceSyncs["claude-code"].added).toBe(1);
@@ -37,8 +43,7 @@ describe("acceptance gate", () => {
     expect(result.rows.find((row) => row.id === "command-restatement-loses-to-execution")?.returnedContext.read).toBe(false);
   });
 
-  test("reports top-result diversity metrics for the duplicate-family case", async () => {
-    const result = await runAcceptanceGate();
+  test("reports top-result diversity metrics for the duplicate-family case", () => {
     const diversityRow = result.rows.find((row) => row.id === "duplicate-family-diversity");
 
     expect(diversityRow).toBeDefined();
@@ -55,5 +60,11 @@ describe("acceptance gate", () => {
     });
     // Dense within-session follow-up stays available through result metadata.
     expect(result.rows.every((row) => row.diversity.topK > 0)).toBe(true);
+  });
+
+  test("can require an explicit candidate instead of silently testing the oracle", async () => {
+    await expect(runAcceptanceGate({ requireCandidateOverride: true })).rejects.toThrow(
+      "requires an explicit candidate executable override",
+    );
   });
 });

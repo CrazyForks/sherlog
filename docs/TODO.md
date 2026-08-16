@@ -1,42 +1,40 @@
 # Sherlog TODO
 
-## P0: 把 eval 升级成可用 gate
+本页只列当前 checkout 之后的可执行工作；总体排序见 [ROADMAP.md](ROADMAP.md)。Production CLI 已是 standalone Rust，Node/TypeScript 只保留开发期 differential oracle。
 
-当前真正最缺的不是新排序逻辑，而是更可信的 acceptance gate。
+## P0: Native acceptance 与首次发布
 
-现状：
+- [ ] 用 `--cli-argv-json`、`SHLOG_CLI_ARGV_JSON` 或 `SHLOG_BIN_UNDER_TEST` 将 private dogfood runner 明确绑定 release binary，并把被测 argv 留在 scorecard；无 override 时默认仍是 TypeScript oracle。
+- [ ] 用 release binary 跑 synthetic acceptance、contract differential、isolated perf 与 multi-source end-to-end fixture。
+- [ ] 覆盖 initial/no-op/append sync、strict/best-effort failure、status coverage、find/read/list/stats、cold add/remove/prune 和 v7 -> v8 migration。
+- [ ] 固化 macOS arm64/x64、Linux x64 GNU 的 release asset、checksum、SBOM、attestation 与 installer verification。
+- [ ] native tag/assets 发布前保持 source-ready 表述；发布后再验证安装态 `shlog --version`。本机全局 `shlog` 当前仍是旧发布版 `0.4.4`。
 
-- [eval/manual-queries.json](../eval/manual-queries.json) 只有 18 条 seed query
-- [eval/manual-eval-core.ts](../eval/manual-eval-core.ts) 只支持 `title_or_summary`、`cwd`、`snippet` 这几类弱断言
+## P1: `incremental == full replay`
 
-下一步应该优先补：
+- [ ] 建立 property/state-machine tests，对每条操作序列比较 `session_rows`、`sessions` view、`source_files`、`documents`、`documents_fts`、`coverage` 与 `cold_roots` 最终状态。
+- [ ] 覆盖 append、truncate、same-size/prefix rewrite、unterminated tail、rename/path identity change。
+- [ ] 覆盖 hot -> cold、cold remove + prune、migration crash、残留 `.next`/WAL/SHM 与旧 writer 竞争。
+- [ ] Codex delta 与 full replay 必须等价；Claude Code/Pi 的 `DeltaUnsupported` full replay 仍需同一 final-state invariant。
 
-- 更多真实 query
-- 对 session 命中正确性的断言
-- 对 `read-range` 可用性的断言
-- 更清晰的 failure taxonomy
+## P2: Retrieval 诊断
 
-## P1: session-level recall 后续补强
+- [ ] 增加 candidate -> SQL filter -> exact verify -> grouped session -> returned result 各阶段计数。
+- [ ] 增加明确的 `matchMode`、`weakMatch`/reason 与 zero-result reason，区分 coverage、candidate、filter、ranking、evidence-read 问题。
+- [ ] 保持默认 payload 精简，并确保 debug 计数不暴露 privacy-filtered projection 之外的 raw 内容。
+- [ ] 在测试里锁定 conservative candidate superset、SQL filter pushdown 与 ranking/evidence anchor 分离。
 
-当前 `sessions.summary_text`、`sessions.compact_text`、`sessions.reasoning_summary_text` 已经生成、存库，并通过 `sessions_fts(title + summary_text + compact_text + reasoning_summary_text)` 进入 recall 面。
+## P3: Source 与 eval hardening
 
-已定边界：
+- [ ] 为 Codex、Claude Code、Pi 增加 source-specific negative privacy fixtures 与 upstream format drift cases。
+- [x] 补 title/summary/compact/reasoning-only hit、`matchSource=session`、`matchSeq=null` 与 `evidenceRead` 可执行性断言（anchor_not_found + 闭包 command，见 app/tests 与 contract gate）。
+- [ ] 持续验证 default cross-source find、selector isolation、coverage 不跨 source、sessionRef round-trip。
+- [ ] private dogfood 只由用户显式触发 dev-only skill 采集；不通过改 golden 或 hardcode query 修实现。
 
-- `messages` 仍只保存真实可回读消息
-- compact handoff 与 reasoning summary 只作为 session-level 检索信号，不写成可回读 message
-- session-level FTS 字段权重固定为：title 8.0、compact 4.0、summary 3.0、reasoning summary 1.2
-- session-only 命中返回 `matchSource = "session"` 和 `matchSeq = null`
-- 不插入 `seq = -1` 虚拟 message
-- 不新增 `session_projections` 业务表
+## Eval 证明收益后再做
 
-下一步应该补：
+- 仅对 title/cwd/model/identifier 的 zero-result 路径探索受控 typo fallback；不对正文做无界 fuzzy。
+- evidence-read frecency 只能是有上限、短半衰期的 tie-breaker，并防 self-hit 与反馈循环。
+- 独立 stage-2/resource reranker、richer projection、duplicate family collapse/diversity、vector retrieval。
 
-- 把 title/summary/compact-only query 写进 manual eval
-- 增加对 `matchSource` / `matchSeq = null` 的断言
-- 继续观察 session-level recall 是否引入排序噪音
-
-## P2: eval 先行的 ranking 改进
-
-`ranking.ts` 已删除无真实 A/B 收益的 broad/exact query-profile 分类抽象；不要再把它当成待接通的现状。
-
-下一步如要改 ranking，先补能证明收益的 eval，再引入具体信号。
+不做 watcher/daemon/realtime sync，不引入 LMDB 或第二持久化真相源，也不把 FFF 的常驻内存索引生命周期搬进短命 CLI。

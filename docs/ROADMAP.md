@@ -2,96 +2,124 @@
 
 ## 当前判断
 
-`Sherlog` 现在已经有一条可用的 retrieval 主链。`title + summary_text + compact_text + reasoning_summary_text` 已作为 session-level recall 面接入，并通过 FTS5 column weights 显式分权；下一步仍不该盲目继续堆排序逻辑，当前最缺的是更可信的 acceptance gate。
+Production runtime 已切到 standalone Rust：固定 command surface、v8 SQLite、source adapters、manual sync、coverage、progressive read 与 native distribution pipeline 都已进入当前 checkout。下一阶段的重点不是继续堆功能，而是把 native acceptance、incremental equivalence 与诊断可观测性做成可信 gate。
 
-当前 source foundation 已落地到 checkout：公开 CLI source 现在有 `codex` 和 experimental `claude-code`，selector / coverage / DB / query-read 已有 source 维度。`find` 省略 `--source` 时默认跨 public sources 搜索并返回可直接读取的 `sessionRef`；其他 source-scoped 命令省略 `--source` 仍以 Codex 作为兼容默认。`claude-code` 现在已经走通 public fixed-command surface，但仍应描述为 experimental transcript-reader support，而不是稳定 raw-format 承诺。
+当前 retrieval：
 
-## 优先级
+```text
+documents_fts candidate recall
+  -> deterministic session aggregation/ranking
+  -> evidenceRead
+  -> read-range/read-page
+```
 
-### P0: 先补强 eval 基线
+message 与 session-profile 共用 `documents`/`documents_fts`，但 evidence provenance 分离。当前不是 resource-level reranker，也没有 duplicate collapse、vector retrieval、全文 fuzzy、watcher/daemon。
 
-目标：让后续 retrieval 调整有稳定证据，不再只靠感觉。
+## P0: 完成 native cutover acceptance 与首次发布
 
-当前现状：
+### 已有基础
 
-- [eval/manual-queries.json](../eval/manual-queries.json) 只有 18 条 seed query
-- [eval/manual-eval-core.ts](../eval/manual-eval-core.ts) 只支持弱谓词：
-  - `title_or_summary`
-  - `cwd`
-  - `snippet`
-- [eval/run-dogfood-eval.ts](../eval/run-dogfood-eval.ts) 已提供本机 dogfood golden runner：
-  - 读取 ignored JSONL golden 文件
-  - 支持为单个 golden 描述真实检索 workflow：多 query attempt、`sort`、cwd/selector scope、排除 self-hit session
-  - 检查 expected session / cwd / matchSource / context key phrase
-  - 每个 attempt 会落盘 find/context artifact，scorecard 会标出最终采用的 attempt
-  - scorecard 带 per-case `returnedContext`（chars/bytes）和 batch p50/p95，context 预算回归按 case 可见
-  - `hard` 失败会以非零退出阻断本机 gate
-  - `candidate` 失败只报告，不阻断
+- dogfood runner 已复用统一的 CLI-under-test 解析，可通过 `--cli-argv-json`、`SHLOG_CLI_ARGV_JSON` 或 `SHLOG_BIN_UNDER_TEST` 显式绑定 native candidate，并把实际 argv/source 写入 scorecard；无 override 时才默认 TypeScript oracle；
+- executable-neutral contract gate 已把 help prose、query-only coverage freshness、typed error semantics 与 native strict-incomplete reason 编码为 intentional-difference policy；当前 `target/release/shlog` 对 TypeScript reference 实测 **24/24**；
+- synthetic acceptance gate 已显式绑定同一 native release candidate；message hit、session-profile hit、CJK、source-aware read、command restatement 等 evidence-level fixtures 当前实测 **8/8**；
+- candidate-aware perf harness：可显式选择 release binary、记录 process/operation latency、RSS、artifact/DB size 和 progressive reads；
+- Rust unit/integration tests：sources、index、sync、migration、retrieval、app；
+- native CI 会实际构建并检查 `target/release/shlog` 后以 `--require-candidate` 运行 contract/acceptance；release workflow 则下载 Linux GNU archive、解包并验证其中的 executable，再运行同一 gates；
+- native release workflow：macOS arm64/x64、Linux x64 GNU archives、SBOM、checksums、attestation、installer/formula。
 
-建议动作：
+### 仍需收口
 
-- 扩充真实 query 集
-- 给 source-aware 默认行为补 acceptance：默认 `find` 跨 `codex` / `claude-code` 返回结果、结果包含 `sourceId` / `sessionRef`、`sessionRef` 可直接 `read-*`、显式 `--source codex` 可恢复窄化、selector canonical JSON 带显式 `source`、coverage 不跨 source、`claude-code` 的 fixed-command public smoke 持续通过、未知 source 仍返回 `unsupported_source`
-- 继续用 dev-only `~/.agents/skills/sherlog-dogfood` 手动策展本机 dogfood golden；不要把私有样本放进发行 skill package
-- 增加更强断言：
-  - session 是否对
-  - `read-range` 是否给出有用上下文
-  - 是否命中关键 message / key phrase
-- 对“最近本项目 / self-hit / 文件名近似”这类真实 agent workflow，优先用 dogfood 的 `find` workflow 字段表达当前可复现路径，再决定是否沉淀成正式 CLI 选项（例如 `--cwd`、`--exclude-current`、`recent`）
-- 继续复用现有：
-  - `npm run eval:manual`
-  - `npm run eval:dogfood -- <goldens.local.jsonl>`
-  - `npm run eval:compare -- <before> <after>`
+- 固化 initial/no-op/append sync 与 find/read/status 的性能基线；
+- 完成首次 native tag/release 前的全量 Rust、Node oracle/eval、workflow/installer gates；当前 24/24 contract 与 8/8 acceptance 只证明本地 release candidate，不代表 release 已发布；
+- 发布后回读 GitHub assets/attestations，并独立验证 installed `shlog` 的路径、`--version` 与 smoke；当前 global `shlog` 仍是旧发布版 `0.4.4`。
 
-### P1: 已补 session-level 字段召回
+在 native tag/assets 实际存在前，文档和 closeout 都必须保持“source-ready，尚未发布”。
 
-目标：解决“正文不命中、只有 title / summary / compact handoff 命中”的 recall 漏洞。
+## P1: `incremental == full replay` acceptance
 
-当前现状：
+目标：证明 append cursor 是性能优化，不是第二套语义。
 
-- `messages_fts` 负责真实 message evidence recall
-- `sessions_fts(title + summary_text + compact_text + reasoning_summary_text)` 负责 session-level recall
-- 字段权重固定为：title 8.0、compact 4.0、summary 3.0、reasoning summary 1.2
-- session-only 命中返回 `matchSource = "session"`，且 `matchSeq = null`
-- CLI 对 session-only 命中建议 `read-page`，不伪造 `read-range --seq`
+把现有 focused tests 扩成 property/state-machine matrix：
 
-已经排除：
+- append；
+- truncate；
+- same-size/prefix rewrite；
+- rename/path identity change；
+- unterminated tail；
+- hot -> cold；
+- cold remove + explicit prune；
+- per-file scan failure strict vs best-effort；
+- migration crash at each publication phase；
+- pre-existing `.next`/WAL/SHM；
+- old TypeScript DB writer 与 cold-config writer competition。
 
-- 不把 summary 写成 `seq = -1` 的虚拟 message
-- 不新增 `session_projections` 业务表
+每条 state trace 都比较最终 sessions/documents/FTS/source_files/coverage/cold_roots invariant 与 full replay/reference state。不能只比较 command exit code。
 
-后续需要补：
+## P2: Retrieval 可观测性
 
-- 把 title/summary/compact-only query 加进 manual eval
-- 对 session-only 命中补专门断言
+增加能区分问题层级的计数，而不是先改 ranking：
 
-### P2: eval 先行的 ranking 改进
+```text
+indexed scope
+  -> FTS/LIKE candidate count
+  -> SQL scope-filtered count
+  -> relaxed-recall count
+  -> grouped session count
+  -> returned count
+  -> evidence-read outcome
+```
 
-已删除无真实 A/B 收益的 broad/exact query-profile 分类抽象；后续 ranking 改进必须先补更强 eval，再引入具体可证明有效的信号。
+目标 public/debug fields：
 
-后续候选：
+- `matchMode`（exact FTS / literal fallback / relaxed）；
+- `weakMatch` 与明确原因；
+- candidate -> filter -> rank stage counts；
+- per-source counts；
+- zero-result reason 与 coverage proof 的关联。
 
-- 给 title/summary/compact-only query 补 manual eval / acceptance 覆盖
-- 观察 session-level recall 是否引入排序噪音
-- 只有真实 eval 证明收益后，才新增 ranking 信号
+要求：不开启 debug 时不显著扩大 payload；不暴露 private raw；计数必须能判定是 coverage、candidate、filter、ranking 还是 evidence read 问题。
 
-### P3: 更重的 retrieval 能力
+## P3: Eval 与 source hardening
 
-暂不优先：
+- 扩充真实 query/golden，但 private dogfood 仍由用户显式触发 dev-only skill 采集；
+- 对 title/summary/compact/reasoning-only hit 加稳定断言；
+- 对 `matchSource=session`、`matchSeq=null`、`evidenceRead` 可执行性加 contract test；
+- 持续验证 default cross-source find、selector isolation、coverage 不跨 source、sessionRef round-trip；
+- 增加 source-specific negative privacy fixtures；
+- 观察 Claude Code/Pi upstream format drift，再决定是否维持 raw transcript reader 或切换稳定 upstream interface。
 
-- resource-level reranker
-- richer projection
-- duplicate family collapse / diversity control
-- heavier model / vector retrieval
+## P4: Eval-driven recall/ranking experiments
 
-这些都应该建立在更强 eval 之后，而不是先上。
+只有 P0-P3 能给出稳定归因后才探索：
 
-### Deferred: Claude Code public support hardening
+### Controlled typo fallback
 
-Claude Code 现在已经有 experimental public support，后续重点从“能不能公开”转成“怎么把公开契约做稳”：
+- 只考虑 title/cwd/model/identifier；
+- 只在 exact/relaxed zero result 后启用；
+- 必须标注 `matchMode`/weak reason；
+- 不对全部正文做无界 fuzzy。
 
-- 重新评估官方 SDK/session API，判断是否要继续长期承诺当前 transcript reader。
-- 明确 tool results、attachments、diagnostics、snapshots、hook payloads、thinking、sidechain/subagent 语义。
-- 增加更强的 source-specific privacy tests 和 recall/eval 覆盖。
-- 补 release docs、installed CLI smoke、global skill update readback。
-- 如果后续发现 raw transcript contract 漂移，优先收敛 parser/SDK strategy，不要直接扩大 public 承诺。
+### Evidence-read frecency
+
+- 只能作为有上限、短半衰期的 tie-breaker；
+- 防 self-hit、反馈循环与“越读越高”的锁定效应；
+- 必须在关闭该信号时仍保持内容召回完整。
+
+### Ranking weight changes
+
+- 先写分类 eval，再改常量；
+- 同时观察 relevance 与 `--sort ended/started`；
+- 不能为单个 dogfood query hardcode；
+- message evidence anchor 与 session-profile score 继续分离。
+
+## Deferred
+
+- independent stage-2/resource-level reranker；
+- richer event projection/range cache；
+- duplicate family collapse/diversity control；
+- embeddings/vector store/heavier model；
+- watcher/daemon/realtime sync；
+- LMDB 或其他第二持久化真相；
+- Linux arm64/musl/Windows release target。
+
+这些不是 Rust cutover 的完成条件。FFF 类常驻内存 file picker 与 Sherlog 的短命、显式 sync、SQLite projection 模型互补，不合并存储或生命周期。

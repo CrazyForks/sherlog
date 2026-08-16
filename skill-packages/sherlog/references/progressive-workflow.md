@@ -1,112 +1,136 @@
 # Progressive Workflow
 
-Apply `SKILL.md` **Canonical policy** in every scenario; this file provides branches and completion criteria, not alternate policy definitions.
-
-## Scenario 1: Metadata Projection
-
-用户说：`查下最早的有意义的对话是哪个`
+始终应用 `SKILL.md` 的 Canonical policy。本文件只给场景、命令与完成标准。
 
 ```bash
-DB_PATH="$("${SHLOG_BIN:-${CXS_BIN:-shlog}}" status --json | jq -r '.context.dbPath')"
+SHLOG="${SHLOG_BIN:-${CXS_BIN:-shlog}}"
+```
+
+## 1. Metadata projection
+
+用户问：`最早的有意义的对话是哪个`
+
+```bash
+DB_PATH="$("$SHLOG" stats --json | jq -r '.dbPath')"
 sqlite3 -readonly "$DB_PATH" \
   "SELECT session_key, started_at, message_count, cwd, title
    FROM sessions
    WHERE message_count > 0
    ORDER BY started_at ASC
    LIMIT 10;"
-"${SHLOG_BIN:-${CXS_BIN:-shlog}}" read-page <session_key> --offset 0 --limit 20 --json
+"$SHLOG" read-page <session_key> --offset 0 --limit 20 --json
 ```
 
-完成：候选来自 index metadata；“有意义”已用 `read-*` 验证。
+完成：candidate 来自 index metadata；“有意义”已用 content projection 验证。`sessions` 是 v8 read-only compatibility view。
 
-## Scenario 2: Semantic Recall
+## 2. Semantic recall
 
-用户说：`上次我配 cf tunnel 是怎么弄的`
+用户问：`上次我配 cf tunnel 是怎么弄的`
 
 ```bash
-"${SHLOG_BIN:-${CXS_BIN:-shlog}}" find "cf tunnel" --json -n 5
+"$SHLOG" find "cf tunnel" --json -n 5
 ```
 
-短产品名（两个英文词）或通用文件名单独作 query 时加 `--cwd`，或改用更长独特短语；否则跨源默认 find 容易被近期配置闲聊占满。
+短产品名/通用文件名先加 `--cwd` 或换成更独特 phrase。选择 candidate 时看 `matchSource`、`matchedFields`、`sessionMessageCount`，然后原样执行 `evidenceRead.command`（`executable:"inherit"` + `args`）。
 
-选候选时用 `matchedFields`（命中出处：message 证据强于 title/compact/reasoningSummary）和 `sessionMessageCount`（读取成本上限）辅助判断；零结果时按 `zeroResults.reason` 分流（见 failure-cookbook）。对候选始终执行 `evidenceRead.argv`；不要根据 `matchSeq` 自己重建命令。示例形状可能是：
+完成：结论来自 `read-*` 返回内容，不只 title/snippet。
+
+## 3. Current project discussion
+
+用户问：`最近这个项目讨论了什么`
 
 ```bash
-"${SHLOG_BIN:-${CXS_BIN:-shlog}}" read-range <sessionRef> --seq <matchSeq> --query "cf tunnel" --before 2 --after 2 --json
-# session-level hit 也可能由 evidenceRead 给出：
-"${SHLOG_BIN:-${CXS_BIN:-shlog}}" read-range <sessionRef> --query "cf tunnel" --before 2 --after 2 --json
+"$SHLOG" list --cwd <repo-cwd-fragment> --sort ended -n 8 --json
+"$SHLOG" read-page <sessionRef-or-codex-uuid> --offset 0 --limit 20 --json
 ```
 
-只有旧 CLI 结果完全没有 `evidenceRead` 时，才 fallback `read-page <sessionRef>`。
-
-完成：已读内容证据，不只 title/snippet。
-
-## Scenario 3: Current Project Discussion
-
-用户说：`最近这个项目讨论了什么`
+注意 `list --cwd` 是 metadata substring filter，不是 exact cwd selector。需要 coverage proof 时另用：
 
 ```bash
-"${SHLOG_BIN:-${CXS_BIN:-shlog}}" list --cwd <repo-cwd> --sort ended -n 8 --json
-"${SHLOG_BIN:-${CXS_BIN:-shlog}}" read-page <sessionRef> --offset 0 --limit 8 --json
+"$SHLOG" status --cwd <absolute-repo-cwd> --json
 ```
 
-索引不可用或 coverage 可疑时再 `status --cwd <repo-cwd>` / `sync --cwd <repo-cwd>`。
+完成：已读相关 session 的开头/命中上下文，而非只复述 metadata。
 
-完成：候选 metadata 已列出；最终结论已读取相关 session 的开头、结尾或命中上下文。
-
-## Scenario 4: Recent Keyword
-
-用户说：`最新一次提到 X 是哪个 session`
+## 4. Latest keyword, excluding self-hit
 
 ```bash
-"${SHLOG_BIN:-${CXS_BIN:-shlog}}" find "X" --cwd <repo-cwd> --sort ended --exclude-session <current-session-ref> --json -n 5
+"$SHLOG" find "X" --cwd <repo-cwd> --sort ended \
+  --exclude-session <current-sessionRef> -n 5 --json
 ```
 
-随后执行首个候选的 `evidenceRead.argv`。
+随后执行首个合理 candidate 的 `evidenceRead.command`；`anchor_not_found` 时回退 `read-page` 或 refine query。完成：内容确实提到 X，并用 `endedAt` 判断最新。
 
-完成：已验证 session 内容确实提到 X，并按 `endedAt` 判断最新，不只依赖排序后的 snippet。
+## 5. Coverage diagnosis
 
-## Scenario 5: Coverage Diagnosis
-
-用户说：`为什么这个 repo 的历史查不到`
+用户问：`为什么这个 repo 的历史查不到`
 
 ```bash
-"${SHLOG_BIN:-${CXS_BIN:-shlog}}" status --cwd <repo-cwd> --json
+"$SHLOG" status --cwd <repo-cwd> --json
 ```
 
-按 `SKILL.md` Coverage policy 和返回的 `recommendedAction` 处理；需要 sync 时保持同一 selector/cwd/root。
+- `fresh + complete`：refine query；
+- `missing/stale + sync`：同 source/root/cwd sync 后 retry；
+- `source_content_changed + query`：现有 index 可先查，只有 latest tail 重要时再 sync。
 
-完成：已 retry 必要操作；仅在可证明 coverage 足够后下“没找到”结论。
+完成：必要操作已重试；只在 coverage 可证明时下完整 miss 结论。
 
-## Scenario 6: Content Verification
-
-用户说：`这个 session 里当时到底决定了什么`
+## 6. Known session decision
 
 ```bash
-"${SHLOG_BIN:-${CXS_BIN:-shlog}}" read-range <sessionRef> --query "决定" --before 6 --after 10 --json
-"${SHLOG_BIN:-${CXS_BIN:-shlog}}" read-page <sessionRef> --offset 0 --limit 60 --json
+"$SHLOG" read-range <sessionRef> --query "决定" --before 6 --after 10 --json
+"$SHLOG" read-page <sessionRef> --offset 0 --limit 60 --json
 ```
 
-完成：内容结论来自足够的 `read-*` projection。
-
-## Scenario 7: Raw Full-Text Fallback
-
-只在 `read-*` projection 明确不足以回答完整 tool call / patch / 长代码 / 原始事件时进入：
-
-1. 先用 Sherlog 定位 `sessionRef` / 时间 / cwd / source。
-2. cold 路径来自 `shlog cold list --json` 或用户明确路径。
-3. 在对应 raw root 取证：hot 通常是 plain `*.jsonl`；cold 可能是逐文件 `*.jsonl.zst`。
-4. 这是 agent-side fallback，不是 `shlog` 子命令，也不代表 cold zst 可被 sync 重建。
+有 elision 且关键句不可见：
 
 ```bash
-"${SHLOG_BIN:-${CXS_BIN:-shlog}}" cold list --json
-rg "exact clue" <hot-or-cold-root> --glob '*.jsonl'
-rg -z "exact clue" <cold-root> --glob '*.jsonl.zst'
+"$SHLOG" read-range <sessionRef> --query "决定" --before 6 --after 10 \
+  --max-message-chars 0 --json
+```
+
+完成：结论来自足够上下文。
+
+## 7. Cold retention check
+
+```bash
+"$SHLOG" cold list --source codex --json
+"$SHLOG" sync --source codex --prune --json
+```
+
+仅在用户明确授权 prune 后运行第二条。检查 `removed` 与 `retainedCold`；registration truth 在 v8 SQLite，而不是 `configPath`。
+
+## 8. Raw full-text fallback
+
+只在 `read-*` projection 明确不足以回答完整 tool call、patch、长代码或原始 event 时进入：
+
+1. 用 Sherlog 定位 `sessionRef`、source、time、cwd；
+2. cold path 来自 `cold list --json` 或用户明确路径；
+3. 只定位对应 raw session；
+4. hot plain JSONL 可 `rg`，cold per-file zstd 先解压临时副本；
+5. 回答区分 index projection 与 raw transcript evidence。
+
+```bash
+"$SHLOG" cold list --json
+rg "exact clue" <hot-root> --glob '*.jsonl'
 zstd -d <cold-session-file>.jsonl.zst -o /tmp/sherlog-session.jsonl
+rg "exact clue" /tmp/sherlog-session.jsonl
 ```
 
-完成：已先定位 session；只读取相关 raw；回答明确区分 index projection 与 raw transcript 证据。
+raw fallback 是 agent-side 取证，不是 `shlog` subcommand；不能用它绕过 privacy projection 做常规召回。
 
-## 来源
+## 9. Source-aware read
 
-- `src/query.ts`, `src/query/read.ts`, `src/types.ts`, `src/cold-roots.ts`
+```bash
+"$SHLOG" find "failure phrase" --source claude-code --json
+"$SHLOG" read-range claude-code:<native-id> --query "failure phrase" --json
+```
+
+不要从 bare UUID 猜 source。完成：`sessionRef` 来自 find output，read source 与它一致。
+
+## Source of truth
+
+- `rust/src/app/`
+- `rust/src/retrieval/`
+- `rust/src/index/reader.rs`
+- `rust/src/sync/`

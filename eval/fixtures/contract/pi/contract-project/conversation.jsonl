@@ -1,0 +1,3 @@
+{"type":"session","id":"contract-pi-session","cwd":"/tmp/sherlog-contract/pi","timestamp":"2020-01-15T03:00:00.000Z"}
+{"type":"message","timestamp":"2020-01-15T03:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"contract shared beacon pi request"}],"timestamp":"2020-01-15T03:00:01.000Z"}}
+{"type":"message","timestamp":"2020-01-15T03:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"contract pi response remains readable"}],"timestamp":"2020-01-15T03:00:02.000Z"}}

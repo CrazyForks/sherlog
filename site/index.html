@@ -4,17 +4,17 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Sherlog — agent session search</title>
-  <meta name="description" content="Search your local Codex, Claude Code, and Pi session history.">
+  <meta name="description" content="Search local Codex, Claude Code, and Pi session history with a standalone Rust CLI.">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
 
   <!-- Open Graph / Twitter Card -->
   <meta property="og:type" content="website">
   <meta property="og:title" content="Sherlog — agent session search">
-  <meta property="og:description" content="Search your local Codex, Claude Code, and Pi session history. Fast, purely local, and built exclusively for Agents.">
+  <meta property="og:description" content="Search local Codex, Claude Code, and Pi session history. Standalone Rust, purely local, and built for Agents.">
   <meta property="og:url" content="https://sherlog.net/">
   <meta name="twitter:card" content="summary">
   <meta name="twitter:title" content="Sherlog — agent session search">
-  <meta name="twitter:description" content="Search your local Codex, Claude Code, and Pi session history. Fast, purely local, and built exclusively for Agents.">
+  <meta name="twitter:description" content="Search local Codex, Claude Code, and Pi session history. Standalone Rust, purely local, and built for Agents.">
 
   <!-- Apply theme + lang before paint to avoid FOUC -->
   <script>
@@ -286,40 +286,67 @@
       border-color: var(--fg);
     }
 
+    @media (hover: none), (pointer: coarse) {
+      .copy-btn {
+        opacity: 1;
+      }
+    }
+
   </style>
 </head>
 <body>
 
   <div class="top-controls">
-    <a href="/changelog"><span class="en">Changelog</span><span class="zh">更新日志</span></a>
+    <a href="/changelog.html"><span class="en">Changelog</span><span class="zh">更新日志</span></a>
     <a href="https://github.com/catoncat/sherlog">GitHub</a>
-    <a href="https://www.npmjs.com/package/@act0r/sherlog">npm</a>
+    <a href="https://github.com/catoncat/sherlog/releases"><span class="en">Releases</span><span class="zh">发布</span></a>
     <span class="lang-toggle">
-      <button onclick="setLang('en')" id="btn-en" aria-label="English">EN</button>
-      <button onclick="setLang('zh')" id="btn-zh" aria-label="中文">中</button>
+      <button type="button" onclick="setLang('en')" id="btn-en" aria-label="English">EN</button>
+      <button type="button" onclick="setLang('zh')" id="btn-zh" aria-label="中文">中</button>
     </span>
-    <button onclick="toggleTheme()" id="btn-theme" class="theme-btn" aria-label="Toggle theme">◐</button>
+    <button type="button" onclick="toggleTheme()" id="btn-theme" class="theme-btn" aria-label="Toggle theme">◐</button>
   </div>
 
   <header>
     <h1>sherlog</h1>
     <div class="lede">
-      <span class="en">Search your local Codex, Claude Code, and Pi session history.<br>Fast, purely local, and built for Agents.</span>
-      <span class="zh">极速搜索本地 Codex、Claude Code 和 Pi 历史对话。<br>纯本地架构，专为 Agent 打造。</span>
+      <span class="en">Search your local Codex, Claude Code, and Pi session history.<br>Standalone Rust, purely local, and built for Agents.</span>
+      <span class="zh">极速搜索本地 Codex、Claude Code 和 Pi 历史对话。<br>Standalone Rust，纯本地运行，专为 Agent 打造。</span>
     </div>
   </header>
 
   <div class="install-group">
-    <div class="install-label"><span class="en">1. Install CLI</span><span class="zh">1. 安装 CLI</span></div>
+    <p>
+      <span class="en"><strong>Native cutover status:</strong> the Rust source is ready, but no native release assets have been published yet. Build from source now; the installer becomes live with the next native tag.</span>
+      <span class="zh"><strong>原生切换状态：</strong>Rust 源码已经就绪，但原生 release assets 尚未发布。当前请从源码构建；installer 会在下一个 native tag 发布后生效。</span>
+    </p>
+    <div class="install-label"><span class="en">1. Build current source now</span><span class="zh">1. 现在从源码构建</span></div>
     <div class="cmd">
-      <pre><code>npm i -g @act0r/sherlog</code></pre>
-      <button class="copy-btn" onclick="copyCmd(this)" aria-label="Copy command">Copy</button>
+      <pre><code>git clone https://github.com/catoncat/sherlog.git &amp;&amp; cd sherlog
+cargo build --release --locked -p sherlog-cli --bin shlog
+./target/release/shlog --help</code></pre>
+      <button type="button" class="copy-btn" onclick="copyCmd(this)" aria-label="Copy command">Copy</button>
     </div>
-    <div class="install-label" style="margin-top: 20px;"><span class="en">2. Install Agent Skill</span><span class="zh">2. 安装 Agent Skill</span></div>
+    <div class="install-label" style="margin-top: 20px;"><span class="en">2. After the next native tag: install latest without Node.js</span><span class="zh">2. 下一个 native tag 发布后：无需 Node.js 安装 latest</span></div>
+    <div class="cmd">
+      <pre><code>curl -fsSL https://github.com/catoncat/sherlog/releases/latest/download/install.sh | sh</code></pre>
+      <button type="button" class="copy-btn" onclick="copyCmd(this)" aria-label="Copy command">Copy</button>
+    </div>
+    <div class="install-label" style="margin-top: 20px;"><span class="en">3. Pin a published native version (replace X.Y.Z)</span><span class="zh">3. 固定已发布的原生版本（替换 X.Y.Z）</span></div>
+    <div class="cmd">
+      <pre><code>curl -fsSL https://github.com/catoncat/sherlog/releases/download/vX.Y.Z/install.sh \
+  | SHERLOG_VERSION=X.Y.Z sh</code></pre>
+      <button type="button" class="copy-btn" onclick="copyCmd(this)" aria-label="Copy command">Copy</button>
+    </div>
+    <div class="install-label" style="margin-top: 20px;"><span class="en">4. Optional: install the Agent Skill separately</span><span class="zh">4. 可选：单独安装 Agent Skill</span></div>
     <div class="cmd">
       <pre><code>npx skills add -g catoncat/sherlog</code></pre>
-      <button class="copy-btn" onclick="copyCmd(this)" aria-label="Copy command">Copy</button>
+      <button type="button" class="copy-btn" onclick="copyCmd(this)" aria-label="Copy command">Copy</button>
     </div>
+    <p style="margin-top: 16px;">
+      <span class="en">The external skill installer is separate from the CLI. Sherlog's production runtime does not require Node.js.</span>
+      <span class="zh">外部 skill installer 与 CLI 相互独立；Sherlog 的生产 runtime 不依赖 Node.js。</span>
+    </p>
   </div>
 
   <main>
@@ -420,14 +447,43 @@
   </main>
 
   <footer>
-    Node 22+ &middot; macOS &middot; Linux
+    <span class="en">Standalone Rust source &middot; macOS arm64/x64 &middot; Linux x64 GNU &middot; native release pending</span>
+    <span class="zh">Standalone Rust 源码 &middot; macOS arm64/x64 &middot; Linux x64 GNU &middot; 原生发布待创建</span>
   </footer>
 
   <script>
+    async function copyCmd(button) {
+      const text = button.parentElement.querySelector('code').textContent;
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch (_) {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.setAttribute('readonly', '');
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        textarea.remove();
+      }
+      const original = button.textContent;
+      button.textContent = document.documentElement.lang === 'zh' ? '已复制' : 'Copied';
+      button.classList.add('copied');
+      window.setTimeout(function () {
+        button.textContent = original;
+        button.classList.remove('copied');
+      }, 1200);
+    }
+
     function setLang(l) {
       document.documentElement.setAttribute('lang', l);
       document.getElementById('btn-en').classList.toggle('active', l === 'en');
       document.getElementById('btn-zh').classList.toggle('active', l === 'zh');
+      document.querySelectorAll('.copy-btn:not(.copied)').forEach(function (button) {
+        button.textContent = l === 'zh' ? '复制' : 'Copy';
+        button.setAttribute('aria-label', l === 'zh' ? '复制命令' : 'Copy command');
+      });
       localStorage.setItem('sherlog-lang', l);
     }
 

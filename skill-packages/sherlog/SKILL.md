@@ -5,62 +5,77 @@ description: "Use proactively for local agent-session history and prior setup ar
 
 # Sherlog
 
-用 `shlog` 在 Sherlog SQLite index 里做历史检索。心法：**先选 retrieval primitive，再定位候选 session，最后取内容证据**。
+用 standalone `shlog` 在本机 Sherlog SQLite index 中检索 agent 历史。Node.js 不是 CLI runtime dependency。
 
-命令默认写法：
+默认命令形式：
 
-`"${SHLOG_BIN:-${CXS_BIN:-shlog}}" <subcommand> ...`
+```bash
+"${SHLOG_BIN:-${CXS_BIN:-shlog}}" <subcommand> ...
+```
 
 ## 先选 retrieval primitive
 
 | 用户需要 | 起手 primitive | 完成标准 |
 | --- | --- | --- |
-| metadata projection：最早/最新、数量、分布、cwd/session 清单、大 session | 只读 SQLite 查询 index 的 `sessions` 表；必要时 `list` | metadata 候选完整；涉及内容时已再用 `read-*` 验证 |
-| semantic recall：主题、关键词、历史配置考古 | `find <query> --json`；按需加 `--cwd/--root/--selector` | 已执行结果的 `evidenceRead.argv`，不只看 title/snippet |
-| context reading：已知 `sessionRef` / seq | `read-range` 或 `read-page` | 已读足够上下文回答问题 |
-| coverage / freshness / index availability | `status --selector/--cwd --json` | 已按 `requestedCoverage.recommendedAction` 决定 query 或同范围 sync。默认不要读 `coverage[]` / `cwdGroups`；审计才用 `--inventory`。status 读 sidecar，不打开正文库，也不加载 SQLite native addon |
-| mutation：建索引或更新 coverage | bare `sync`（first-install Codex bootstrap）或 scoped `sync` | sync 无未解决 error；cold 迁移已注册 cold root |
+| metadata projection：最早/最新、数量、cwd/session 清单、大 session | `list` 或只读 SQLite `sessions` view | 候选完整；涉及内容时已用 `read-*` 验证 |
+| semantic recall：主题、关键词、历史配置考古 | `find <query> --json`，按需加 scope | 已执行候选的 `evidenceRead.command`（`executable` + `args` 原样拼接），不只看 title/snippet |
+| context read：已知 `sessionRef` / seq | `read-range` 或 `read-page` | 已读足够 projection 证据 |
+| coverage/freshness/index availability | `status --cwd/--selector --json` | 已按 `requestedCoverage.recommendedAction` 决定 query 或同范围 sync |
+| mutation：建/更新 index | bare/scoped `sync` | 无未解决 error；coverage 语义已检查 |
+| cold retention | `cold add/list/remove` | v8 registration 与后续 prune 意图明确 |
 
 ## Canonical policy
 
-本节是 sort / evidence / coverage / cold / prune 的单一策略真相；references 只给场景和命令细节。
-
-| policy | rule |
+| Policy | Rule |
 | --- | --- |
-| Evidence | `find/list` 只定位候选；内容先执行 `evidenceRead.argv` / `read-*`。只有 index projection 明确缺少完整 tool call、patch、长代码或原始事件时，才在定位 session 后走 agent-side raw fallback。 |
-| Provenance | 读结果时先看 `matchedFields`（命中出处）与 `sessionMessageCount`（读取成本上限）再决定 read 策略：message 锚点走 `read-range`，session-level 命中信 `evidenceRead`，大 session 避免盲目全量 `read-page`。始终执行完整 `evidenceRead.argv`（含 `--query`）；有 elision 且关键句不可见时，同一命令加 `--max-message-chars 0`。 |
-| Sort | `find` 默认 relevance；用户问最新/最近时用 `--sort ended`，必要时 `--exclude-session` 排除 self-hit。`--sort ended` 只按命中 session 的 `endedAt` 排序，不是日期窗；query 里的「最近一个星期」只是 FTS 词。短产品名或通用文件名先加 `--cwd` 或改用更独特短语。 |
-| Zero results | 先读 `zeroResults.reason`：`fresh_miss` 可信，按 `suggestedQueries` 放宽后再下结论；`stale_or_missing_coverage` 不可信，按 `nextAction` 同范围 sync 再重试；`coverage_not_confirmed` 先 `status`。不要对同一过长 query 原样重试。 |
-| Coverage | 跟随同范围 `nextAction`。Codex `source_content_changed` + `recommendedAction: "query"` 是 soft stale：先 query/read；只有答案依赖最新活跃尾部时才 sync。 |
-| Cold | `cold add` 只注册 presence 供 prune 保留。`sync` 只摄取 plain `*.jsonl`；不会从 cold `*.jsonl.zst` 重建 index。 |
-| Prune | 普通维护不用 `--prune`。只有用户明确要丢掉 hot 与已注册 cold 都不存在的历史时才 prune。 |
+| Read/write | `find/read/list/stats/cold list` 只读 SQLite，不扫描 raw、不隐式 sync/migrate。`status` 不返回/检索正文、不写 index；inventory cache miss 可流式读 raw，但仅以 privacy-allowlisted projection 派生 proof，exact cache hit 不重 parse。`sync` 写 content/index/coverage；`cold add/remove` 只写 retention state。 |
+| Evidence | `find/list` 只定位 candidate；内容执行 `evidenceRead.command`（`executable:"inherit"` + `args` 原样执行，`sideEffect:"read_index"`）/ `read-*`。只有 projection 明确缺少完整 tool call、patch、长代码或原始事件时，定位 session 后才走 agent-side raw fallback。 |
+| Provenance | 先看 `matchSource`、`matchedFields`、`sessionMessageCount`。message anchor 走 `read-range`；session-level hit 原样执行 `evidenceRead`，`read-range --query` 无 message anchor 时返回 typed `anchor_not_found`（含 `matchedProfileFields` 与 read-page nextAction），此时回退 `read-page` 或改用消息中真实出现的 term，严禁伪造 seq。关键句因 elision 不可见时加 `--max-message-chars 0`。 |
+| Sort | `find` 默认 relevance；最新/最近用 `--sort ended`，必要时 `--exclude-session` 防 self-hit。日期自然语言只是 query term，不是 date filter。 |
+| Query refine | 多 term 是 quoted-term AND。零结果先读 `zeroResults.reason`；不要原样重复过长 query。当前没有全正文 typo/fuzzy search。 |
+| Coverage | `find/list` 只报告 stored index proof，`freshness` 为 `not_checked`；需要 live proof 才用同 scope 的 `status --cwd/--selector`。`recommendedAction=query` 不 sync，`recommendedAction=sync` 才同步同范围。 |
+| Cold | v8 truth 是 SQLite `cold_roots`。`cold add` 只登记 presence；`sync` 不从 `.jsonl.zst` 重建。JSON `configPath` 是 legacy tombstone 兼容字段，不是 v8 truth。 |
+| Prune | 默认不用 `--prune`。只有用户明确要删除 hot 与 registered cold 都不存在的 projection 时才执行。registered cold root 不可达（missing/unmounted/permission）时 prune fail-closed，不会把不可读当作不存在。当前 cold-presence destructive prune 只支持 Codex。 |
 
-## 使用规则
+## Source 与 identity
 
-- 跨 source 读取使用 `find` 返回的 `sessionRef`，不要从 uuid 猜 source。
-- `matchSource = "session"` 时 `matchSeq = null`；仍优先执行 `evidenceRead.argv`，因为 session-level hit 可能使用 `read-range --query`。
-- raw full-text 是 `rg` / `rg -z` / `zstd -d` 等 agent-side 取证，不是 `shlog` 子命令。细节见 `references/progressive-workflow.md`。
+- public source：`codex`、experimental `claude-code`、experimental `pi`；
+- `find` 默认跨 public source；其他 source-scoped command 省略时默认 Codex；
+- 跨 source 读取使用 `find` 返回的 `sessionRef`，不要从 UUID 猜 source；
+- `matchSource = "session"` 时 `matchSeq = null`，但 `evidenceRead` 可能给出 `read-range --query`；执行后若返回 `anchor_not_found`，按 error 的 `nextAction` 回退 `read-page`；
+- 无 `--root/--cwd/--selector` 的 `find` 只搜各 source 的 canonical default `all(root)`；历史只同步在非默认 root 时，必须显式给同 root scope。
+
+## Coverage workflow
+
+不要固定执行 `status -> sync -> find`，也不要每次检索前无条件 sync。先 query；只有结果/零结果的 coverage 不足以支持 latest/completeness 结论时：
+
+```bash
+"${SHLOG_BIN:-${CXS_BIN:-shlog}}" status --cwd <repo-cwd> --json
+"${SHLOG_BIN:-${CXS_BIN:-shlog}}" sync --cwd <repo-cwd> --json
+```
+
+保持 status、必要的 sync、retry 的 source/root/selector 一致。status 为 `fresh` 或 `source_content_changed` + `recommendedAction: "query"`（proven append）时直接 query/refine；只有 `recommendedAction: "sync"`（含 truncate/prefix rewrite/same-size rewrite 等未证明 append 的破坏性变化），或答案依赖最新 active tail 时才 sync。
 
 ## 不适用
 
-当前 repo 代码搜索、已知路径阅读、外部文档/网页、无历史语义的 live state、日报、当前会话收尾。
+当前 repo 代码搜索、已知路径阅读、外部网页/docs、无历史语义的 live state、日报、当前会话收尾。
 
 ## 每次使用后的轻量自评
 
-内部归类为一种：`reliable` / `needs-refine` / `coverage-issue` / `skill-guidance-issue` / `dogfood-candidate`。
+内部归类为：`reliable` / `needs-refine` / `coverage-issue` / `skill-guidance-issue` / `dogfood-candidate`。
 
-- 前四类按需 refine、sync 或说明边界。
-- 若发现可复现的 recall / ranking / context 问题，只建议用户显式说 `$sherlog-dogfood 记录这个 case`；不要自动写或 promote 私有 golden。
-- 大规模检索可用真实扫描量/耗时做一句尾注；无真实数字不报。
+- 前四类按需 refine、status/sync 或说明边界；
+- 可复现 recall/ranking/context 问题只建议用户显式说 `$sherlog-dogfood 记录这个 case`；不要自动写或 promote 私有 golden；
+- 有真实 scan/count/time 才报告性能数字。
 
 ## 参考
 
-按需加载，默认不要全读：
+按需加载：
 
-- `references/progressive-workflow.md` — scenarios + raw fallback
-- `references/failure-cookbook.md` — nextAction / errors / recovery
-- `references/cli-surface.md` — 命令与 options
-- `references/advanced-queries.md` — FTS / CJK / metadata SQL
-- `references/json-schema.md` — 仅解析字段或 error shape 时
+- `references/progressive-workflow.md` — 场景、完成标准、raw fallback
+- `references/failure-cookbook.md` — coverage/error/recovery
+- `references/cli-surface.md` — command/options/defaults
+- `references/advanced-queries.md` — tokenizer/FTS/metadata SQL
+- `references/json-schema.md` — public JSON 与 error shape
 
-# skill-sync: canonical retrieval policy + raw fallback
+# skill-sync: native v8 canonical retrieval policy

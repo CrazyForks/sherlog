@@ -1,11 +1,10 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { resolveCliUnderTest, runCliUnderTest, type CliUnderTest } from "./cli-under-test";
 import { buildDogfoodScoreboard, desiredContextMode, evaluateDogfoodItem, type DogfoodEvaluation, type DogfoodScoreboard } from "./dogfood-eval-core";
 import type { DogfoodGolden } from "./dogfood-schema";
 import { measureReturnedContext, summarizeReturnedContext, type ReturnedContextMetric, type ReturnedContextSummary } from "./returned-context";
-import { syncSessions } from "../src/indexer";
-import { findSessions, getMessagePage, getMessageRange } from "../src/query";
 import type { FindResult, SyncSummary } from "../src/types";
 
 const MESSAGE_HIT_SESSION = "11111111-1111-4111-8111-111111111111";
@@ -29,9 +28,13 @@ const QUERY_WINDOW_SESSION = "99999999-9999-4999-8999-999999999999";
 type AcceptanceSourceId = "codex" | "claude-code" | "pi";
 
 export type AcceptanceFixtureRoots = Record<AcceptanceSourceId, string>;
+const ROOT = resolve(import.meta.dirname, "..");
 
 export interface AcceptanceGateOptions {
   keepTemp?: boolean;
+  requireCandidateOverride?: boolean;
+  /** Explicit command prefix as JSON argv; overrides SHLOG_BIN_UNDER_TEST. */
+  cliArgvJson?: string;
 }
 
 /**
@@ -68,6 +71,7 @@ export interface AcceptanceGateRow {
 }
 
 export interface AcceptanceGateResult {
+  cliUnderTest: CliUnderTest;
   fixtureRoot: string;
   sourceRoots: AcceptanceFixtureRoots;
   dbPath: string;
@@ -79,25 +83,22 @@ export interface AcceptanceGateResult {
 }
 
 export async function runAcceptanceGate(options: AcceptanceGateOptions = {}): Promise<AcceptanceGateResult> {
+  const cliUnderTest = resolveCliUnderTest({ argvJson: options.cliArgvJson });
+  if (options.requireCandidateOverride && cliUnderTest.source === "typescript-reference") {
+    throw new Error("acceptance gate requires an explicit candidate executable override");
+  }
   const base = mkdtempSync(join(tmpdir(), "sherlog-acceptance-"));
   try {
     const dbPath = join(base, "index.sqlite");
     const sourceRoots = writeAcceptanceFixtures(base);
     const sourceSyncs = {
-      codex: await syncSessions({ dbPath, rootDir: sourceRoots.codex }),
-      "claude-code": await syncSessions({
-        dbPath,
-        sourceId: "claude-code",
-        selector: { source: "claude-code", kind: "all", root: sourceRoots["claude-code"] },
-      }),
-      pi: await syncSessions({
-        dbPath,
-        sourceId: "pi",
-        selector: { source: "pi", kind: "all", root: sourceRoots.pi },
-      }),
+      codex: await syncSource(cliUnderTest, dbPath, "codex", sourceRoots.codex),
+      "claude-code": await syncSource(cliUnderTest, dbPath, "claude-code", sourceRoots["claude-code"]),
+      pi: await syncSource(cliUnderTest, dbPath, "pi", sourceRoots.pi),
     };
-    const rows = evaluateAcceptanceItems(dbPath, acceptanceGoldens(sourceRoots));
+    const rows = await evaluateAcceptanceItems(cliUnderTest, dbPath, sourceRoots, acceptanceGoldens(sourceRoots));
     return {
+      cliUnderTest,
       fixtureRoot: sourceRoots.codex,
       sourceRoots,
       dbPath,
@@ -112,19 +113,35 @@ export async function runAcceptanceGate(options: AcceptanceGateOptions = {}): Pr
   }
 }
 
-function evaluateAcceptanceItems(dbPath: string, items: DogfoodGolden[]): AcceptanceGateRow[] {
-  return items.map((item) => {
+async function syncSource(
+  cli: CliUnderTest,
+  dbPath: string,
+  sourceId: AcceptanceSourceId,
+  root: string,
+): Promise<SyncSummary> {
+  return runJsonCli<SyncSummary>(cli, [
+    "sync",
+    "--source", sourceId,
+    "--root", root,
+    "--db", dbPath,
+    "--json",
+  ]);
+}
+
+async function evaluateAcceptanceItems(
+  cli: CliUnderTest,
+  dbPath: string,
+  roots: AcceptanceFixtureRoots,
+  items: DogfoodGolden[],
+): Promise<AcceptanceGateRow[]> {
+  return Promise.all(items.map(async (item) => {
     const limit = Math.max(item.expected.topK ?? 5, item.find?.limit ?? 0, 5);
-    const summary = findSessions(dbPath, item.query, limit, item.find?.selector ?? null, {
-      sort: item.find?.sort,
-      excludeSessions: item.find?.excludeSessionUuids,
-      sourceId: item.expected.sourceId,
-    });
-    const preselected = evaluateDogfoodItem({ item, results: summary.results }).selected;
-    const context = readContextIfNeeded(dbPath, item, preselected.hit);
+    const results = await findViaCli(cli, dbPath, roots, item, limit);
+    const preselected = evaluateDogfoodItem({ item, results }).selected;
+    const context = await readContextIfNeeded(cli, dbPath, item, preselected.hit);
     const evaluation = evaluateDogfoodItem({
       item,
-      results: summary.results,
+      results,
       contextText: context.text,
       contextKind: context.kind,
       contextUnavailableReason: context.unavailableReason,
@@ -145,10 +162,38 @@ function evaluateAcceptanceItems(dbPath: string, items: DogfoodGolden[]): Accept
       facetMark: evaluation.facetMark,
       failureClasses: evaluation.failureClasses,
       predicates: evaluation.predicateResults,
-      diversity: topResultDiversity(summary.results, item.expected.topK ?? limit),
+      diversity: topResultDiversity(results, item.expected.topK ?? limit),
       returnedContext: measureReturnedContext(context),
     };
-  });
+  }));
+}
+
+async function findViaCli(
+  cli: CliUnderTest,
+  dbPath: string,
+  roots: AcceptanceFixtureRoots,
+  item: DogfoodGolden,
+  limit: number,
+): Promise<FindResult[]> {
+  const sourceId = item.expected.sourceId ?? "codex";
+  const args = ["find", item.query, "--source", sourceId, "--limit", String(limit)];
+  if (item.find?.selector) {
+    args.push("--selector", JSON.stringify(item.find.selector));
+  } else {
+    args.push("--root", item.find?.root ?? roots[sourceId]);
+    if (item.find?.cwd) args.push("--cwd", item.find.cwd);
+  }
+  if (item.find?.sort) args.push("--sort", item.find.sort);
+  for (const sessionUuid of item.find?.excludeSessionUuids ?? []) {
+    args.push("--exclude-session", sessionUuid);
+  }
+  args.push("--db", dbPath, "--json");
+
+  const payload = await runJsonCli<{ results?: FindResult[] }>(cli, args);
+  if (!Array.isArray(payload.results)) {
+    throw new Error(`CLI under test returned no results array for acceptance case ${item.id}`);
+  }
+  return payload.results;
 }
 
 function topResultDiversity(results: FindResult[], topK: number): TopResultDiversity {
@@ -162,11 +207,12 @@ function topResultDiversity(results: FindResult[], topK: number): TopResultDiver
   };
 }
 
-function readContextIfNeeded(
+async function readContextIfNeeded(
+  cli: CliUnderTest,
   dbPath: string,
   item: DogfoodGolden,
   hit: FindResult | null,
-): { kind?: "read-range" | "read-page"; text?: string; unavailableReason?: string } {
+): Promise<{ kind?: "read-range" | "read-page"; text?: string; unavailableReason?: string }> {
   const mode = desiredContextMode(item, hit);
   if (!mode) return {};
   if (!hit) return { unavailableReason: "no selected hit for context read" };
@@ -178,17 +224,76 @@ function readContextIfNeeded(
     }
     // Keep --seq and --query together so around_query can preserve evidence
     // the same way evidenceRead.argv / the dogfood runner do.
-    const range = getMessageRange(dbPath, hit.sessionRef, {
-      ...(typeof hit.matchSeq === "number" ? { seq: hit.matchSeq } : {}),
-      ...(query ? { query } : {}),
-      before: context.before ?? 2,
-      after: context.after ?? 2,
-    });
-    return { kind: "read-range", text: messagesText(range.messages) };
+    const args = ["read-range", hit.sessionRef];
+    if (typeof hit.matchSeq === "number") args.push("--seq", String(hit.matchSeq));
+    if (query) args.push("--query", query);
+    args.push(
+      "--before", String(context.before ?? 2),
+      "--after", String(context.after ?? 2),
+      "--db", dbPath,
+      "--json",
+    );
+    const range = await runCliUnderTest(cli, args, { cwd: ROOT });
+    if (range.exitCode !== 0) {
+      // A profile-only hit has no message anchor: the typed anchor_not_found
+      // error is the contract, and the agent must fall back to the session
+      // projection instead of trusting a fake seq 0.
+      const payload = parseCliJson(range.stdout) as { error?: { code?: string } } | null;
+      if (payload?.error?.code !== "anchor_not_found") {
+        throw new Error(
+          `CLI under test exited ${range.exitCode}: ${JSON.stringify([...cli.argv, ...args])}\n${range.stderr || range.stdout}`,
+        );
+      }
+      return readPageFallback(cli, dbPath, hit.sessionRef, context);
+    }
+    const rangePayload = JSON.parse(range.stdout) as { messages?: Array<{ role: string; contentText: string }> };
+    if (!Array.isArray(rangePayload.messages)) throw new Error(`CLI under test returned no messages array for ${item.id} read-range`);
+    return { kind: "read-range", text: messagesText(rangePayload.messages) };
   }
 
-  const page = getMessagePage(dbPath, hit.sessionRef, context.offset ?? 0, context.limit ?? 20);
+  return readPageFallback(cli, dbPath, hit.sessionRef, context);
+}
+
+async function readPageFallback(
+  cli: CliUnderTest,
+  dbPath: string,
+  sessionRef: string,
+  context: { offset?: number; limit?: number },
+): Promise<{ kind: "read-page"; text: string }> {
+  const page = await runJsonCli<{ messages?: Array<{ role: string; contentText: string }> }>(cli, [
+    "read-page", sessionRef,
+    "--offset", String(context.offset ?? 0),
+    "--limit", String(context.limit ?? 20),
+    "--db", dbPath,
+    "--json",
+  ]);
+  if (!Array.isArray(page.messages)) throw new Error(`CLI under test returned no messages array for read-page`);
   return { kind: "read-page", text: messagesText(page.messages) };
+}
+
+function parseCliJson(value: string): unknown {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+async function runJsonCli<T>(cli: CliUnderTest, args: string[]): Promise<T> {
+  const result = await runCliUnderTest(cli, args, { cwd: ROOT });
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `CLI under test exited ${result.exitCode}: ${JSON.stringify([...cli.argv, ...args])}\n${result.stderr || result.stdout}`,
+    );
+  }
+  try {
+    return JSON.parse(result.stdout) as T;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `CLI under test emitted invalid JSON: ${JSON.stringify([...cli.argv, ...args])}\n${message}\n${result.stdout}`,
+    );
+  }
 }
 
 function acceptanceGoldens(roots: AcceptanceFixtureRoots): DogfoodGolden[] {
@@ -223,7 +328,7 @@ function acceptanceGoldens(roots: AcceptanceFixtureRoots): DogfoodGolden[] {
     {
       id: "session-only-compact-context",
       query: "durable output queue",
-      intent: "session-level compact recall should still lead to raw transcript context",
+      intent: "session-level compact recall must fail closed to anchor_not_found, then lead to session-projection context via read-page",
       status: "hard",
       expected: {
         topK: 1,
@@ -478,7 +583,10 @@ function writeCodexSession(day: string, uuid: string, cwd: string, records: Reco
   const content = [line("session_meta", { id: uuid, cwd }), line("turn_context", { model: "gpt-5.4" }), ...records]
     .map((record) => JSON.stringify(record))
     .join("\n");
-  writeFileSync(filePath, content);
+  // A completed JSONL record is newline-terminated. Rust intentionally leaves
+  // an unterminated final line pending so a concurrent append cannot expose a
+  // partial event; acceptance fixtures must model a closed transcript.
+  writeFileSync(filePath, `${content}\n`);
 }
 
 function event(

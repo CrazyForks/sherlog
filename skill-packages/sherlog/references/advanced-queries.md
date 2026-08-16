@@ -1,76 +1,69 @@
 # Advanced Queries
 
-## 实际 query 语义
+## Query/tokenizer 语义
 
-`Sherlog` 不是把用户输入原样透传给 SQLite FTS。当前行为是：
+Sherlog 不把用户输入原样透传给 FTS5：
 
-- 先把 query 做 tokenizer 处理
-- 每个 term 都会被双引号包住
-- term 与 term 之间一律用 `AND`
+- 非 CJK text 依照 UAX #29 word segmentation 切分并 lowercase；
+- 连续 Han/Hiragana/Katakana/Hangul 生成重叠 Unicode-scalar bigram；
+- query terms 去重但保持 first-seen order；
+- 每个 term 双引号转义，terms 用 `AND` 连接；
+- 单个 CJK scalar 等非空 query 若没有 FTS token，可走有界 literal substring LIKE；
+- zero candidate 后可能尝试确定性的 relaxed query，但没有全正文无界 fuzzy。
 
-这意味着：
+因此用户输入的 `OR`、`NEAR`、`*` 或 quotes 不应被当成 native FTS operator。先用自然关键词；过窄时删掉冗余 term，过宽时增加稳定 identifier/error phrase。
 
-- 不要指望用户输入里的 `OR`、`NEAR`、`*`、引号按原生 FTS 运算符生效
-- 空格分开的多词查询，本质上是“这些词都要进候选”
-- 原始整句仍会参与 rerank，所以像 `health check` 这种自然短语仍然值得原样查询
+## Candidate 与 evidence
 
-对 agent 的含义：
+v8 `documents_fts` 同时索引：
 
-- 先用自然关键词查询
-- 关键词太宽时，增加第二个稳定词，而不是发明 FTS 运算符
+- message body；
+- session title；
+- summary；
+- compact；
+- reasoning summary。
 
-## CJK / 中文行为
+BM25 column weights：`body=1.0`、`title=8.0`、`summary=3.0`、`compact=4.0`、`reasoning=1.2`。
 
-当前 tokenizer 对 CJK 的策略是：
+session-profile candidate 只是 recall signal，不是 message evidence。`matchSource="session"`、`matchSeq=null` 时仍执行完整 `evidenceRead.command`；`read-range --query` 无 message anchor 会返回 typed `anchor_not_found`，按 nextAction 回退 `read-page`。
 
-- 中文/日文/韩文连续串按重叠 bigram 切分
-- 单个 CJK 字不会成为有效 FTS term
-- 如果 query 含 CJK 但 token 结果为空，会回退到有界 LIKE 扫描
+source/root/cwd/date/exact-session/exclude 条件尽量在 SQL candidate generation 下推。不要先拉全库候选再自行过滤，也不要把 session score 当成 message anchor。
 
-实务建议：
+## CJK 实务
 
-- 单个汉字命中不稳，尽量用至少两字中文词
-- 更稳的是“中文短词 + 英文标识符/报错”
-- 中文零结果时，先换：
-  - 至少两字中文
-  - 英文关键词
-  - 项目名 / cwd 过滤
+- 至少两个连续 CJK scalar 才产生 bigram；
+- supplementary Han（如 `𠮷`）按 Unicode scalar，不按 UTF-16 code unit；
+- 中英混合 query 可以用中文短词 + English identifier；
+- 单字 CJK fallback 是 literal LIKE，不代表可扩展的 fuzzy search；
+- 零结果按 `zeroResults` / coverage policy 处理，不要盲目重复。
 
-## 缩范围：什么时候 `list` 胜过 `find`
+## `list` vs `find`
 
-优先 `list`：有项目/cwd/日期、弱关键词。时间+关键词见 progressive-workflow Scenario 4。
+已知 project/time、关键词弱时先 `list`：
 
 ```bash
-"${SHLOG_BIN:-${CXS_BIN:-shlog}}" list --cwd <repo-cwd> --since <YYYY-MM-DD> --json
-"${SHLOG_BIN:-${CXS_BIN:-shlog}}" read-range <sessionRef> --query "IME" --json
+"${SHLOG_BIN:-${CXS_BIN:-shlog}}" list --cwd <cwd-fragment> --since <iso> --json
 ```
+
+需要内容主题时 `find`：
+
+```bash
+"${SHLOG_BIN:-${CXS_BIN:-shlog}}" find "specific phrase" --cwd <absolute-cwd> --json
+```
+
+`list --cwd` 是 case-insensitive substring；`find --cwd` 构造 exact cwd selector。两者 coverage 语义不同。
 
 ## Read-only SQLite metadata projection
 
-当问题只需要 session metadata projection 时,可以直接只读查询 Sherlog SQLite index。SQLite 是加速投影工具,不是内容证据工具；常规内容仍用 `read-page` / `read-range` 验证。完整 raw 细节走 progressive-workflow 的 raw full-text fallback，不要在 metadata 查询里直接扫 source root。
+v8 公共 metadata surface 是 `sessions` read-only compatibility view；物理 writer table `session_rows` 不应被 agent 直接修改。
 
-稳定可查字段只限:
-
-- `session_uuid`
-- `source_id`
-- `native_session_id`
-- `session_key`
-- `started_at`
-- `ended_at`
-- `cwd`
-- `title`
-- `summary_text`
-- `message_count`
-- `source_root`
-- `file_path`
-
-先拿 db path。这里用 `status` 只取 index 路径,不是把它当通用查询起手:
+先拿 DB path：
 
 ```bash
-DB_PATH="$("${SHLOG_BIN:-${CXS_BIN:-shlog}}" status --json | jq -r '.context.dbPath')"
+DB_PATH="$("${SHLOG_BIN:-${CXS_BIN:-shlog}}" stats --json | jq -r '.dbPath')"
 ```
 
-最早 session 候选:
+最早 session：
 
 ```bash
 sqlite3 -readonly "$DB_PATH" \
@@ -81,74 +74,81 @@ sqlite3 -readonly "$DB_PATH" \
    LIMIT 20;"
 ```
 
-某 cwd 下最近 session 候选（参数化传入目标 cwd，不拼接不可信输入）:
+某 cwd 最近 session（应用层参数化不可信输入；这里只展示 SQL shape）：
 
-```bash
-sqlite3 -readonly "$DB_PATH" \
-  "SELECT session_key, ended_at, message_count, title
-   FROM sessions
-   WHERE cwd = '<repo-cwd>'
-   ORDER BY ended_at DESC
-   LIMIT 20;"
+```sql
+SELECT session_key, ended_at, message_count, title
+FROM sessions
+WHERE cwd = ?
+ORDER BY ended_at DESC
+LIMIT 20;
 ```
 
-按 cwd 聚合:
+按 cwd 聚合：
 
 ```bash
 sqlite3 -readonly "$DB_PATH" \
-  "SELECT cwd, COUNT(*) AS sessions, SUM(message_count) AS messages, MAX(ended_at) AS latest
+  "SELECT cwd, COUNT(*) AS sessions, SUM(message_count) AS messages,
+          MAX(ended_at) AS latest
    FROM sessions
    GROUP BY cwd
    ORDER BY sessions DESC
    LIMIT 20;"
 ```
 
-大 session 候选:
+稳定 metadata columns：
 
-```bash
-sqlite3 -readonly "$DB_PATH" \
-  "SELECT session_key, message_count, started_at, ended_at, cwd, title
-   FROM sessions
-   ORDER BY message_count DESC
-   LIMIT 20;"
-```
+- `id`
+- `source_id`
+- `native_session_id`
+- `session_key`
+- `session_uuid`
+- `file_path`
+- `source_root`
+- `title`
+- `summary_text`
+- `compact_text`
+- `reasoning_summary_text`
+- `cwd`
+- `model`
+- `started_at`
+- `ended_at`
+- `path_date`
+- `message_count`
+- `document_count`
 
-拿到候选后验证内容:
+metadata projection 不是内容证据。拿到 candidate 后用 `read-range` / `read-page`。
 
-```bash
-"${SHLOG_BIN:-${CXS_BIN:-shlog}}" read-page <sessionRef> --offset 0 --limit 30 --json
-"${SHLOG_BIN:-${CXS_BIN:-shlog}}" read-range <sessionRef> --query "关键词" --before 4 --after 8 --json
-```
+## FTS internal rules
 
-metadata projection 只查 Sherlog index。常规内容证据用 `read-*` projection；只有 projection 不够时才进入 raw full-text fallback。
+- `documents_fts` 是 contentless；不要 select 它的 text columns。
+- snippet 从 `documents` JOIN 后的原文构造，带 `<mark>...</mark>`。
+- session profile 与 message 都在 `documents`，用 `kind` 区分。
+- 不要手写 FTS row、`meta` epoch、coverage 或 source cursor。
 
-## 同 title 的多变体 session
+## Same-title variants
 
-Codex resume/fork 可能产生多个 title 很像、但 `sessionUuid` 不同的 session。当前 `find` 会保留这些 distinct sessions，不会按 title 折叠。
+Codex resume/fork 可能出现 title 相似但 identity 不同的 session。当前不会按 title family collapse：
 
-不要做的事：
+- 不要先按 title 去重；
+- 看 `sourceId/sessionRef`、cwd、time、matchCount；
+- 用 evidence read 决定是否同一决策链。
 
-- 不要假设 title 一样就是同一场会话
-- 不要自己先按 title 去重再看内容
+## Future optimization constraints
 
-应该做的事：
+如果未来增加 fast prefilter：
 
-- 按 `cwd`
-- 按 `startedAt` / `endedAt`
-- 按 `matchCount`
-- 再决定是否继续 `read-range`
+- 必须返回 conservative candidate superset；只能排除可证明不匹配的 item；
+- tokenizer/delta/source state 不确定时纳入 candidate；
+- 必须由 exact/evidence stage 验证；
+- incremental candidate state 必须与 full replay 等价。
 
-## `snippet` 高亮
+当前没有 public `weakMatch`/`matchMode` 或 per-stage candidate count，也没有默认 typo fallback/frecency。不要在 agent workflow 中假设这些字段存在。
 
-- message 与 session FTS 命中的 `snippet` 都从 JOIN 后的原文（`messages.content_text` / session 字段）生成，带 `<mark>...</mark>`
-- 不要读 FTS content 列：当前 `messages_fts` / `sessions_fts` 是 contentless 的，那些列是空的
-- LIKE fallback 也会自己补 `<mark>...</mark>`
-- 如果下游需要纯文本，自己 strip
-- 如果你在回答里要引用命中词，高亮保留也可以
+## Source of truth
 
-## 来源
-
-- 仓库内 `src/query/search.ts`
-- 仓库内 `src/query/snippet.ts`
-- 仓库内 `src/tokenize.ts`
-- 仓库内 `src/ranking.ts`
+- `rust/src/tokenizer.rs`
+- `rust/src/index/reader.rs`
+- `rust/src/retrieval/query.rs`
+- `rust/src/retrieval/ranking.rs`
+- `rust/src/index/v8.sql`

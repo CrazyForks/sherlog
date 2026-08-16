@@ -2,171 +2,192 @@
 
 ## 一句话
 
-`Sherlog` 是一个面向本机 agent session 日志的渐进式检索 CLI，当前架构是：
+Sherlog 是一个短命、显式同步、local-first 的 agent session 检索 CLI：生产 runtime 是 standalone Rust binary，SQLite/FTS5 是唯一持久化真相源。
 
-`status -> sync --root/--cwd/--selector -> message/session recall -> session heuristic rerank -> read-range/read-page`
+```text
+raw transcripts --(explicit sync)--> privacy projection in SQLite v8
+                                         |
+query/list/read --------------------------+--> progressive evidence read
+status --(read-only allowlisted inventory scan)--> live coverage diagnosis
+```
 
-它已经可用，但仍是轻量 retrieval 后端，不是完整的 resource-level retrieval 系统。当前公开 session source 有 `codex`、experimental `claude-code` 和 experimental `pi`；其中 `claude-code` 与 `pi` 已接到固定 CLI 命令面，但仍应视作 experimental transcript-reader support，而不是稳定 raw-format 承诺。
+它不是 GUI、watcher、daemon、实时同步服务，也不把 raw grep 当作正常查询路径。当前公开 source 是 `codex`、experimental `claude-code` 与 experimental `pi`。
 
-## 当前命令面
+## Runtime 与命令权限
 
-- `shlog sync`
-- `shlog status`
-- `shlog find <query>`
-- `shlog read-range <sessionUuid>`
-- `shlog read-page <sessionUuid>`
-- `shlog list`
-- `shlog stats`
+生产入口是 `rust/src/main.rs` 生成的 `shlog`。`src/` 下的 TypeScript 只保留为 differential oracle 和 eval 基线；用户运行 production CLI 不需要 Node.js。
 
-这套命令面已经定型，不再保留 `window/session` 旧别名语义。
+| 命令 | raw source | SQLite | 是否写状态 |
+| --- | --- | --- | --- |
+| `status` | cache miss 流式读 raw，只派生 allowlisted inventory/fingerprint；不返回/检索正文 | query-only | 否 |
+| `sync` | 有界读取选中 transcript | 建库、迁移、写 projection/coverage | 是 |
+| `cold add/remove` | 只验证 root/presence | 写 `cold_roots`；无库 `add` 或 legacy-backed `remove` 可创建 metadata-only v8 | 是 |
+| `cold list` | 否 | query-only | 否 |
+| `find` / `read-*` / `list` / `stats` | 否 | query-only | 否 |
 
-这些命令都接受可省略的 `--source <id>`。当前公开值是 `codex`、experimental `claude-code` 和 experimental `pi`。`find` 是召回入口，省略 `--source` 时默认跨所有 public source 搜索；`--source codex` / `--source claude-code` / `--source pi` 用于窄化或诊断。`status`、`sync`、`list`、`stats` 和裸 `read-*` 仍以 Codex 作为省略 source 的兼容默认。传入未知 source 会返回 `unsupported_source`，不会开始扫描、查询或读取。
+只读命令不会隐式 sync、migrate、ensure schema 或创建数据库。裸 `shlog sync` 是默认 Codex root 的 first-install bootstrap。
 
-## 数据流
+## 深模块与 seam
 
-### 0. Source adapter
+- `app`（`rust/src/app/`）隐藏 CLI orchestration、输出和 coverage guidance；调用者只看到固定命令 contract。
+- `sources`（`rust/src/sources/`）是 raw-format adapter seam；adapter 负责 inventory、bounded read 与 allowlisted projection，核心层不理解各家 JSONL 细节。
+- `sync`（`rust/src/sync/`）把锁、snapshot transition、并行 parse、staging、事务发布和 prune 集中在一个 writer module。
+- `index`（`rust/src/index/`）隐藏 v7/v8 layout、query-only reader、v8 writer、SQL filter pushdown 和 invariant checks。
+- `retrieval`（`rust/src/retrieval/`）接收 storage candidate，负责 deterministic ranking、snippet、evidence-read plan 和 zero-result guidance。
+- `migration`（`rust/src/migration/`）封装 v7 -> v8 copy/verify/backup/atomic publish；普通 reader 不知道 migration 如何发生。
 
-`src/sources/` 定义 source adapter 边界和 registry。当前 registry 公开 Codex adapter、experimental Claude Code adapter 和 experimental Pi adapter：
+共享的 identity、selector、coverage 与 tokenizer 分别在 `identity.rs`、`selector.rs`、`coverage.rs`、`tokenizer.rs`。
 
-- `codex` adapter 负责默认 root、Codex JSONL inventory/snapshot、Codex parser。
-- `claude-code` adapter 负责默认 root、Claude Code transcript inventory/snapshot、Claude parser，并通过 public fixed-command surface 接入 source-aware indexing / read isolation。
-- `pi` adapter 负责默认 root、Pi transcript inventory/snapshot、Pi parser，并通过 public fixed-command surface 接入 source-aware indexing / read isolation。
-- 核心层负责 selector、coverage、DB、query/read/list/stats。
-- `find` 默认跨 public source fanout 并合并结果；切换 `--source claude-code` 或 `--source pi` 时走同一组命令但只查目标 source。当前非 Codex 语义仍限于 allowlisted transcript text。
+## SQLite v8
 
-Accepted/rejected projection boundaries live in [SOURCE_CONTRACTS.md](SOURCE_CONTRACTS.md). Treat that file as the code-facing contract for parser privacy fixtures; it is not an upstream raw-format stability promise.
+默认路径：
 
-Codex adapter 会把原有 `sessionUuid` 映射为 source-aware identity：
+```text
+${SHLOG_DATA_DIR:-${CXS_DATA_DIR:-${XDG_STATE_HOME:-~/.local/state}/shlog}}/index.sqlite
+```
 
-- `sourceId = "codex"`
-- `nativeSessionId = sessionUuid`
-- `sessionKey = "codex:" + sessionUuid`
+v8 schema：
 
-公共 read/find/list 输出继续保留 `sessionUuid`，以兼容旧 Codex UUID 工作流。
+| object | 作用 |
+| --- | --- |
+| `meta` | schema/index/projection/analyzer/coverage epoch 与 migration receipt |
+| `session_rows` | 可写的 source-aware session 主表 |
+| `sessions` | 无写 trigger 的只读兼容 view，供 CLI reader 与高级 SQL 使用 |
+| `source_files` | raw file identity、generation、append cursor、digest、checkpoint 与 epoch |
+| `documents` | message 与 session-profile 的统一 projection |
+| `documents_fts` | contentless FTS5 candidate index |
+| `coverage` | 成功 sync 的 selector proof；不是历史事实数据库 |
+| `cold_roots` | v8 cold retention registration 的唯一真相 |
 
-### 1. 同步
+v8 writer 固定使用 rollback `journal_mode=DELETE` 与 `synchronous=FULL`。Sherlog 的写入由外层 single-writer lock 串行化，产品也不追求 daemon 式读写并发；因此优先让 quiescent index 保持单文件，并保证 query-only 命令在 DB `0444`、目录 `0555` 时不创建 `-wal` / `-shm`。不要以 `immutable=1` 绕过 WAL sidecar：数据库仍可能被显式 sync 更新，immutable reader 在并发更新时可以读到旧 snapshot。
 
-[status.ts](../src/status.ts) 返回执行上下文、compact source inventory、index 状态，以及 `--selector`/`--cwd` 时的 `requestedCoverage` 证明。默认不 dump 历史 `coverage[]` 或 `cwdGroups`（`--inventory` 才做逐行审计）。它可以扫描 raw sessions 的 metadata，但不回答内容问题。coverage / index counts / file-meta cache 来自 sync 写在 `index.sqlite` 旁的 `index.meta.json` sidecar；sidecar 的 db identity（sqlite mtime/size + WAL size；空 WAL 与缺失 WAL 等价）与当前文件一致时，`status` 不打开正文库、不加载 `better-sqlite3`。sidecar 缺失或 identity 不匹配时回退一次只读 SQLite。探测只对 covering selector 做 snapshot，不重放历史 cwd/date_range 行。
+`documents.kind` 只有：
 
-[indexer.ts](../src/indexer.ts) 按显式 selector 扫描选定 source 的 session snapshot。当前公开 source 可以是 Codex、Claude Code 或 Pi；增量判断仍基于文件 `mtime`、`size` 和 `indexVersion`。
+- `message`：可回读的真实 user/assistant transcript，带 `seq`、role、timestamp 与正文；
+- `session_profile`：title、summary、compact、reasoning summary；不带 message seq。
 
-strict sync 默认只更新当前 source snapshot 中仍可见的文件，并保留已经进入 SQLite 的旧 session。Codex adapter 的读取固定在本轮捕获的 byte 边界；若相同 file set 中某个活跃 JSONL 在读后只追加，indexer 校验已读前缀摘要与既有投影后允许提交起始边界，并把 coverage 标为 `source_content_changed` soft stale。尚未索引的新文件若在 parser 打开前已变化，无法证明 snapshot 前缀安全，indexer 会延后该文件和 complete coverage（`active_source_deferred`），但在同一事务提交其他稳定 operation。截断、可证明的前缀改写/替换、file set 变化和其他 source 的中途变化仍阻断事务。这样既不会因当前对话增长阻塞稳定 source，也不会把未读或未证明的尾部发布成 fresh coverage。只有显式传 `--prune` 时，sync 才会删除同一 source 中 **hot snapshot 与已注册 cold root 都不存在** 的旧 index row；cold-present 会话（Codex `rollout-*<uuid>.jsonl(.zst)` 文件名可识别）保留。cold root 配置在 index 旁的 `cold-roots.json`（`shlog cold add/list/remove`）。一个 source 的 sync/prune 不会删除另一个 source 的数据。当前 source 中仍存在但被过滤或不能解析成 session 的文件仍按当前状态处理。检索始终读 SQLite，不依赖 hot raw 仍在磁盘上。
+因此 session-profile 命中会返回 `matchSource = "session"`、`matchSeq = null`，绝不会伪装成 message evidence。
 
-[parser.ts](../src/parser.ts) 只抽取 `event_msg` 里的：
+`documents_fts` 使用 `content=''` 与 `contentless_delete=1`。原文只保存在 `documents`；snippet 从 JOIN 后的 projection 构造，不读取 FTS content 列。
 
-- `user_message`
-- `agent_message`
+### 兼容与 fail-closed
 
-同时过滤内部 marker，避免污染索引。
+公共 `sessions` view 保留稳定 metadata SQL surface。物理 writer table 改名为 `session_rows`，且 view 没有 `INSTEAD OF` trigger；旧 TypeScript writer 打开 v8 后会在写入处失败，不能静默混写旧/新 schema。
 
-### 2. 持久化
+v8 reader 要求当前 schema、projection epoch、analyzer epoch 和 index version。coverage epoch 过旧时仍可读兼容的 content，但不会把旧 coverage 报成 complete；v8 writer 对任一 epoch/version mismatch 都 fail closed。
 
-[db.ts](../src/db.ts) 是 SQLite 访问 facade；`src/db/` 下的 schema / store / coverage 模块维护两层主数据：
+## Source projection 与隐私
 
-- `sessions`
-- `messages`
-- `coverage`
+每个 source adapter 只投影 allowlisted session metadata、user/assistant text 以及明确允许的 session-level handoff 字段。tool results、attachments、diagnostics、thinking、sidechain/meta 等记录默认不进入 searchable projection。
 
-`sessions` 当前使用 source-aware identity：`source_id`、`native_session_id`、`session_key`。旧 Codex row 会回填为 `source_id = "codex"`、`native_session_id = session_uuid`、`session_key = "codex:" || session_uuid`。`sessions.source_root` 持久化该 session 被同步时使用的 selector root，read-range / read-page 的 coverage attribution 基于这个字段，而不是从文件路径命名约定反推。
+- Codex：`session_meta` / `turn_context` metadata，`event_msg` user/agent messages，允许的 compact 与 reasoning summary。
+- Claude Code（experimental）：policy-approved user/assistant text 与对应 metadata。
+- Pi（experimental）：session/model metadata、user/assistant text 与允许的 compaction summary。
 
-`coverage` 同样存储 `source_id`，并且 canonical selector JSON 包含 `source`。fresh `all(root)` coverage 只覆盖同一个 source 下的更窄 selector。
+raw transcript format 仍是 adapter implementation detail；experimental source 不构成上游格式稳定承诺。
 
-以及两个全文索引：
+## Sync state machine
 
-- `messages_fts`
-- `sessions_fts`
+`sync` 的主链：
 
-两者都是 contentless FTS5（`content=''` + `contentless_delete=1`）。倒排索引仍按 `tokenize()` 后的 bigram/词写入；`messages.content_text` 与 session 字段仍存原文，FTS 不再另存一份 tokenized 文本。`find` snippet 从 JOIN 后的原文生成，不调用 FTS5 `snippet()`。升级后第一次打开 write 连接（通常是 `sync`）会从已存 `messages` / `sessions` 行重建 FTS 并 VACUUM，不重新解析 transcript。
+```text
+acquire writer lock
+  -> inventory bounded snapshot
+  -> compare source_files proof
+  -> choose no-op / append / full replay
+  -> parallel project into private stage
+  -> revalidate source snapshot
+  -> single SQLite transaction + invariant check
+  -> publish coverage only when proof is complete
+```
 
-`messages_fts` 只索引真实消息，`sessions_fts` 索引 `title + summary_text + compact_text + reasoning_summary_text`。这样可以让生成标题、派生摘要、compact handoff、reasoning summary 参与召回，同时不把这些 session-level 信号伪装成 `seq = -1` 的消息。
+### Transition
 
-SQLite 访问层当前已经按 reader / writer 分流：
+- unchanged：复用现有 projection；
+- proven append：从 `indexed_bytes` 与 reducer checkpoint 继续；
+- truncate、prefix rewrite、identity/epoch 不安全：完整 replay 并原子替换旧 projection；
+- source/file-set 在严格窗口中发生无法证明安全的变化：不发布完整 coverage。
 
-- `sync` 走 writer 连接，负责 schema ensure、WAL 初始化、写入事务，并在同一把 sync lock 内把 coverage / counts / file-meta 投影到 `index.meta.json`
-- `find` / `read-range` / `read-page` / `list` / `stats` 走只读连接；`find` 的 coverage 证明优先读 sidecar，FTS 仍读 SQLite
-- `status` 不写 index；它读 raw metadata 和 sidecar，只在 sidecar 不可用时打开只读 SQLite。sidecar 命中时进程不加载 `better-sqlite3` native addon（`--version` 与 sidecar-hit `status` 同路径）
-- 读路径默认设置 `busy_timeout`，避免并发 agent 多查时把瞬时锁竞争直接暴露成 `SQLITE_BUSY`
-- `sync` 额外有文件级 single-writer lock；遇到活跃 writer 会等待，遇到 dead pid 残留锁会自动清理
+核心验收不变量是：对同一最终 raw 状态，incremental projection 必须等于 full replay projection。当前测试覆盖 no-op/append/truncate、同步中 append/truncate、cold prune、migration crash/restore 与旧 writer fence；更完整的 property/state-machine 矩阵仍是近端 gate，不应伪装成已经完成。
 
-### 3. 查询
+### Strict、best effort 与 prune
 
-[query.ts](../src/query.ts) 是查询 facade；`src/query/` 下的 find / read / list / stats / search 模块提供三类读取：
+- strict 默认：选中输入有不可接受错误时不提交部分 coverage；
+- `--best-effort`：可以提交成功文件并返回 per-file errors，但不会写 complete coverage；
+- 默认不删除 raw 已消失的历史 projection；
+- `--prune` 才删除同 source 中 hot snapshot 与 registered cold 都不存在的 session；
+- cold-present session 只被保护，不从 `.jsonl.zst` 重新建索引。
 
-- `findSessions()`
-- `getMessageRange()`
-- `getMessagePage()`
+## Retrieval
 
-`findSessions()` 当前流程是：
+### Candidate generation
 
-1. 从 `messages_fts` 做原文证据召回
-2. 从 `sessions_fts` 做 session-level 字段召回
-3. 极少数零 token CJK query 在 message 侧回退到 LIKE
-4. 把 raw hits 合并后交给 [ranking.ts](../src/ranking.ts) 做 session 级排序
+Rust tokenizer 在 index/query 两侧共享：
 
-CLI 默认 `find` 会对 public sources 执行单源 `findSessions()` fanout，再用 reciprocal-rank fusion 合并候选，避免直接比较不同 source 子集里的 raw FTS 分数。JSON 结果带 `sourceId` 和 `sessionRef`；`sessionRef` 可直接传给 `read-range` / `read-page`，所以 agent 不需要再推断来源。
+- 非 CJK：lowercase UAX #29 words；
+- CJK：连续 Han/Hiragana/Katakana/Hangul 的重叠 Unicode-scalar bigram；
+- 单个 CJK scalar 无 FTS token 时，可走有界 literal LIKE fallback。
 
-每个 find 结果还带 additive recall-packet 字段：`matchedFields`（best-effort 命中出处：message 或 title/summary/compact/reasoningSummary）与 `sessionMessageCount`（该 session 已索引消息总数，作为 read-page 成本上限）。零结果时 CLI 附加 `zeroResults` 诊断：`fresh_miss` / `stale_or_missing_coverage` / `coverage_not_confirmed` 三类 reason，加确定性放宽建议（单个独特 ASCII 标识符、完整 CJK 词串——严格宽于自动形态学放宽已重试过的 AND 组合）。只读命令不会因此隐式 sync。
+多 term FTS expression 使用 quoted term `AND`。body/title/summary/compact/reasoning 的 BM25 column weights为 `1.0 / 8.0 / 3.0 / 4.0 / 1.2`。
 
-find/status 的 coverage freshness 探测会复用 sync 写入的 sidecar（以及 SQLite 回退路径上的 `source_file_meta_cache`）：内容派生的 cwd/pathDate/accepted fingerprint 按 file_path + mtime + size 校验，未变更文件跳过 per-file 内容前缀读取，新文件或已变更文件回退到正常内容扫描。sidecar 与 cache 只由 `sync` 写入；缓存值来自与 coverage 指纹同一次扫描，因此命中时快照指纹逐字节一致。探测只对 requested selector 的 covering records（`selectorImplies`）做 snapshot，不把历史 cwd/date_range coverage 行当成审计日志重放。
+source、root、cwd、date、exact session 与 exclude-session 尽量直接进入 SQL `WHERE`，避免先召回全局大集合再在 app 层过滤。跨 source `find` 对单源结果做 deterministic merge。
 
-`messages` 仍然只代表可回读的真实 transcript。session-level 命中会以 `matchSource = "session"` 返回；如果没有真实 message anchor，`matchSeq` 为 `null`，CLI 会建议先 `read-page`。
+### FFF 调研转化出的硬约束
 
-### 4. 排序
+FFF 的收益来自常驻内存 index 与 watcher，不适合照搬到 Sherlog 的短命 CLI。Sherlog 只吸收三条架构约束：
 
-[ranking.ts](../src/ranking.ts) 当前是 heuristic rerank，不是独立的 resource-level reranker。
+1. 任何未来快速预过滤器只能排除“可证明不匹配”的记录，必须输出 conservative candidate superset，不能制造 false negative；tokenizer、delta 或 source 状态不确定时保守纳入。
+2. append delta 是优化，不是第二语义；incremental 结果必须与 unsafe/full replay 相等。
+3. selector/session/date/exclude 等约束在 SQL candidate generation 下推；candidate score 与最终 message evidence anchor 始终分离。
 
-主要信号包括：
+本次 cutover 不引入 watcher/daemon、LMDB、每进程内存 bigram 主索引、全正文 fuzzy 或 frecency。阶段计数与 `weakMatch`/`matchMode` 可观测性属于后续 eval-driven 工作，不是当前公共 contract。
 
-- row 级 bm25 翻转分数
-- session-level FTS 字段权重：title 8.0、compact 4.0、summary 3.0、reasoning summary 1.2
-- content phrase / term coverage
-- user message bump
-- title phrase / term hits
-- cwd term hits
-- user hit count
-- session-level hit count
-- hit count
-- recency
+### Rank 与 progressive read
 
-## 当前已落地能力
+storage 只返回 candidate evidence；`retrieval` 聚合到 session 后使用 FTS score、phrase/term coverage、message role、profile field、hit count、cwd signal 与有界 recency 等 deterministic signal 排序。
 
-- 渐进式命令面
-- CJK 兼容的 tokenized FTS
-- `summary_text` 派生摘要
-- `compact_text` 解析 JSONL `type=compacted` handoff
-- `reasoning_summary_text` 解析 `response_item.reasoning.summary`
-- `sessions_fts(title + summary_text + compact_text + reasoning_summary_text)` session-level recall
-- source adapter boundary and public `--source codex|claude-code|pi`
-- source-aware selector / coverage / DB identity / query-read isolation
-- default cross-source `find` over public sources
-- strict / best-effort 两种 sync 语义
-- explicit sync scope (`--root` / `--cwd` / `--selector`, canonicalized to selector)
-- source inventory
-- complete coverage 记录
-- sync 写入的 source file meta cache（只读 coverage 探测跳过未变更文件的内容读取）
-- find recall-packet 字段（`matchedFields` / `sessionMessageCount`）与零结果 `zeroResults` 诊断
-- manual eval 导出
-- eval batch compare
-- experimental public Claude Code fixed-command support
-- experimental public Pi fixed-command support
+`find` 结果附带：
 
-## 当前未落地能力
+- `matchedFields`：message/title/summary/compact/reasoningSummary provenance；
+- `sessionMessageCount`：继续读取的成本提示；
+- `evidenceRead.command`：`executable:"inherit"` + 闭包 `--source/--db/--json` 的 `args`（`sideEffect:"read_index"`），应原样拼接执行的 `read-range` 或 `read-page`。
 
-下面这些不要误写成现状：
+常规回答必须来自 `read-range` / `read-page` projection。只有 projection 明确缺少完整 tool call、patch、长代码或原始事件时，agent 才可先定位 session，再做 agent-side raw fallback；raw fallback 不是 `shlog` 查询能力。
 
-- query-profile 分类驱动的 ranking 分权（真实 A/B 未证明有效，当前已删除该内部抽象）
-- richer projection / event replay / range cache
-- duplicate collapse / diversity control
-- 强约束 gold set / rubric / error taxonomy
-- watcher / daemon / realtime sync
-- Claude Code / Pi raw JSONL stable public format decision；当前 experimental transcript readers 不等同于稳定格式承诺
+## Coverage
 
-## 为什么当前文档改成这版
+coverage 是“某次成功 sync 对 canonical selector 完成了多少 projection”的存储证明：
 
-之前的 tracking/research 文档混合了三种内容：
+- fresh `all(source, root)` 可覆盖同 source/root 的更窄 selector；
+- coverage 从不跨 source/root；
+- `find/list/read/stats` 只报告 index 中的 stored coverage，不用 raw source 伪造 freshness；`find/list` 的 `CoverageStatus.freshness` 是 `not_checked`，即使存在 covering record，`read/stats` 只返回 stored entries/rows；
+- `status --cwd/--selector` 可 live 建立 privacy-filtered inventory snapshot，并把 stored coverage 与当前 snapshot 对比；cache miss 可能流式读取 raw bytes，但只让 allowlisted accepted records 影响 proof，cache hit 以 exact `mtime_ns`/checkpoint 避免重 parse；
+- 未指定 selector 的 `list` 不把任意窄 coverage 当全局 complete；无显式 selector 的 `find` 则按各 source 默认 all-root 解释 coverage。
 
-- 当前实现
-- 目标态建议
-- 外部调研结论
+coverage 缺失或 stale 时，query 结果仍可能有用，但不能据此做完整性结论。需要 live proof 时先用同 selector 的 `status`；仅当 `recommendedAction=sync`，或答案明确依赖尚未索引的最新尾部时，才执行同范围 `sync`。
 
-这种写法会误导后续 agent 把“建议”当成“现状”。这里保留的只有当前代码真相；后续计划单独放到 [docs/ROADMAP.md](ROADMAP.md)。
+## v7 -> v8 migration
+
+v7 index 可由 query-only reader 读取。只有授权 writer 路径需要升级时才执行 migration：
+
+1. 获取与 sync 共用的 writer lock，检查 v7 schema，并严格读取旧版本留下的 regular/missing/已发布 legacy cold state；
+2. 创建一致 v7 backup；
+3. 把 stored projection 与一次性导入的 cold registrations 复制到私有 v8 staging，包括 hot raw 已不存在的 cold-only session；
+4. 独立校验 counts、FTS、source proof 与 invariant，再 fsync/seal staging；
+5. cold fence preflight 创建永久的 private `0700` state directory；regular JSON 以 `cold-roots.v7.json` hard link 保存在其中，同时重新验证 v7 与 legacy state 未变；
+6. **先**把 canonical `cold-roots.json` 发布为指向该目录的单组件 relative symlink；missing path 使用 create-if-absent symlink，不能覆盖竞态中新出现的 JSON；
+7. **再**原子发布 v8 DB、确认 durability，并复核 cold fence 与 v8 copy。失败时保留 backup/quarantine evidence；即使 post-publish verification 恢复 v7 DB，也不撤销已发布的 cold fence。
+
+当前 native CLI 不创建或更新 legacy JSON；没有 v8 的 `cold add`（以及存在 legacy state 的 `cold remove`）直接创建 metadata-only v8。filesystem fence 只阻止旧 writer 重新按 canonical pathname 打开文件：发布前已经打开的旧 FD 仍可能在 post-check 后修改 hard-linked backup，这个窗口无法在用户态完全线性化。出现 fence/cutover error 时应先停止旧 writer 再重试，绝不能删除 canonical symlink、target directory 或 recovery backup。
+
+read-only command 不会移动 legacy data dir 或触发上述流程。
+
+## 发布状态
+
+源码、native installer 与 release workflow 已 source-ready。声明的 archive target 只有：
+
+- macOS arm64：`aarch64-apple-darwin`
+- macOS x64：`x86_64-apple-darwin`
+- Linux x64 GNU：`x86_64-unknown-linux-gnu`（非 musl）
+
+本次 cutover 尚未发布 native tag/assets，因此不能把现有 GitHub/npm release 或全局 `shlog` 当作上述 Rust build；本机全局 `shlog --version` 当前仍为旧发布版 `0.4.4`。详情见 [RUST_ARCHITECTURE.md](RUST_ARCHITECTURE.md)。

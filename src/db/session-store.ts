@@ -270,6 +270,8 @@ export function getSessionRecord(db: Db, sessionUuid: string): SessionRecord | n
         source_root AS sourceRoot,
         title,
         summary_text AS summaryText,
+        compact_text AS compactText,
+        reasoning_summary_text AS reasoningSummaryText,
         cwd,
         model,
         started_at AS startedAt,

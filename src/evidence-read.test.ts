@@ -1,14 +1,16 @@
 import { describe, expect, test } from "vitest";
-import { buildEvidenceReadAction } from "./evidence-read";
+import { buildEvidenceReadAction, type EvidenceReadContext } from "./evidence-read";
+
+const context: EvidenceReadContext = { dbPath: "/state/index.sqlite", json: true };
 
 describe("buildEvidenceReadAction", () => {
-  test("message hits resolve to a bounded read-range command", () => {
+  test("message hits resolve to a bounded read-range command closed over db/json/source", () => {
     expect(buildEvidenceReadAction({
       sourceId: "codex",
       sessionRef: "11111111-1111-4111-8111-111111111111",
       matchSeq: 7,
       query: "ranking weights",
-    })).toEqual({
+    }, context)).toEqual({
       kind: "read-range",
       reason: "message_match",
       sourceId: "codex",
@@ -17,19 +19,27 @@ describe("buildEvidenceReadAction", () => {
       query: "ranking weights",
       before: 2,
       after: 2,
-      argv: [
-        "shlog",
-        "read-range",
-        "11111111-1111-4111-8111-111111111111",
-        "--seq",
-        "7",
-        "--before",
-        "2",
-        "--after",
-        "2",
-        "--query",
-        "ranking weights",
-      ],
+      command: {
+        executable: "inherit",
+        args: [
+          "read-range",
+          "11111111-1111-4111-8111-111111111111",
+          "--seq",
+          "7",
+          "--before",
+          "2",
+          "--after",
+          "2",
+          "--query",
+          "ranking weights",
+          "--source",
+          "codex",
+          "--db",
+          "/state/index.sqlite",
+          "--json",
+        ],
+        sideEffect: "read_index",
+      },
     });
   });
 
@@ -39,7 +49,7 @@ describe("buildEvidenceReadAction", () => {
       sessionRef: "claude-code:session-abc",
       matchSeq: null,
       query: "durable output queue",
-    })).toEqual({
+    }, context)).toEqual({
       kind: "read-range",
       reason: "session_level_match",
       sourceId: "claude-code",
@@ -47,17 +57,25 @@ describe("buildEvidenceReadAction", () => {
       query: "durable output queue",
       before: 2,
       after: 2,
-      argv: [
-        "shlog",
-        "read-range",
-        "claude-code:session-abc",
-        "--query",
-        "durable output queue",
-        "--before",
-        "2",
-        "--after",
-        "2",
-      ],
+      command: {
+        executable: "inherit",
+        args: [
+          "read-range",
+          "claude-code:session-abc",
+          "--query",
+          "durable output queue",
+          "--before",
+          "2",
+          "--after",
+          "2",
+          "--source",
+          "claude-code",
+          "--db",
+          "/state/index.sqlite",
+          "--json",
+        ],
+        sideEffect: "read_index",
+      },
     });
   });
 
@@ -66,14 +84,30 @@ describe("buildEvidenceReadAction", () => {
       sourceId: "claude-code",
       sessionRef: "claude-code:session-abc",
       matchSeq: null,
-    })).toEqual({
+    }, context)).toEqual({
       kind: "read-page",
       reason: "session_level_match",
       sourceId: "claude-code",
       sessionRef: "claude-code:session-abc",
       offset: 0,
       limit: 40,
-      argv: ["shlog", "read-page", "claude-code:session-abc", "--offset", "0", "--limit", "40"],
+      command: {
+        executable: "inherit",
+        args: [
+          "read-page",
+          "claude-code:session-abc",
+          "--offset",
+          "0",
+          "--limit",
+          "40",
+          "--source",
+          "claude-code",
+          "--db",
+          "/state/index.sqlite",
+          "--json",
+        ],
+        sideEffect: "read_index",
+      },
     });
   });
 });

@@ -1,178 +1,260 @@
 # Sherlog Usage Guide
 
-## Commands
+## Runtime 与安装状态
 
-| Command | Purpose |
-| --- | --- |
-| `shlog status` | Compact coverage proof: execution context, index stats, and `requestedCoverage` when `--selector`/`--cwd` is set. Does not write the index. `--inventory` dumps historical `coverage[]` freshness and `cwdGroups`. |
-| `shlog sync [--root <dir>\|--cwd <path>\|--selector <json>]` | Scan selected sessions for the chosen source and update the SQLite index. Bare `shlog sync` initializes default Codex history. This is the only write command. |
-| `shlog find <query>` | Search indexed sessions across all public sources by default and return ranked session candidates with minimal snippets. Use `--source <id>` to narrow, or `--root`, `--cwd`, and `--sort ended` for scoped "latest + keyword" queries. |
-| `shlog read-range <sessionUuid>` | Read a small message window around a matched sequence or in-session query. |
-| `shlog read-page <sessionUuid>` | Read a session page by offset and limit. |
-| `shlog list` | List indexed sessions without full-text search. |
-| `shlog stats` | Show index statistics. |
-| `shlog doctor` | Diagnose the runtime environment: Node version vs. the `>=22.13.0` floor, the built-in SQLite version, and whether the index database is readable. `--json` for structured output. |
+当前 checkout 的 production CLI 是 standalone Rust binary，内置 SQLite/FTS5，运行时不需要 Node.js。native release workflow 与 installer 已 source-ready，但本次 cutover 尚未发布新的 native tag/assets；本机全局 `shlog --version` 当前实测仍为旧发布版 `0.4.4`，不是此 checkout 的 Rust build。
 
-All commands that read indexed content support `--json`. Read commands fail cleanly if the index has not been created yet.
-
-## Runtime requirements
-
-Sherlog requires **Node.js >= 22.13.0** and uses Node's built-in SQLite
-(`node:sqlite`). There are no native addons, so switching Node versions can
-never produce a `NODE_MODULE_VERSION` mismatch, and the CLI installs on macOS,
-Linux, and Windows. If the runtime is older than the floor, the CLI exits with
-one actionable line instead of a module error. On Node 22.x the runtime prints
-a one-line `ExperimentalWarning: SQLite is an experimental feature` to stderr
-once per process; silence it with `NODE_OPTIONS=--disable-warning=ExperimentalWarning`.
-Node 24+ prints nothing.
-
-In source-aware builds, all fixed commands accept `--source <id>`. Public values are `codex`, experimental `claude-code`, and experimental `pi`.
-
-`find` is the recall primitive and defaults to all public indexed sources:
+从当前源码构建：
 
 ```bash
-shlog find "health check"
-shlog find "health check" --source all
+git clone https://github.com/catoncat/sherlog.git
+cd sherlog
+cargo build --release --locked --bin shlog
+./target/release/shlog --version
+./target/release/shlog --help
 ```
 
-Use a source only to narrow or diagnose:
+发布 native tag 后，installer 才可用于对应 assets：
 
 ```bash
-shlog find "health check" --source codex
-shlog find "health check" --source claude-code
-shlog find "health check" --source pi
+curl -fsSL https://github.com/catoncat/sherlog/releases/latest/download/install.sh | sh
 ```
 
-For `status`, `sync`, `list`, `stats`, and bare read commands, omitting `--source` still means Codex. Read commands can also consume the `sessionRef` returned by `find` directly:
+声明的 native target 仅有 macOS arm64、macOS x64 与 Linux x64 GNU。Linux musl、Linux arm64 与 Windows 没有发布 archive。
+
+开发 checkout 中：
 
 ```bash
-shlog status --source claude-code --json
-shlog sync --source claude-code --root ~/.claude/projects --json
-shlog read-range claude-code:<sessionId> --seq <matchSeq>
+cargo run --locked --bin shlog -- status --json
+npm run shlog -- status --json           # Rust command 的开发包装
+npm run shlog:reference -- status --json # TypeScript differential oracle
 ```
 
-Unknown sources still return `unsupported_source` before doing command work. Claude Code and Pi remain experimental public support: the current adapters are built around existing local transcript readers, validated with synthetic fixtures, and may still evolve toward more stable SDK/session API contracts. If an installed CLI rejects the `--source` option itself, that installation predates this behavior; update the CLI or run the checkout with `npm run shlog -- ...`.
+最后两项只用于仓库开发；Node.js 不是 production CLI dependency。
 
-## Selectors
+## 固定命令面
 
-`sync` is the only write command. Bare `shlog sync` is a first-install bootstrap shortcut: it canonicalizes to `all(codex, ~/.codex/sessions)`, creates the index if needed, and writes coverage for the default Codex source root. For agent work, prefer narrower CLI shortcuts:
+| Command | Purpose | 写入 |
+| --- | --- | --- |
+| `shlog status` | live privacy-filtered inventory、index 状态与可选 requested coverage proof；cache miss 可流式读 raw | 否 |
+| `shlog sync` | 扫描选中 raw transcript，建立/更新/migrate v8 index 与 coverage | 是 |
+| `shlog cold add/list/remove` | 管理 prune retention root；list 只读 | add/remove 是 |
+| `shlog find <query>` | 从 index 召回并排序 session candidate | 否 |
+| `shlog read-range <sessionRef>` | 围绕 seq 或 query anchor 读取 message projection | 否 |
+| `shlog read-page <sessionRef>` | 按 offset/limit 顺序读取 message projection | 否 |
+| `shlog list` | 不做全文检索，按 metadata 列 session | 否 |
+| `shlog stats` | 返回 index 统计与 stored coverage | 否 |
+
+所有命令支持 `--db <path>`；结构化输出使用 `--json`。`find` / `read-*` / `list` / `stats` 只打开 SQLite query-only，不扫描 raw source、不隐式 sync、不隐式 migration。
+
+## Quick start
+
+首次建立默认 Codex index：
 
 ```bash
 shlog sync
-shlog sync --root /Users/you/.codex/sessions
-shlog sync --cwd /Users/you/work/project
-shlog find "health check" --cwd /Users/you/work/project --sort ended
-shlog list --root /Users/you/.codex/sessions --sort ended -n 10
 ```
 
-Use full selector JSON for date ranges or advanced scopes. If you pass `--root`, the selector JSON may omit `root`; without `--root`, shlog uses the default source root. Selector JSON may also omit `source`; canonical selectors include the resolved source id in this checkout.
+搜索后执行结果自带的 evidence read：
+
+```bash
+shlog find "health check" --json
+shlog read-range codex:<session-id> --seq 12 --query "health check" --before 2 --after 2 --json
+shlog read-page codex:<session-id> --offset 0 --limit 20 --json
+```
+
+`find` 默认 relevance。问“最新/最近一次提到 X”时：
+
+```bash
+shlog find "X" --cwd /Users/you/work/project --sort ended \
+  --exclude-session codex:<current-session-id> -n 5 --json
+```
+
+不要只凭 title/snippet 回答内容问题。优先原样执行 JSON 结果的 `evidenceRead.command`（`executable:"inherit"` + `args`，已闭包 `--db/--json`）；message 太长且关键内容被省略时，在同一 read 命令上加 `--max-message-chars 0`。`read-range --query` 无 message anchor 时返回 typed `anchor_not_found`，按 nextAction 回退 `read-page`，不要伪造 seq 0。
+
+## Source
+
+公开值：
+
+- `codex`
+- `claude-code`（experimental transcript reader）
+- `pi`（experimental transcript reader）
+
+默认 root：
 
 ```text
+codex        ~/.codex/sessions
+claude-code  ~/.claude/projects
+pi           ~/.pi/agent/sessions
+```
+
+`find` 省略 `--source` 时跨所有公开 source 搜索；`--source all` 等价。`status`、`sync`、`list`、`stats` 省略时默认 Codex。bare session id 也按 Codex 解释，跨 source 请直接使用 `find` 返回的 `sessionRef`：
+
+```bash
+shlog find "deployment failure" --source claude-code --json
+shlog read-page claude-code:<native-session-id> --offset 0 --limit 20 --json
+```
+
+未知 source 在扫描/查询前返回 `unsupported_source`。
+
+## Selector 与 coverage scope
+
+CLI shortcut：
+
+```bash
+shlog sync --root /Users/you/.codex/sessions
+shlog sync --cwd /Users/you/work/project
+shlog status --cwd /Users/you/work/project --json
+shlog find "health check" --cwd /Users/you/work/project --json
+shlog list --root /Users/you/.codex/sessions --sort ended -n 10 --json
+```
+
+canonical selector JSON：
+
+```json
 {"source":"codex","kind":"all","root":"/Users/you/.codex/sessions"}
-{"source":"codex","kind":"date_range","root":"/Users/you/.codex/sessions","fromDate":"2026-04-01","toDate":"2026-04-30"}
 {"source":"codex","kind":"cwd","root":"/Users/you/.codex/sessions","cwd":"/Users/you/work/project"}
-{"source":"codex","kind":"cwd_date_range","root":"/Users/you/.codex/sessions","cwd":"/Users/you/work/project","fromDate":"2026-04-01","toDate":"2026-04-30"}
+{"source":"codex","kind":"date_range","root":"/Users/you/.codex/sessions","fromDate":"2026-08-01","toDate":"2026-08-15"}
+{"source":"codex","kind":"cwd_date_range","root":"/Users/you/.codex/sessions","cwd":"/Users/you/work/project","fromDate":"2026-08-01","toDate":"2026-08-15"}
 ```
 
-Example list query scoped to one project:
+`--selector` 可省略 `root` 与 `source`，CLI 会用选中 source 的默认值补齐。`--selector` 不能与 `--cwd` 组合；显式 `--source` 必须与 selector source 一致。
 
-```bash
-shlog list --selector '{"kind":"cwd","root":"/Users/you/.codex/sessions","cwd":"/Users/you/work/project"}' --sort ended -n 10
-shlog list --selector '{"kind":"cwd","cwd":"/Users/you/work/project"}' --sort ended -n 10
-```
+`status --root` 改变 inventory/default selector root；要请求明确 coverage proof，使用 `--cwd` 或 `--selector`。`status --inventory` 才返回完整 stored coverage audit 与 cwd groups。
 
-Example latest keyword query, excluding the current self-hit:
+## Storage
 
-```bash
-shlog find "xsearch" --cwd /Users/you/work/project --sort ended --exclude-session <current_session_uuid> -n 5 --json
-```
-
-`find` defaults to relevance sorting. Do not treat default `find` order as time order.
-
-`find` remains read-only, but it does a metadata-only freshness guard for the
-searched selector. If JSON output includes `nextAction.reason:
-"stale_or_missing_coverage"` or text output prints `next:` after non-empty
-results, those results are best-effort from the current SQLite index. Current
-active-session tail drift is softer: when `status` reports `freshness: "stale"`
-with `staleReason: "source_content_changed"` and `recommendedAction: "query"`,
-query/read the existing index first, and sync only when the answer depends on
-the latest tail or a strict completeness claim.
-
-## Sync And Storage
-
-By default, source-scoped commands read Codex sessions from `~/.codex/sessions`. With `--source claude-code`, the default root is `~/.claude/projects`. `find` defaults to searching all public indexed sources already present in the SQLite index. Index data is stored at:
+默认数据库：
 
 ```text
 ~/.local/state/shlog/index.sqlite
-~/.local/state/shlog/index.meta.json
 ```
 
-`index.sqlite` is the retrieval source of truth. `index.meta.json` is a sync-written metadata sidecar (coverage fingerprints, session/message counts, source file meta cache). `status` and `find` coverage proofs read the sidecar when its sqlite+wal identity still matches; they open the body database only when the sidecar is missing or stale. A sidecar hit does not load the `better-sqlite3` native addon. Sync remains the only writer. There is no default daemon or watcher.
+路径优先级：
 
-`$XDG_STATE_HOME` is respected, and `SHLOG_DATA_DIR` has the highest priority. `CXS_DATA_DIR` still works as a legacy alias:
+1. `SHLOG_DATA_DIR`
+2. legacy alias `CXS_DATA_DIR`
+3. `$XDG_STATE_HOME/shlog`
+4. `~/.local/state/shlog`
+
+例如：
 
 ```bash
 export SHLOG_DATA_DIR="$HOME/.config/shlog"
 ```
 
-Sync is strict by default. If any selected file fails to parse or write, `sync` exits non-zero with per-file diagnostics and does not commit partial coverage. Codex active-session append is the narrow exception to the old “source must stay byte-for-byte static” rule: each Codex file is read only through the byte boundary captured for the sync, and a verified append after that boundary does not fail the command. Stable sources and the bounded active prefix are committed together; JSON reports `coverage.staleReason: "source_content_changed"` and `recommendedAction: "query"`, and a later sync fills the tail. If an unindexed Codex file already changed before its bounded read opened, sync cannot prove that the old prefix was append-only; it defers that file and complete coverage while committing other stable operations, and reports `coverage.reason: "active_source_deferred"` with `recommendedAction: "sync"`. Truncation, verified prefix rewrite/replacement, source-file-set changes, and mid-sync changes from other sources remain strict failures. Previously indexed sessions whose source JSONL later disappears are retained by default, so raw log maintenance does not make historical `shlog find` or `read-*` results disappear.
+v8 `index.sqlite` 是唯一真相；没有 `index.meta.json` sidecar。核心 object 是：
 
-### Cold archive (hot / index / cold)
+- `meta`
+- writable `session_rows` + read-only compatibility view `sessions`
+- `source_files`
+- `documents` + contentless `documents_fts`
+- `coverage`
+- `cold_roots`
 
-Sherlog treats three layers as distinct:
+使用者不要手工改这些表。需要 metadata projection 时可用 `sqlite3 -readonly` 查询 `sessions` view，内容证据仍用 `read-*`。
 
-1. **Hot raw** — default Codex root `~/.codex/sessions` (what normal `sync` scans)
-2. **Index** — `~/.local/state/shlog/index.sqlite` (retrieval source of truth) plus `index.meta.json` (status/coverage metadata plane)
-3. **Cold raw** — e.g. `~/.codex/archived_sessions/.../rollout-*.jsonl.zst` (space saving; not the default sync root)
-
-Recommended space-saving flow:
-
-```bash
-shlog sync                                 # ensure history is indexed first
-# move old months out of ~/.codex/sessions into ~/.codex/archived_sessions
-# optional: zstd each rollout-*.jsonl to rollout-*.jsonl.zst (per-file, rg -z friendly)
-shlog cold add --root ~/.codex/archived_sessions
-shlog sync                                 # still retains history; removed=0 for cold-moved rows
-```
-
-`shlog cold add|list|remove` only registers cold roots next to the index (`cold-roots.json`). It does **not** re-parse session bodies. Presence is detected from Codex `rollout-*<uuid>.jsonl` / `.jsonl.zst` file names.
-
-`sync --prune` deletes indexed sessions that are missing from **both** the hot source snapshot **and** registered cold roots. Sessions still present under cold roots are kept (`retainedCold` in the summary). Register cold roots after archiving; without registration, prune still treats hot-missing rows as droppable. You can also pass one-off `--cold-root <dir>` on `sync` (repeatable).
-
-`find --json` evaluates selector freshness against the current raw source and reports coverage from that same assessment. `complete=false` with `freshness="stale"` does not make existing indexed hits unavailable: a non-empty Codex result remains usable when only the active tail changed, while a zero result receives a retry-oriented `nextAction`. Library-level synchronous queries that only read SQLite return `complete=false` / `freshness="not_checked"` and preserve `coveringSelectors` rather than claiming current completeness without inspecting raw files.
-Pass `--prune` only when you explicitly want to drop sessions that are gone from hot **and** cold. Prefer `cold add` over treating archive as deletion.
-Pass `--best-effort` only when you explicitly want successful files written despite failures; best-effort sync does not record complete coverage.
-
-`sync` is not required before every query. Use `status --cwd` or `status --selector` to check coverage first. A fresh `{"kind":"all", ...}` coverage record covers narrower selectors under the same source and root; a high `stats.sessionCount` only means rows exist and is not itself a freshness proof. Default `status --json` omits historical `coverage[]` and `sourceInventory.cwdGroups`; pass `--inventory` only when you need that audit dump. `staleReason: "source_content_changed"` means the selected file set stayed stable but existing source files changed. For Codex this commonly happens while the current conversation JSONL is still growing; when it keeps `recommendedAction: "query"`, agents should not sync before every active conversation query. Other sources may still recommend `sync` for the same stale reason. Read commands never initialize or refresh the index; if they return `index_unavailable`, run `shlog sync` for default Codex history or a scoped sync such as `shlog sync --cwd <project>`.
-
-Indexes created before `shlog-v7-source-identity` should be refreshed with `sync --root`, `sync --cwd`, or `sync --selector` so selector coverage and reads use source-aware identity, current `path_date`, and source-root provenance fields. Existing `cxs-v7-source-identity` indexes remain readable as a compatibility path. Source-aware read commands do not migrate old indexes because they are read-only; they return `index_schema_upgrade_required` with a `shlog sync` hint when the index needs this refresh.
-
-The first write/`sync` after upgrading to a contentless-FTS build rebuilds `messages_fts` and `sessions_fts` from already-stored `messages` / `sessions` rows (no transcript re-parse) and VACUUMs the file. That pass can take a while on a large index; message bodies are not truncated. Read-only commands keep using the old contentful FTS until that write migrate runs.
-
-Older `Sherlog <= 0.2.0` indexes stored under `~/.cache/cxs/` and state dirs under `~/.local/state/cxs/` are migrated automatically on first run when the new state directory is empty. If the new directory already has data, migration is skipped and the old location is left in place.
-
-## Agent Skill Package
-
-This repository also publishes an installable agent skill package:
-
-```text
-skill-packages/sherlog
-```
-
-Install or update it with:
+## Status 与 coverage
 
 ```bash
-npx skills add -g catoncat/sherlog
+shlog status --json
+shlog status --cwd /Users/you/work/project --json
+shlog status --selector '{"kind":"date_range","fromDate":"2026-08-01","toDate":"2026-08-15"}' --json
+shlog status --inventory --json
 ```
 
-List available skills in the repository:
+`status` 不返回/检索正文，也不写 index。为派生 live inventory/fingerprint，cache miss 会流式读取 raw accepted records/body，并只让 source privacy allowlist 接受的 metadata/message projection 影响 cwd/time/identity/fingerprint；rejected/private record 不影响 proof。exact `mtime_ns`/checkpoint cache hit 不重 parse。因此 cache miss 可能是 O(raw bytes)，不能描述成固定 metadata-only cost。`requestedCoverage` 的核心字段：
+
+- `complete`
+- `freshness`: `fresh | stale | missing`
+- `staleReason`
+- `coveringSelectors`
+- `recommendedAction`: `query | sync`
+
+`find/list` 中的 coverage 只来自 stored SQLite proof，不做 live raw scan；其 `freshness` 当前为 `not_checked`，即使 `complete=true` 也只表示存在 compatible covering record。结果仍可作为 best-effort candidate。若零结果或答案要求 latest/completeness，先运行同 selector 的 `status`：`recommendedAction=query` 时无需 sync，`recommendedAction=sync` 时才同步同范围并重试。
+
+## Sync
+
+常用命令：
 
 ```bash
-npx skills add catoncat/sherlog --full-depth --list
+shlog sync --json
+shlog sync --cwd /Users/you/work/project --json
+shlog sync --source claude-code --root "$HOME/.claude/projects" --json
+shlog sync --best-effort --json
+shlog sync --prune --json
+shlog sync --prune --cold-root /archive/codex --json
 ```
 
-Important boundaries:
+默认 strict：选中输入出现 scan/parse/projection/revalidation error 时命令非零，不发布部分 complete coverage。`--best-effort` 可提交成功文件并在 `errorDetails` 报告失败，但不会把不完整运行标成 complete coverage。
 
-- `npx skills add` installs the agent skill only; it does not install the `shlog` CLI.
-- Install the CLI with `npm i -g @act0r/sherlog`, use `npx @act0r/sherlog@latest`, or set `SHLOG_BIN` for the skill. `CXS_BIN` remains supported as a legacy alias.
-- Restart Codex or open a new session after installing or updating the skill.
+增量规则：
+
+- unchanged file 复用 projection；
+- 可证明 append 从 stored cursor/checkpoint 继续；
+- truncate、prefix rewrite、identity/epoch 不安全时 full replay；
+- 同步中发生只追加且已读 prefix 可证明安全时可提交该 prefix，并把 coverage 标为 `source_content_changed` / `recommendedAction: query`；
+- 无法证明安全的新活跃文件会 deferred，不写 complete coverage。
+
+默认保留 raw 已消失的历史 projection。只有显式 `--prune` 才删除同 source 中 hot 与 registered cold 都不存在的 session。详见 [COLD_RETENTION.md](COLD_RETENTION.md)。
+
+## Cold retention
+
+```bash
+shlog cold add --root /archive/codex --source codex --json
+shlog cold list --json
+shlog cold remove --root /archive/codex --source codex --json
+```
+
+v8 中注册信息存于 `cold_roots` 表。`cold add` 只登记 presence root，不解压/解析内容；`cold remove` 只取消登记，不删文件、不立即删 index row。下一次显式 `sync --prune` 才决定 projection 是否删除。
+
+首次 v8 建库前的 cold add/remove 可使用 legacy one-shot config 作为 bootstrap 输入；成功 v8 sync/migration 会导入所有 source registration，并把 `cold-roots.json` 备份后替换为目录 tombstone。v8 建立后 SQLite 是唯一真相。
+
+当前 cold-presence prune 只支持 Codex rollout filename 中的 UUID；非 Codex source 带 cold root 的 destructive prune 会 fail closed。
+
+## v7 migration
+
+read-only command 可以读兼容 v7 projection，但不会升级它。第一次授权 writer sync 遇到 v7 时会：
+
+1. 锁住 writer；
+2. 建立一致 backup；
+3. copy stored projection 到 v8 staging；
+4. 校验 counts、FTS、invariants 与 cold-only session；
+5. 原子发布，失败时保留 backup/quarantine evidence。
+
+不要在 migration 过程中同时运行旧 writer。v8 的 `sessions` 只读 view 与 cold-config tombstone 会让旧 TypeScript writer fail closed，但它们不是并发迁移的许可。
+
+## Read options
+
+`read-range`：
+
+```bash
+shlog read-range <sessionRef> --seq 12 --before 4 --after 8 --json
+shlog read-range <sessionRef> --query "decision" --before 4 --after 8 --json
+```
+
+`--seq` 与 `--query` 可同时出现；显式 seq 决定 anchor，query 用于 snippet/elision。默认 before/after 各 2。
+
+`read-page`：
+
+```bash
+shlog read-page <sessionRef> --offset 0 --limit 20 --json
+```
+
+两者默认每条 message 最多显示 800 chars；`--max-message-chars 0` 禁用 elision。
+
+## Error handling
+
+业务错误的 JSON envelope：
+
+```json
+{"error":{"code":"index_unavailable","message":"...","nextAction":{}}}
+```
+
+常见 code：`unsupported_source`、`invalid_selector`、`index_unavailable`、`index_schema_upgrade_required`、`session_not_found`、`invalid_cold_root`、`index_error`。
+
+CLI parse error（例如漏掉 `find` query）写 stderr，保持命令行兼容文本，不包装成 JSON。strict sync 的 JSON failure report 也写 stderr；`--best-effort` report 写 stdout。
+
+## Raw fallback
+
+只有 `read-*` projection 明确无法保留完整 tool call、patch、长代码或原始事件时，才先用 Sherlog 定位 session，再由 agent 读取对应 hot plain JSONL 或 cold per-file zstd。raw fallback 不是 `shlog` subcommand，不应绕过 source adapter 的 privacy projection来做常规搜索。

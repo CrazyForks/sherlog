@@ -1,8 +1,8 @@
 #!/usr/bin/env -S node --import tsx
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { spawn as childSpawn } from "node:child_process";
 import { basename, join, resolve } from "node:path";
+import { resolveCliUnderTest, runCliUnderTest } from "./cli-under-test";
 import { buildDogfoodScoreboard, buildFindCliArgs, buildReadRangeContextArgs, desiredContextMode, evaluateDogfoodItem, missingContextNeedles, type DogfoodEvaluation, type DogfoodScoreboard } from "./dogfood-eval-core";
 import { measureReturnedContext, summarizeReturnedContext, type ReturnedContextMetric, type ReturnedContextSummary } from "./returned-context";
 import { parseDogfoodJsonl, type DogfoodGolden } from "./dogfood-schema";
@@ -16,6 +16,7 @@ interface FindOutput {
 interface Args {
   goldenPath: string;
   includeStale: boolean;
+  cliArgvJson?: string;
 }
 
 interface FindAttemptSpec {
@@ -29,9 +30,11 @@ interface FindAttemptSpec {
 }
 
 const ROOT = resolve(import.meta.dirname, "..");
-const CLI_ENTRY = resolve(ROOT, "src", "cli.ts");
 const OUT_BASE = resolve(ROOT, "data", "shlog-dogfood-eval");
 const args = parseArgs(process.argv.slice(2));
+const cliUnderTest = resolveCliUnderTest({
+  ...(args.cliArgvJson ? { argvJson: args.cliArgvJson } : {}),
+});
 
 const parsed = parseDogfoodJsonl(readFileSync(args.goldenPath, "utf8"), args.goldenPath);
 if (parsed.errors.length > 0) {
@@ -165,17 +168,14 @@ function buildFindAttemptSpecs(item: DogfoodGolden): FindAttemptSpec[] {
 }
 
 function buildFindCommand(spec: FindAttemptSpec): string[] {
-  return [
-    process.execPath, "--import", "tsx", CLI_ENTRY,
-    ...buildFindCliArgs({
-      query: spec.query,
-      limit: spec.limit,
-      sort: spec.sort,
-      cwd: spec.cwd,
-      selector: spec.selector,
-      excludeSessionUuids: spec.excludeSessionUuids,
-    }),
-  ];
+  return buildFindCliArgs({
+    query: spec.query,
+    limit: spec.limit,
+    sort: spec.sort,
+    cwd: spec.cwd,
+    selector: spec.selector,
+    excludeSessionUuids: spec.excludeSessionUuids,
+  });
 }
 
 function uniqueNonEmpty(values: string[]): string[] {
@@ -241,7 +241,6 @@ function buildContextCommand(
   const context = item.expected.context ?? {};
   if (mode === "read-range") {
     return [
-      process.execPath, "--import", "tsx", CLI_ENTRY,
       ...buildReadRangeContextArgs({
         sessionRef: hit.sessionRef,
         matchSeq: hit.matchSeq,
@@ -253,7 +252,6 @@ function buildContextCommand(
   }
 
   return [
-    process.execPath, "--import", "tsx", CLI_ENTRY,
     "read-page", hit.sessionRef,
     "--offset", String(context.offset ?? 0),
     "--limit", String(context.limit ?? 20),
@@ -272,6 +270,7 @@ function renderReadme(
     `- generated_at: ${new Date().toISOString()}`,
     `- source: \`${sourcePath}\``,
     `- source_file: \`${basename(sourcePath)}\``,
+    `- cli_under_test: \`${cliUnderTest.argv.join(" ")}\` (${cliUnderTest.source})`,
     "",
     "## summary",
     "",
@@ -344,28 +343,55 @@ function rel(path: string): string {
 }
 
 function parseArgs(argv: string[]): Args {
-  const includeStale = argv.includes("--include-stale");
-  const goldenPath = argv.find((arg) => !arg.startsWith("--"));
+  let includeStale = false;
+  let cliArgvJson: string | undefined;
+  let goldenPath: string | undefined;
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index]!;
+    if (arg === "--include-stale") {
+      includeStale = true;
+      continue;
+    }
+    if (arg === "--cli-argv-json") {
+      const value = argv[index + 1];
+      if (!value) throw new Error("--cli-argv-json requires a JSON string array");
+      cliArgvJson = value;
+      index += 1;
+      continue;
+    }
+    if (arg === "--help" || arg === "-h") {
+      console.log([
+        "Usage: npm run eval:dogfood -- <goldens.local.jsonl> [--include-stale] [--cli-argv-json '<json-array>']",
+        "",
+        "By default the checkout TypeScript reference CLI is tested.",
+        "Set SHLOG_BIN_UNDER_TEST to test one executable, or use --cli-argv-json",
+        "for an executable prefix with fixed arguments. Explicit argv JSON wins.",
+      ].join("\n"));
+      process.exit(0);
+    }
+    if (arg.startsWith("--")) throw new Error(`unknown option: ${arg}`);
+    if (goldenPath) throw new Error(`unexpected positional argument: ${arg}`);
+    goldenPath = arg;
+  }
+
   if (!goldenPath) {
-    console.error("usage: npm run eval:dogfood -- <goldens.local.jsonl> [--include-stale]");
+    console.error("usage: npm run eval:dogfood -- <goldens.local.jsonl> [--include-stale] [--cli-argv-json '<json-array>']");
     process.exit(1);
   }
-  return { goldenPath: resolve(goldenPath), includeStale };
+  return {
+    goldenPath: resolve(goldenPath),
+    includeStale,
+    ...(cliArgvJson ? { cliArgvJson } : {}),
+  };
 }
 
 function runCommand(args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const proc = childSpawn(args[0]!, args.slice(1), { cwd: ROOT, stdio: ["ignore", "pipe", "pipe"] });
-    let stdout = "";
-    let stderr = "";
-    proc.stdout!.setEncoding("utf8");
-    proc.stderr!.setEncoding("utf8");
-    proc.stdout!.on("data", (chunk: string) => { stdout += chunk; });
-    proc.stderr!.on("data", (chunk: string) => { stderr += chunk; });
-    proc.on("error", reject);
-    proc.on("close", (code) => {
-      if (code === 0) resolve(stdout);
-      else reject(new Error(`command failed: ${args.join(" ")}\n${stderr || stdout}`));
-    });
+  return runCliUnderTest(cliUnderTest, args, { cwd: ROOT }).then((result) => {
+    if (result.exitCode === 0) return result.stdout;
+    throw new Error([
+      `command failed: ${[...cliUnderTest.argv, ...args].join(" ")}`,
+      result.stderr || result.stdout,
+    ].join("\n"));
   });
 }

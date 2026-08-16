@@ -1,10 +1,15 @@
-import { PROGRAM_NAME } from "./env";
 import type { FindResult, SessionSourceId } from "./types";
 
 const DEFAULT_READ_RANGE_BEFORE = 2;
 const DEFAULT_READ_RANGE_AFTER = 2;
 const DEFAULT_SESSION_PAGE_OFFSET = 0;
 const DEFAULT_SESSION_PAGE_LIMIT = 40;
+
+export interface EvidenceReadCommand {
+  executable: "inherit";
+  args: string[];
+  sideEffect: "read_index";
+}
 
 export type EvidenceReadAction =
   | {
@@ -16,7 +21,7 @@ export type EvidenceReadAction =
       query?: string;
       before: number;
       after: number;
-      argv: string[];
+      command: EvidenceReadCommand;
     }
   | {
       kind: "read-range";
@@ -26,7 +31,7 @@ export type EvidenceReadAction =
       query: string;
       before: number;
       after: number;
-      argv: string[];
+      command: EvidenceReadCommand;
     }
   | {
       kind: "read-page";
@@ -35,12 +40,32 @@ export type EvidenceReadAction =
       sessionRef: string;
       offset: number;
       limit: number;
-      argv: string[];
+      command: EvidenceReadCommand;
     };
+
+export interface EvidenceReadContext {
+  dbPath: string;
+  json: boolean;
+}
+
+function command(args: string[]): EvidenceReadCommand {
+  return { executable: "inherit", args, sideEffect: "read_index" };
+}
 
 export function buildEvidenceReadAction(
   result: Pick<FindResult, "sourceId" | "sessionRef" | "matchSeq"> & { query?: string },
+  context: EvidenceReadContext,
 ): EvidenceReadAction {
+  // Every generated command closes over the exact DB path, source qualifier,
+  // and output mode that produced the candidate so a verbatim execution reads
+  // the same projection regardless of PATH or default-state drift.
+  const scope = [
+    "--source",
+    result.sourceId,
+    "--db",
+    context.dbPath,
+    ...(context.json ? ["--json"] : []),
+  ];
   if (result.matchSeq === null) {
     // Session-level hit: the match came from session metadata/compact, not a
     // specific message. When we have the query, point read-range at it so
@@ -55,8 +80,7 @@ export function buildEvidenceReadAction(
         query: result.query,
         before: DEFAULT_READ_RANGE_BEFORE,
         after: DEFAULT_READ_RANGE_AFTER,
-        argv: [
-          PROGRAM_NAME,
+        command: command([
           "read-range",
           result.sessionRef,
           "--query",
@@ -65,7 +89,8 @@ export function buildEvidenceReadAction(
           String(DEFAULT_READ_RANGE_BEFORE),
           "--after",
           String(DEFAULT_READ_RANGE_AFTER),
-        ],
+          ...scope,
+        ]),
       };
     }
 
@@ -76,20 +101,19 @@ export function buildEvidenceReadAction(
       sessionRef: result.sessionRef,
       offset: DEFAULT_SESSION_PAGE_OFFSET,
       limit: DEFAULT_SESSION_PAGE_LIMIT,
-      argv: [
-        PROGRAM_NAME,
+      command: command([
         "read-page",
         result.sessionRef,
         "--offset",
         String(DEFAULT_SESSION_PAGE_OFFSET),
         "--limit",
         String(DEFAULT_SESSION_PAGE_LIMIT),
-      ],
+        ...scope,
+      ]),
     };
   }
 
   const argv = [
-    PROGRAM_NAME,
     "read-range",
     result.sessionRef,
     "--seq",
@@ -110,6 +134,6 @@ export function buildEvidenceReadAction(
     ...(result.query ? { query: result.query } : {}),
     before: DEFAULT_READ_RANGE_BEFORE,
     after: DEFAULT_READ_RANGE_AFTER,
-    argv,
+    command: command([...argv, ...scope]),
   };
 }

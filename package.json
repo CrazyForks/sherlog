@@ -1,8 +1,9 @@
 {
-  "name": "@act0r/sherlog",
-  "version": "0.4.4",
+  "name": "sherlog-development",
+  "version": "0.5.0",
+  "private": true,
   "type": "module",
-  "description": "Progressive search CLI for local Codex, Claude Code, and Pi session logs",
+  "description": "Development and differential-evaluation workspace for the native Sherlog CLI",
   "license": "MIT",
   "homepage": "https://github.com/catoncat/sherlog",
   "repository": {
@@ -11,18 +12,6 @@
   },
   "bugs": {
     "url": "https://github.com/catoncat/sherlog/issues"
-  },
-  "bin": {
-    "shlog": "dist/cli.js",
-    "sherlog": "dist/cli.js"
-  },
-  "files": [
-    "dist/",
-    "README.md",
-    "LICENSE"
-  ],
-  "publishConfig": {
-    "access": "public"
   },
   "keywords": [
     "codex",
@@ -38,26 +27,22 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "build": "esbuild src/cli.ts --bundle --platform=node --target=node22 --format=esm --external:chalk --external:commander --outfile=dist/cli.js && node scripts/post-build.mjs",
-    "prepublishOnly": "npm run build",
+    "build": "cargo build --release --locked --bin shlog",
     "test": "vitest run",
     "check": "tsc --noEmit && vitest run",
-    "shlog": "tsx ./src/cli.ts",
+    "shlog": "cargo run --quiet --bin shlog --",
+    "shlog:reference": "tsx ./src/cli.ts",
     "eval:manual": "tsx ./eval/run-manual-eval.ts",
     "eval:acceptance": "tsx ./eval/run-acceptance-eval.ts",
+    "eval:contract": "tsx ./eval/run-contract-eval.ts",
     "eval:compare": "tsx ./eval/compare-eval-batches.ts",
     "eval:perf": "tsx ./eval/perf-bench.ts",
     "eval:dogfood": "tsx ./eval/run-dogfood-eval.ts"
   },
-  "dependencies": {
-    "chalk": "^5.6.2",
-    "commander": "^14.0.3"
-  },
   "devDependencies": {
-    "@emnapi/core": "^1.11.0",
-    "@emnapi/runtime": "^1.11.0",
     "@types/node": "^25.6.0",
-    "esbuild": "^0.28.0",
+    "chalk": "^5.6.2",
+    "commander": "^14.0.3",
     "tsx": "^4.21.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.5"
