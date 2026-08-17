@@ -31,7 +31,7 @@
 - strict sync 遇到选中输入错误时不发布部分 coverage；`--best-effort` 可提交成功文件，但不会伪造 complete coverage。`--prune` 只删除 hot 与 registered cold 都不存在的同 source 投影。
 - v8 `cold_roots` 表是 cold registration 真相。legacy `cold-roots.json` 只作为首次 v7/v8 cutover 的一次性导入输入；导入后使用 tombstone 阻止旧 writer 复活配置。
 - v7 -> v8 migration 只发生在授权 writer 路径，采用 copy/verify/backup/atomic publish；read-only commands 不迁移。cold-only projection 必须保留。
-- native release pipeline 声明 `aarch64-apple-darwin`、`x86_64-apple-darwin`、`x86_64-unknown-linux-gnu` 三个目标。v0.5.0 已发布 tag/assets 并完成本机安装验证；后续版本走同一 tag → release workflow → 回读 assets/attestations → installer 重装流程。
+- native release pipeline 声明 `aarch64-apple-darwin`、`x86_64-apple-darwin`、`x86_64-unknown-linux-gnu` 三个目标。tag 只发 GitHub Release；Homebrew tap 与 sherlog.net 都要另走一步，步骤见「发布 / 更新闭环」。
 
 不要把下面这些说成已完成：
 
@@ -59,6 +59,7 @@
 - [selector.rs](src/selector.rs), [coverage.rs](src/coverage.rs), [tokenizer.rs](src/tokenizer.rs): shared invariants
 - [model.rs](src/model.rs): public JSON/data contracts
 - [eval/](eval): eval harness（fork `shlog`、acceptance/contract/perf/dogfood）
+- [site/](site): sherlog.net 静态站；Cloudflare Pages 项目 `sherlog-site`，不接 Git
 
 ## 文档规则
 
@@ -90,16 +91,44 @@ npx skills add -g catoncat/sherlog
 
 ### 发布 / 更新闭环
 
-做完涉及 CLI 行为、JSON contract、命令输出、skill 文案或对外使用流程的改动后，不要只停在源码验证；必须分清四层状态，并在 closeout 里明说当前哪几层已经更新：
+对外生效的改动不要停在源码。closeout 必须逐层写明已更新还是未更新：
 
-- 源码层：Rust checkout、`skill-packages/sherlog`、tests 是否已改、已测、已 commit / seal / push。
-- Native release 层：tag 是否触发三目标 GitHub Release，archives/SBOM/checksums/installer/formula 是否实际发布。没有 release assets 就不能声称 native 已发布。
-- 本机安装层：用 `command -v shlog` / `which -a shlog`、`shlog --version` 和 smoke 确认当前 `PATH` 上运行的是哪个 binary。`target/release/shlog` 只代表本地 build。
-- Skill 发布层：全局 skill 必须用 `npx skills add -g catoncat/sherlog` 从 GitHub 更新；这是可选的外部 skill manager，不是 CLI runtime dependency。
+1. 源码：Rust、`skill-packages/sherlog`、`site/` 版本文案、tests、commit / push。
+2. Native release：`v<version>` tag 触发 `.github/workflows/release.yml`，GitHub Release 上有三目标 archive、对应 SPDX、`SHA256SUMS`、`install.sh`、`sherlog.rb`。没有这些 assets 就不能说 native 已发布。
+3. Homebrew tap：`catoncat/homebrew-sherlog` 已拉到该版渲染后的 `sherlog.rb`。
+4. 官网：https://sherlog.net 已部署同一 commit 的 `site/`。
+5. 本机 PATH：`which -a shlog` 与 `shlog --version` 是该发布版。`target/release/shlog` 只代表本地 build。
+6. Skill（可选）：`npx skills add -g catoncat/sherlog`。skill 不是 CLI runtime dependency。
 
-CLI 改动需要对外生效时，走 native 发布流程：同步 bump Cargo workspace 与开发 workspace version → Rust/TS gates → commit / Mainline seal → push `main` → push `v<version>` tag → 回读 GitHub Actions 与 GitHub Release assets/attestations。发布成功后再通过发布的 installer/formula 更新本机 binary。
+发布步骤，每步做完再走下一步：
 
-如果只完成源码但尚未发布，必须明确说“native source 已 ready；尚无本次 native tag/assets；本机全局 `shlog` 仍是旧发布版”。
+1. 同步 bump `Cargo.toml` / `Cargo.lock` / `package.json`，并改 `site/index.html` 横幅与 footer、`site/changelog.html` 新条目。
+   完成：三处版本号一致，changelog 有本版条目。
+2. Rust gates 与 `npm run check` 过后再合进 `main`。
+   完成：CI 绿，`origin/main` 含 bump。
+3. 在该 commit 打 annotated tag `v<version>` 并 push。已有同名 tag 但 `gh release view v<version>` 仍是 release not found 时，把 tag 改挂到修完 release 门的 commit 再 force-push。
+   完成：`gh release view` 看得到该 tag，且 assets 齐全。
+4. 盯 release 工作流直到 **Publish native GitHub Release** 成功。Linux **Validate Linux archive contract** 只解包 candidate；checkout 里没有 `target/release/shlog` 时，contract gate 的 reference 必须复用 candidate。
+   完成：workflow success，三 archive + SBOM + checksums + installer + formula 都在 Release 上。
+5. 立刻更新 tap，不要等次日 cron：
+
+   ```bash
+   gh workflow run "Update formula" --repo catoncat/homebrew-sherlog
+   ```
+
+   完成：tap `Formula/sherlog.rb` 的 `version` 与 sha256 对应该 Release。
+6. 立刻部署官网。Pages 项目 `sherlog-site`（自定义域 `sherlog.net`）**没有接 Git**，push tag 不会更新站点。用 wrangler OAuth，账号必须是拥有该项目的 `1x02790@gmail.com`：
+
+   ```bash
+   wrangler whoami
+   cd site && wrangler pages deploy . --project-name sherlog-site --branch main --commit-hash "$(git rev-parse HEAD)"
+   ```
+
+   完成：`curl` https://sherlog.net 与 `/changelog` 显示新版本；`wrangler pages deployment list --project-name sherlog-site` 的 Production 行是本次 commit。
+7. 用户明确要求更新本机 PATH 时再装：`brew update && brew upgrade catoncat/sherlog/sherlog`，或跑 Release 里的 `install.sh`。未要求则保持全局 CLI 不动。
+   完成：`shlog --version` 对得上，或 closeout 写明仍是旧版。
+
+只完成源码时写：native source ready；尚无本次 tag/assets；sherlog.net / tap / PATH 仍是旧版。
 
 ### 本地开发验证
 
@@ -152,7 +181,7 @@ Dogfood golden 是开发者本机的真实历史检索验收集，不是普通�
 - `npm run check`（eval harness TypeScript）
 - 必要时补一条 release binary 烟测，例如 `target/release/shlog status --json` 或 sanitized fixture sync/find/read
 - 涉及 skill 通道时，验证 `npx skills ls -g --json` 和 `shlog --help`
-- 涉及发布 / 安装态时，回读 GitHub Release assets、`which -a shlog`、`shlog --version`，并说明本机 CLI 是否来自 native release
+- 涉及发布 / 安装态时，回读 GitHub Release assets、tap `Formula/sherlog.rb`、https://sherlog.net 版本文案、`which -a shlog`、`shlog --version`，并按「发布 / 更新闭环」逐层说明
 
 没有验证证据，不要声称“已对齐”“已完成”“文档正确”。
 
