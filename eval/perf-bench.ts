@@ -2,10 +2,10 @@
 
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { spawn as childSpawn } from "node:child_process";
-import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { DEFAULT_DB_PATH } from "../src/env";
+import { cleanupFixture, generateFixture, type FixturePaths } from "./perf-fixture";
+import { PerfDataSourceError, resolvePerfWorkload } from "./perf-data-source";
 import {
   DEFAULT_TOTAL_RUNS,
   commandArgv,
@@ -212,11 +212,13 @@ interface CliArgs {
   skipSync: boolean;
   collectRss: boolean;
   commandUnderTest: CommandUnderTest;
+  fixture: FixturePaths | null;
+  keepFixture: boolean;
 }
 
 function parseArgs(argv: string[]): CliArgs {
-  let root = join(homedir(), ".codex", "sessions");
-  let db = DEFAULT_DB_PATH;
+  let root = "";
+  let db = "";
   let source = "codex";
   let jsonOnly = false;
   let runsPerQuery = DEFAULT_RUNS_PER_QUERY;
@@ -229,12 +231,19 @@ function parseArgs(argv: string[]): CliArgs {
   let executable: string | undefined;
   let cliArgvJson: string | undefined;
   let artifactPath: string | undefined;
+  let explicitRoot = false;
+  let explicitDb = false;
+  let fixtureMb = 16;
+  let fixtureMbExplicit = false;
+  let keepFixture = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--root") {
       root = resolve(argv[++i] ?? root);
+      explicitRoot = true;
     } else if (a === "--db") {
       db = resolve(argv[++i] ?? db);
+      explicitDb = true;
     } else if (a === "--source") {
       source = argv[++i] ?? source;
     } else if (a === "--runs") {
@@ -251,6 +260,13 @@ function parseArgs(argv: string[]): CliArgs {
       skipSync = true;
     } else if (a === "--collect-rss") {
       collectRss = true;
+    } else if (a === "--fixture-mb") {
+      fixtureMb = parsePositiveInt(argv[++i], 16);
+      fixtureMbExplicit = true;
+    } else if (a === "--fixture") {
+      // no-op alias: synthetic smoke is the default when both paths are omitted
+    } else if (a === "--keep-fixture") {
+      keepFixture = true;
     } else if (a === "--bin") {
       executable = argv[++i];
     } else if (a === "--cli-argv-json") {
@@ -260,10 +276,33 @@ function parseArgs(argv: string[]): CliArgs {
     } else if (a === "--json-only") {
       jsonOnly = true;
     } else if (a === "--help" || a === "-h") {
-      console.log("Usage: npm run eval:perf -- [--source <id>] [--root <dir>] [--db <path>] [--runs <n>] [--read-runs <n>] [--status-runs <n>] [--skip-sync] [--bin <executable> | --cli-argv-json <json>] [--artifact <path>] [--collect-rss] [--dogfood <goldens.jsonl>] [--best-effort] [--json-only]");
+      console.log("Usage: npm run eval:perf -- [--source <id>] [--fixture-mb <n>] [--keep-fixture] | --root <dir> --db <path> [--skip-sync] [--runs <n>] [--read-runs <n>] [--status-runs <n>] [--bin <executable> | --cli-argv-json <json>] [--artifact <path>] [--collect-rss] [--dogfood <goldens.jsonl>] [--best-effort] [--json-only]");
       process.exit(0);
     }
   }
+
+  let workload;
+  try {
+    workload = resolvePerfWorkload({ explicitRoot, explicitDb, fixtureMbExplicit });
+  } catch (error) {
+    if (error instanceof PerfDataSourceError) {
+      console.error(`error: ${error.message}`);
+      process.exit(1);
+    }
+    throw error;
+  }
+
+  // Default: isolated synthetic smoke. Real local data is opt-in only when
+  // BOTH --root and --db are explicit — one flag must not revive the other
+  // developer-machine default.
+  let fixture: FixturePaths | null = null;
+  if (workload.kind === "synthetic_smoke") {
+    fixture = generateFixture(fixtureMb, source);
+    root = fixture.root;
+    db = fixture.db;
+    skipSync = false; // fixture is fresh — must sync
+  }
+
   const commandUnderTest = resolveCommandUnderTest({
     root: ROOT,
     cliEntry: CLI_ENTRY,
@@ -284,6 +323,8 @@ function parseArgs(argv: string[]): CliArgs {
     skipSync,
     collectRss,
     commandUnderTest,
+    fixture,
+    keepFixture,
   };
 }
 
@@ -471,7 +512,7 @@ if (args.skipSync) {
   // Default to strict sync so coverage is actually written and the status
   // probe below measures the fresh path (the one agents hit in practice).
   const syncCmd = ["sync", "--source", args.source, "--db", args.db, "--root", args.root];
-  if (args.bestEffortSync) syncCmd.push("--best-effort");
+  if (args.bestEffortSync || args.fixture) syncCmd.push("--best-effort");
   const syncRun = await runOrThrow(cliCommand(...syncCmd, "--json"), { collectRss: args.collectRss });
   syncMs = syncRun.ms;
   syncPeakRssBytes = syncRun.peakRssBytes;
@@ -601,6 +642,11 @@ const summary = {
   } : null,
 };
 console.log(JSON.stringify(args.jsonOnly ? report : summary, null, 2));
+
+// Clean up synthetic fixture unless --keep-fixture was requested.
+if (args.fixture && !args.keepFixture) {
+  cleanupFixture(args.fixture);
+}
 
 function topHitFromFind(payload: FindJsonPayload): TopHitRecord | null {
   const first = payload.results?.[0];

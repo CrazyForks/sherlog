@@ -41,19 +41,40 @@ npm run eval:perf -- --root <root> --db <db> --skip-sync --json-only
 
 ## Safety 与输入范围
 
-无参数的兼容默认值是本机默认 Codex root 与默认 state DB，并在读测试前执行 strict `sync`。这会修改所选 SQLite，适合明确的本机 dogfood，不适合作为隔离基准。
+有且仅有两种负载，不要混：
 
-推荐显式传入 sanitized fixture root 和独立 DB。若 DB 已预建，使用 `--skip-sync`；此时 DB 必须存在，harness 不执行任何 sync：
+| 模式 | 怎么进 | 测的是什么 | 会不会碰真实数据 |
+|---|---|---|---|
+| **合成烟雾**（默认） | 不传 `--root`、不传 `--db` | 隔离、可复现的短句 fixture；用来看有没有崩或慢一个数量级 | 不会 |
+| **本机校准** | **同时**传 `--root` 和 `--db` | 你自己的已有 index；回答「我这份库有多快」 | 只读（请加 `--skip-sync`） |
+
+只传其中一个路径会直接失败：以前会用另一个开发者本机默认（`~/.codex/sessions` 或状态目录里的 index）补齐，那会扫到或写到真实数据。`--fixture-mb` 不能和 `--root`/`--db` 混用。
+
+git 里只承认合成烟雾数字。本机校准数字不要当回归门，也不要假装代表其他机器或其他 source。
+
+### 本机校准（opt-in，只读）
 
 ```bash
 npm run eval:perf -- \
   --bin ./target/release/shlog \
-  --artifact ./target/release/shlog \
-  --root /absolute/path/to/fixture/sessions \
-  --db /absolute/path/to/fixture/index.sqlite \
-  --skip-sync \
-  --json-only
+  --root ~/.codex/sessions \
+  --db ~/.local/state/shlog/index.sqlite \
+  --skip-sync
 ```
+
+### 合成烟雾 fixture
+
+`--fixture-mb <n>` 控制正文体积（默认 16）。`eval/perf-fixture.ts` 按消息条抽签约 60% CJK / 25% Latin / 15% 路径；相同参数跨机器可复现。这**不是**真实 Codex/Pi/Claude 的文件体积模型（真实 Codex 往往是少量大文件，合成烟雾是大量短句小文件）。
+
+```bash
+# 4 MB 快速 smoke
+npm run eval:perf -- --bin ./target/release/shlog --fixture-mb 4 --json-only
+
+# 保留生成文件供检查
+npm run eval:perf -- --bin ./target/release/shlog --fixture-mb 4 --keep-fixture
+```
+
+烟雾 fixture 的 sync 走 `--best-effort`（临时目录在 macOS 上可能触发 strict 的 `source_file_set_changed`）。本机校准不要 sync；若省略 `--skip-sync`，strict sync 会写你传入的那个 `--db`。
 
 `status` 会按公开 contract 建立 live privacy-filtered inventory 并计算 requested selector coverage；它不返回/检索正文、不写 index，但 cache miss 可流式读取 raw accepted records/body，成本可能为 O(raw bytes)，exact `mtime_ns`/checkpoint cache hit 则不重 parse。`find`、`read-range`、`read-page`、`stats` 只读 index。Harness 会把显式 root 传给 status/find，但 find 不自行扫描 raw transcript freshness。
 
@@ -109,6 +130,48 @@ npm run eval:perf -- \
 ```
 
 无 executable override 时，dogfood 与其他 eval runner 一样默认使用 TypeScript oracle。
+
+## 并发基准
+
+`npm run eval:perf:concurrency` 测的是**同时多个独立 `shlog` 进程**访问同一个只读 SQLite index 时的吞吐与 tail latency。负载选择与串行 harness 相同：无路径 = 合成烟雾（自动 sync `--best-effort`）；同时给 `--root` 和 `--db` = 本机校准（不 sync）。
+
+```bash
+# 默认：合成烟雾
+npm run eval:perf:concurrency -- --bin ./target/release/shlog
+
+# 本机校准（只读，必须两个路径一起传）
+npm run eval:perf:concurrency -- \
+  --bin ./target/release/shlog \
+  --root ~/.codex/sessions \
+  --db ~/.local/state/shlog/index.sqlite \
+  --shapes "find:hammerspoon|find:edge tts|read-range|read-page|status" \
+  --levels "1 2 4 8 16 32" \
+  --total 80
+```
+
+- executable selector 与串行 harness 完全一致（`--bin` / `--cli-argv-json` / 环境变量 / TS reference fallback）。
+- command shapes：`find:<query>` 构造 `find` 命令；`read-range` / `read-page` / `status` 是字面命令。read shapes 会先用 `list --limit 1` 解析一个真实 session ref 作为 anchor；解析失败时只跳过该 shape 并警告，不使整个 run 失败。
+- 方法：worker 池 + 共享任务队列，每个 op 独立 spawn 一个被测进程；并发度 = worker 数。每个 level 的记录包含：
+  - `throughputPerSec`（完成 ops / wall time）
+  - per-op `processE2E` 的 p50/p95/p99/max（毫秒）
+  - payload `elapsedMs` 的 p50/p95/p99/max（若被测命令提供；`status` 不提供时为 `null`）
+  - `errors`（非零退出计数）
+- 默认写入 `data/shlog-perf/concurrency/<timestamp>/report.json` 与 `report.md`；`--json-only` 只向 stdout 输出。
+
+### 本机校准观察（2026-08-17，Apple M4 / 10 核 / 16GB）
+
+这是作者机器上对**真实** Codex index 的只读校准，**不是**合成烟雾，也不是 git 回归基线。被测 `target/release/shlog` 0.5.1（native），6217 sessions / 318k messages / 420MB SQLite，热缓存。数字来自 `npm run eval:perf:concurrency`（`total=40`、`levels 1 2 4 8 16 32`），为 per-op E2E p50/p95（毫秒）与峰值吞吐（ops/s）：
+
+| shape | 1 并发 p50/p95 | 4 并发 p50/p95 | 16 并发 p50/p95 | 峰值吞吐（@并发） |
+|---|---|---|---|---|
+| find:hammerspoon | 12.4 / 13.3 | 18.7 / 24.3 | 82.2 / 114.0 | 204.7 @4 |
+| find:edge tts | 33.9 / 41.4 | 49.8 / 64.8 | 176.1 / 250.3 | 91.4 @16 |
+| find:豆包输入法 | 13.1 / 13.9 | 17.8 / 19.2 | 74.7 / 105.8 | 222.2 @4 |
+| read-range | 4.3 / 5.3 | 4.7 / 6.4 | 9.5 / 16.9 | 1257.6 @16 |
+| read-page | 4.2 / 4.8 | 4.7 / 6.0 | 11.0 / 22.7 | 1226.9 @32 |
+| status | 84.1 / 123.7 | 106.1 / 121.5 | 359.9 / 558.4 | 45.9 @8 |
+
+> 该基线是热缓存稳态；冷启动首击明显更慢（`find` 首次可达 ~0.6s、`status` 首次 ~2.5s）。并发读路径没有写锁，实测 0 error；超过 ~8 并发时 find 类 latency 劣化明显，超过 ~16 后吞吐不再增长，建议作为限流参考而不是无限开并发。
 
 ## 输出
 
