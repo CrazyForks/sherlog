@@ -104,4 +104,17 @@ describe("contract gate helpers", () => {
       "requires an explicit candidate executable override",
     );
   });
+
+  test("reuses the candidate when no checkout shlog exists", () => {
+    const commands = resolveContractExecutables({
+      candidateArgvJson: JSON.stringify(["/tmp/archived-shlog"]),
+      env: {},
+      repoRoot: "/tmp/sherlog-no-checkout-binary",
+    });
+    expect(commands.candidate).toEqual({
+      source: "argv-json",
+      argv: ["/tmp/archived-shlog"],
+    });
+    expect(commands.reference).toEqual(commands.candidate);
+  });
 });

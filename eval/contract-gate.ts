@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import packageJson from "../package.json" with { type: "json" };
 import {
+  NativeCliMissingError,
   SHLOG_BIN_UNDER_TEST,
   SHLOG_CLI_ARGV_JSON,
   resolveCliUnderTest,
@@ -51,6 +52,8 @@ export interface ContractGateOptions {
   referenceArgvJson?: string;
   candidateArgvJson?: string;
   env?: NodeJS.ProcessEnv;
+  /** Test-only: override checkout root used to find target/{release,debug}/shlog. */
+  repoRoot?: string;
 }
 
 export interface ContractExecutables {
@@ -131,16 +134,28 @@ interface CaseDefinition {
 
 export function resolveContractExecutables(options: ContractGateOptions = {}): ContractExecutables {
   const env = options.env ?? process.env;
-  const reference = resolveCliUnderTest({
-    ...(options.referenceArgvJson !== undefined ? { argvJson: options.referenceArgvJson } : {}),
-    // Reference ignores ambient candidate env so a leftover SHLOG_BIN does
-    // not silently replace the checkout binary used as the stable side.
-    env: {},
-  });
   const candidate = resolveCliUnderTest({
     ...(options.candidateArgvJson !== undefined ? { argvJson: options.candidateArgvJson } : {}),
     env,
+    repoRoot: options.repoRoot,
   });
+  let reference: CliUnderTest;
+  try {
+    reference = resolveCliUnderTest({
+      ...(options.referenceArgvJson !== undefined ? { argvJson: options.referenceArgvJson } : {}),
+      // Ignore ambient candidate env so SHLOG_BIN cannot silently replace an
+      // explicit checkout binary when one exists.
+      env: {},
+      repoRoot: options.repoRoot,
+    });
+  } catch (error) {
+    if (error instanceof NativeCliMissingError && options.referenceArgvJson === undefined) {
+      // Release/archive jobs only unpack the candidate binary.
+      reference = candidate;
+    } else {
+      throw error;
+    }
+  }
   return { reference, candidate };
 }
 
