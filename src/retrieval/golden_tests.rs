@@ -368,7 +368,12 @@ fn zero_result_helpers_match_ts_mixed_language_guidance() {
 fn global_merge_uses_rrf_and_stable_cross_source_order() {
     assert_eq!(
         public_find_sources(None, None),
-        vec![SourceId::Codex, SourceId::ClaudeCode, SourceId::Pi]
+        vec![
+            SourceId::Codex,
+            SourceId::ClaudeCode,
+            SourceId::Pi,
+            SourceId::Dsh
+        ]
     );
     assert_eq!(
         public_find_sources(Some(FindSourceSelection::All), Some(SourceId::Pi)),

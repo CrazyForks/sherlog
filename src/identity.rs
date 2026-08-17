@@ -29,16 +29,18 @@ pub enum SourceId {
     Codex,
     ClaudeCode,
     Pi,
+    Dsh,
 }
 
 impl SourceId {
-    pub const ALL: [Self; 3] = [Self::Codex, Self::ClaudeCode, Self::Pi];
+    pub const ALL: [Self; 4] = [Self::Codex, Self::ClaudeCode, Self::Pi, Self::Dsh];
 
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Codex => "codex",
             Self::ClaudeCode => "claude-code",
             Self::Pi => "pi",
+            Self::Dsh => "dsh",
         }
     }
 }
@@ -57,6 +59,7 @@ impl FromStr for SourceId {
             "codex" => Ok(Self::Codex),
             "claude-code" => Ok(Self::ClaudeCode),
             "pi" => Ok(Self::Pi),
+            "dsh" => Ok(Self::Dsh),
             _ => Err(UnsupportedSourceId(value.to_owned())),
         }
     }
@@ -69,7 +72,7 @@ impl fmt::Display for UnsupportedSourceId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "unsupported source {:?}; expected codex, claude-code, or pi",
+            "unsupported source {:?}; expected codex, claude-code, pi, or dsh",
             self.0
         )
     }
