@@ -257,6 +257,8 @@ shlog read-page <sessionRef> --offset 0 --limit 20 --json
 {"error":{"code":"index_unavailable","message":"...","nextAction":{}}}
 ```
 
+`index_unavailable.nextAction.commands[]` 保留兼容 `argv`，并提供可原样执行的闭包 `command`（`executable: "inherit"`、完整 `args`、`sideEffect: "write_index"`）。它保留产生错误的 DB、单 source 与 selector；宿主可依据 side effect 决定执行或请求授权，不需要让 skill 重建 sync 命令。
+
 常见 code：`unsupported_source`、`invalid_selector`、`index_unavailable`、`index_schema_upgrade_required`、`session_not_found`、`invalid_cold_root`、`index_error`。
 
 CLI parse error（例如漏掉 `find` query）写 stderr，保持命令行兼容文本，不包装成 JSON。strict sync 的 JSON failure report 也写 stderr；`--best-effort` report 写 stdout。

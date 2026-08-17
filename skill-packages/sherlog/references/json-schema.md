@@ -50,7 +50,8 @@ interface ErrorEnvelope {
 
 `nextAction.commands[].argv` 是 **recommendation**，执行前要核对：
 
-- 它可能省略原命令的 `--db` / `--source` / scope（尤其是 `index_unavailable`）；把原命令上下文补回去。
+- `index_unavailable` 的新版本还返回闭包 `command`：`executable: "inherit"`、完整 `args` 与 `sideEffect: "write_index"`。宿主授权该 side effect 时原样执行；`argv` 作为兼容镜像保留。
+- 旧版本或其他 nextAction 的 `argv` 可能省略原命令的 `--db` / `--source` / scope；没有闭包 `command` 时才核对并补回原上下文。
 - 不要为了覆盖缺失而盲目扩大 scope。
 - `anchor_not_found` 的 nextAction 是回退 `read-page`；`index_schema_upgrade_required` 的 nextAction 是带原 `--db` 的迁移 sync。
 

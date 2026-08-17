@@ -2,7 +2,7 @@
 
 先判断失败发生在哪一层，读取 error payload/hint，再按表处理；不要把所有问题都用无条件 full sync 解决。
 
-**`nextAction` 限制**：CLI 建议的命令是 recommendation，不保证已闭包所有上下文。执行任何建议前，检查是否保留了原命令的 `--db`、`--source` 和 selector/scope；缺失时补回原上下文，而不是照抄建议，也不要为了覆盖缺失而盲目扩大 scope。
+**`nextAction` 限制**：`index_unavailable` 有闭包 `command` 时按宿主权限原样执行；旧版或只有 `argv` 的建议仍需检查是否保留原命令的 `--db`、`--source` 和 selector/scope。缺失时补回原上下文，不要为了覆盖缺失而盲目扩大 scope。
 
 ## 错误处理表
 
@@ -40,7 +40,7 @@ Refine：去掉冗余自然语言；用稳定 identifier/error phrase；单字 C
 
 ## (b) Index unavailable / schema upgrade
 
-`index_unavailable`：index 不存在，只读命令不会创建它。bootstrap sync 必须带上原 `--db`/`--source`/scope，否则会默认初始化 Codex 默认 index：
+`index_unavailable`：index 不存在，只读命令不会创建它。优先原样执行 `nextAction.commands[].command`，其中已闭包 `--db`/`--source`/scope，并以 `sideEffect: "write_index"` 声明写入。旧 CLI 没有闭包 command 时使用：
 
 ```bash
 shlog sync --json          # 默认 Codex all(root)

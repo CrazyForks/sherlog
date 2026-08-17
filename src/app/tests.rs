@@ -292,6 +292,70 @@ fn run_cli(services: &mut NativeAppServices, args: Vec<String>) -> (u8, Vec<u8>,
     (code, stdout, stderr)
 }
 
+#[test]
+fn index_unavailable_bootstrap_action_closes_scope_and_recovers_the_query() {
+    let directory = TempDir::new().unwrap();
+    let raw_root = directory.path().join("sessions");
+    let session_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    let raw = raw_root
+        .join("2026/08/15")
+        .join(format!("rollout-2026-08-15T00-00-00-{session_id}.jsonl"));
+    write_codex_session(
+        &raw,
+        session_id,
+        &[("user_message", "bootstrap recovery beacon")],
+    );
+    let paths = resolved_paths(&directory, &raw_root);
+    let db = paths.db_path.to_string_lossy().into_owned();
+    let mut services = NativeAppServices::new(paths, PathBuf::from("/repo"));
+    let query_argv = vec![
+        "shlog".to_owned(),
+        "find".to_owned(),
+        "bootstrap recovery beacon".to_owned(),
+        "--source".to_owned(),
+        "codex".to_owned(),
+        "--cwd".to_owned(),
+        "/repo".to_owned(),
+        "--db".to_owned(),
+        db.clone(),
+        "--json".to_owned(),
+    ];
+
+    let (code, stdout, stderr) = run_cli(&mut services, query_argv.clone());
+    assert_eq!(code, 1);
+    assert!(stderr.is_empty());
+    let error: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
+    let action = &error["error"]["nextAction"]["commands"][0]["command"];
+    assert_eq!(action["executable"], "inherit");
+    assert_eq!(action["sideEffect"], "write_index");
+    let mut bootstrap_argv = vec!["shlog".to_owned()];
+    bootstrap_argv.extend(
+        action["args"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap().to_owned()),
+    );
+    assert!(
+        bootstrap_argv
+            .windows(2)
+            .any(|pair| pair[0] == "--db" && pair[1] == db)
+    );
+
+    let (code, stdout, stderr) = run_cli(&mut services, bootstrap_argv);
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+    let report: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
+    assert_eq!(report["added"], 1);
+    assert_eq!(report["errors"], 0);
+
+    let (code, stdout, stderr) = run_cli(&mut services, query_argv);
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+    let found: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
+    assert_eq!(found["results"][0]["sessionRef"], session_id);
+}
+
 fn has_imported_cold_backup(config_path: &Path) -> bool {
     let fence = ColdConfigFence::inspect(config_path).unwrap();
     fence.is_published()
