@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { resolveCommandUnderTest, type CommandUnderTest } from "./perf-bench-core";
+import { resolvePerfWorkload, type PerfWorkloadKind } from "./perf-data-source";
 
 /**
  * Pure helpers for the concurrency benchmark harness (`concurrency-bench.ts`).
@@ -22,6 +23,7 @@ export const DEFAULT_SHAPES = [
 ];
 
 export interface ConcurrencyArgs {
+  workload: PerfWorkloadKind;
   root: string;
   db: string;
   source: string;
@@ -83,7 +85,7 @@ export interface ConcurrencyReport {
 }
 
 export function parseConcurrencyArgs(argv: string[]): ConcurrencyArgs {
-  let root = process.env.HOME ? resolve(process.env.HOME, ".codex", "sessions") : "";
+  let root = "";
   let db = "";
   let source = "codex";
   let jsonOnly = false;
@@ -93,19 +95,28 @@ export function parseConcurrencyArgs(argv: string[]): ConcurrencyArgs {
   let executable: string | undefined;
   let cliArgvJson: string | undefined;
   let artifactPath: string | undefined;
-  let fixtureMb = 0;
+  let fixtureMb = 16;
+  let fixtureMbExplicit = false;
+  let explicitRoot = false;
+  let explicitDb = false;
   let keepFixture = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const next = () => argv[++i];
-    if (a === "--root") root = resolve(next() ?? root);
-    else if (a === "--db") db = resolve(next() ?? "");
-    else if (a === "--source") source = next() ?? source;
+    if (a === "--root") {
+      root = resolve(next() ?? root);
+      explicitRoot = true;
+    } else if (a === "--db") {
+      db = resolve(next() ?? "");
+      explicitDb = true;
+    } else if (a === "--source") source = next() ?? source;
     else if (a === "--shapes") shapes = parseShapes(next() ?? "");
     else if (a === "--levels") levels = parseLevels(next() ?? "");
     else if (a === "--total") totalPerLevel = parsePositiveInt(next(), DEFAULT_TOTAL_PER_LEVEL);
-    else if (a === "--fixture-mb") fixtureMb = parsePositiveInt(next(), 16);
-    else if (a === "--fixture") { /* no-op: fixture is now default */ }
+    else if (a === "--fixture-mb") {
+      fixtureMb = parsePositiveInt(next(), 16);
+      fixtureMbExplicit = true;
+    } else if (a === "--fixture") { /* no-op alias: synthetic smoke is the default when both paths are omitted */ }
     else if (a === "--keep-fixture") keepFixture = true;
     else if (a === "--bin") executable = next();
     else if (a === "--cli-argv-json") cliArgvJson = next();
@@ -115,7 +126,7 @@ export function parseConcurrencyArgs(argv: string[]): ConcurrencyArgs {
       throw new HelpRequested();
     }
   }
-  if (!db && !fixtureMb) throw new Error("--db is required (concurrency benchmark is read-only against an existing index; use --fixture-mb to auto-generate one)");
+  const workload = resolvePerfWorkload({ explicitRoot, explicitDb, fixtureMbExplicit });
   const commandUnderTest = resolveCommandUnderTest({
     root: ROOT,
     cliEntry: CLI_ENTRY,
@@ -123,7 +134,19 @@ export function parseConcurrencyArgs(argv: string[]): ConcurrencyArgs {
     argvJson: cliArgvJson,
     artifactPath,
   });
-  return { root, db, source, shapes, levels, totalPerLevel, jsonOnly, commandUnderTest, fixtureMb, keepFixture };
+  return {
+    workload: workload.kind,
+    root,
+    db,
+    source,
+    shapes,
+    levels,
+    totalPerLevel,
+    jsonOnly,
+    commandUnderTest,
+    fixtureMb,
+    keepFixture,
+  };
 }
 
 export class HelpRequested extends Error {
@@ -134,9 +157,9 @@ export class HelpRequested extends Error {
 }
 
 export const USAGE = `Usage: npm run eval:perf:concurrency -- \\
-  --db <index.sqlite> [--root <sessions>] [--source <id>] \\
-  [--shapes "find:hammerspoon|read-range|read-page|status"] \\
-  [--levels "1 2 4 8 16 32"] [--total 80] [--fixture-mb <n>] [--keep-fixture] \\
+  [--fixture-mb <n>] [--keep-fixture] | --root <sessions> --db <index.sqlite> \\
+  [--source <id>] [--shapes "find:hammerspoon|read-range|read-page|status"] \\
+  [--levels "1 2 4 8 16 32"] [--total 80] \\
   [--bin <executable> | --cli-argv-json <json>] [--artifact <path>] [--json-only]`;
 
 /** Literal command shapes that must not be reinterpreted as find queries. */

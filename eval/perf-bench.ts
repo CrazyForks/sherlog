@@ -2,11 +2,10 @@
 
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { spawn as childSpawn } from "node:child_process";
-import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { DEFAULT_DB_PATH } from "../src/env";
 import { cleanupFixture, generateFixture, type FixturePaths } from "./perf-fixture";
+import { PerfDataSourceError, resolvePerfWorkload } from "./perf-data-source";
 import {
   DEFAULT_TOTAL_RUNS,
   commandArgv,
@@ -218,8 +217,8 @@ interface CliArgs {
 }
 
 function parseArgs(argv: string[]): CliArgs {
-  let root = join(homedir(), ".codex", "sessions");
-  let db = DEFAULT_DB_PATH;
+  let root = "";
+  let db = "";
   let source = "codex";
   let jsonOnly = false;
   let runsPerQuery = DEFAULT_RUNS_PER_QUERY;
@@ -235,6 +234,7 @@ function parseArgs(argv: string[]): CliArgs {
   let explicitRoot = false;
   let explicitDb = false;
   let fixtureMb = 16;
+  let fixtureMbExplicit = false;
   let keepFixture = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -262,8 +262,9 @@ function parseArgs(argv: string[]): CliArgs {
       collectRss = true;
     } else if (a === "--fixture-mb") {
       fixtureMb = parsePositiveInt(argv[++i], 16);
+      fixtureMbExplicit = true;
     } else if (a === "--fixture") {
-      // no-op: explicit marker; fixture is now the default
+      // no-op alias: synthetic smoke is the default when both paths are omitted
     } else if (a === "--keep-fixture") {
       keepFixture = true;
     } else if (a === "--bin") {
@@ -275,15 +276,27 @@ function parseArgs(argv: string[]): CliArgs {
     } else if (a === "--json-only") {
       jsonOnly = true;
     } else if (a === "--help" || a === "-h") {
-      console.log("Usage: npm run eval:perf -- [--source <id>] [--root <dir>] [--db <path>] [--runs <n>] [--read-runs <n>] [--status-runs <n>] [--skip-sync] [--fixture-mb <n>] [--keep-fixture] [--bin <executable> | --cli-argv-json <json>] [--artifact <path>] [--collect-rss] [--dogfood <goldens.jsonl>] [--best-effort] [--json-only]");
+      console.log("Usage: npm run eval:perf -- [--source <id>] [--fixture-mb <n>] [--keep-fixture] | --root <dir> --db <path> [--skip-sync] [--runs <n>] [--read-runs <n>] [--status-runs <n>] [--bin <executable> | --cli-argv-json <json>] [--artifact <path>] [--collect-rss] [--dogfood <goldens.jsonl>] [--best-effort] [--json-only]");
       process.exit(0);
     }
   }
 
-  // Default to deterministic synthetic fixture when no explicit data source
-  // is provided. Real local data is opt-in via explicit --root or --db.
+  let workload;
+  try {
+    workload = resolvePerfWorkload({ explicitRoot, explicitDb, fixtureMbExplicit });
+  } catch (error) {
+    if (error instanceof PerfDataSourceError) {
+      console.error(`error: ${error.message}`);
+      process.exit(1);
+    }
+    throw error;
+  }
+
+  // Default: isolated synthetic smoke. Real local data is opt-in only when
+  // BOTH --root and --db are explicit — one flag must not revive the other
+  // developer-machine default.
   let fixture: FixturePaths | null = null;
-  if (!explicitRoot && !explicitDb) {
+  if (workload.kind === "synthetic_smoke") {
     fixture = generateFixture(fixtureMb, source);
     root = fixture.root;
     db = fixture.db;

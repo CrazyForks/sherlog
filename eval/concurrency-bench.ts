@@ -34,14 +34,17 @@ try {
   process.exit(1);
 }
 
-// Generate synthetic fixture when --fixture-mb was explicitly set.
+// Synthetic smoke: generate an isolated fixture and sync it. Private
+// calibration (--root and --db) is read-only against the existing index.
 let fixture: FixturePaths | null = null;
-if (process.argv.includes("--fixture-mb")) {
+if (args.workload === "synthetic_smoke") {
   fixture = generateFixture(args.fixtureMb, args.source);
   args.root = fixture.root;
   args.db = fixture.db;
-  // Auto-sync the fresh fixture so the read-only benchmark has data.
-  const syncCmd = ["sync", "--source", args.source, "--db", args.db, "--root", args.root, "--json"];
+  const syncCmd = [
+    "sync", "--source", args.source, "--db", args.db, "--root", args.root,
+    "--best-effort", "--json",
+  ];
   const syncResult = spawnSync(args.commandUnderTest.executable, [...args.commandUnderTest.prefixArgv, ...syncCmd], {
     stdio: ["ignore", "pipe", "pipe"],
   });

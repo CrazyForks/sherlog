@@ -45,12 +45,28 @@ describe("concurrency shape parsing", () => {
 });
 
 describe("concurrency arg parsing", () => {
-  test("requires --db", () => {
-    expect(() => parseConcurrencyArgs([])).toThrow(/--db is required/);
-    expect(() => parseConcurrencyArgs(["--root", "/tmp/root"])).toThrow(/--db is required/);
+  test("no paths selects synthetic smoke and does not default to ~/.codex", () => {
+    const args = parseConcurrencyArgs([]);
+    expect(args.workload).toBe("synthetic_smoke");
+    expect(args.fixtureMb).toBe(16);
+    expect(args.root).toBe("");
+    expect(args.db).toBe("");
   });
 
-  test("parses overrides and defaults", () => {
+  test("only --root or only --db is rejected", () => {
+    expect(() => parseConcurrencyArgs(["--root", "/tmp/root"])).toThrow(/both --root and --db/);
+    expect(() => parseConcurrencyArgs(["--db", "/tmp/index.sqlite"])).toThrow(/both --root and --db/);
+  });
+
+  test("mixing --fixture-mb with real paths is rejected", () => {
+    expect(() => parseConcurrencyArgs([
+      "--root", "/tmp/root",
+      "--db", "/tmp/index.sqlite",
+      "--fixture-mb", "4",
+    ])).toThrow(/do not mix --fixture-mb/);
+  });
+
+  test("parses calibration overrides and defaults", () => {
     const args = parseConcurrencyArgs([
       "--db", "/tmp/index.sqlite",
       "--root", "/tmp/sessions",
@@ -60,6 +76,7 @@ describe("concurrency arg parsing", () => {
       "--total", "40",
       "--json-only",
     ]);
+    expect(args.workload).toBe("private_calibration");
     expect(args.db).toBe("/tmp/index.sqlite");
     expect(args.root).toBe("/tmp/sessions");
     expect(args.source).toBe("claude-code");
@@ -71,8 +88,9 @@ describe("concurrency arg parsing", () => {
     expect(args.commandUnderTest.source).toBe("typescript-reference");
   });
 
-  test("accepts explicit executable override", () => {
-    const args = parseConcurrencyArgs(["--db", "/tmp/index.sqlite", "--bin", "/tmp/shlog"]);
+  test("accepts explicit executable override on smoke", () => {
+    const args = parseConcurrencyArgs(["--bin", "/tmp/shlog"]);
+    expect(args.workload).toBe("synthetic_smoke");
     expect(args.commandUnderTest.source).not.toBe("typescript-reference");
   });
 });

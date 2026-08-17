@@ -1,9 +1,10 @@
 /**
- * Deterministic CJK-heavy fixture generator for Sherlog performance benchmarks.
+ * Deterministic Codex-format smoke fixture for Sherlog performance harnesses.
  *
- * Generates Codex-format session transcripts into a temporary directory.
- * Content is ~60% CJK (Chinese), ~25% Latin (English tech), ~15% paths/commands
- * to exercise the full tokenizer path while staying realistic.
+ * Generates short session transcripts into a temporary directory. Message
+ * draws are ~60% CJK / ~25% Latin / ~15% paths (per message, not per byte,
+ * and not a real size histogram). This is isolated regression smoke — it is
+ * not a shape-faithful model of developer Codex/Pi/Claude corpora.
  *
  * Volume is controlled by `--fixture-mb` (default 16 MB of body text).
  * All output is deterministic given the same megabyte parameter — same seed

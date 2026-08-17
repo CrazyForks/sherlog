@@ -41,11 +41,18 @@ npm run eval:perf -- --root <root> --db <db> --skip-sync --json-only
 
 ## Safety 与输入范围
 
-无参数运行时，harness 自动在临时目录生成**确定性合成 fixture**（默认 ~16 MB CJK-heavy 正文），对其执行 sync 和读测试，结束后自动清理。这不会触碰你的真实 session 数据或默认 state DB——适合作为隔离基准。
+有且仅有两种负载，不要混：
 
-### 使用真实数据（opt-in）
+| 模式 | 怎么进 | 测的是什么 | 会不会碰真实数据 |
+|---|---|---|---|
+| **合成烟雾**（默认） | 不传 `--root`、不传 `--db` | 隔离、可复现的短句 fixture；用来看有没有崩或慢一个数量级 | 不会 |
+| **本机校准** | **同时**传 `--root` 和 `--db` | 你自己的已有 index；回答「我这份库有多快」 | 只读（请加 `--skip-sync`） |
 
-要对自己的本机 session 做 dogfood 基准，必须**显式传 `--root` 或 `--db`**：
+只传其中一个路径会直接失败：以前会用另一个开发者本机默认（`~/.codex/sessions` 或状态目录里的 index）补齐，那会扫到或写到真实数据。`--fixture-mb` 不能和 `--root`/`--db` 混用。
+
+git 里只承认合成烟雾数字。本机校准数字不要当回归门，也不要假装代表其他机器或其他 source。
+
+### 本机校准（opt-in，只读）
 
 ```bash
 npm run eval:perf -- \
@@ -55,11 +62,9 @@ npm run eval:perf -- \
   --skip-sync
 ```
 
-不显式传 `--root`/`--db` 时，harness **永远不会访问你的真实数据**。
+### 合成烟雾 fixture
 
-### 合成 fixture
-
-`--fixture-mb <n>` 控制 fixture 体积（默认 16）。fixture 由 `eval/perf-fixture.ts` 确定性生成——相同参数在任何机器上产出相同的 session 集合。内容为 ~60% CJK（中文运维场景）、~25% Latin（英文 tech）、~15% 路径/命令。
+`--fixture-mb <n>` 控制正文体积（默认 16）。`eval/perf-fixture.ts` 按消息条抽签约 60% CJK / 25% Latin / 15% 路径；相同参数跨机器可复现。这**不是**真实 Codex/Pi/Claude 的文件体积模型（真实 Codex 往往是少量大文件，合成烟雾是大量短句小文件）。
 
 ```bash
 # 4 MB 快速 smoke
@@ -69,7 +74,7 @@ npm run eval:perf -- --bin ./target/release/shlog --fixture-mb 4 --json-only
 npm run eval:perf -- --bin ./target/release/shlog --fixture-mb 4 --keep-fixture
 ```
 
-fixture 的 sync 自动走 `--best-effort`（临时目录在 macOS 上可能因文件系统事件触发 strict 的 "source_file_set_changed" 误判）。对真实数据（显式 `--root`/`--db`）仍走 strict 以保证覆盖度。
+烟雾 fixture 的 sync 走 `--best-effort`（临时目录在 macOS 上可能触发 strict 的 `source_file_set_changed`）。本机校准不要 sync；若省略 `--skip-sync`，strict sync 会写你传入的那个 `--db`。
 
 `status` 会按公开 contract 建立 live privacy-filtered inventory 并计算 requested selector coverage；它不返回/检索正文、不写 index，但 cache miss 可流式读取 raw accepted records/body，成本可能为 O(raw bytes)，exact `mtime_ns`/checkpoint cache hit 则不重 parse。`find`、`read-range`、`read-page`、`stats` 只读 index。Harness 会把显式 root 传给 status/find，但 find 不自行扫描 raw transcript freshness。
 
@@ -128,19 +133,17 @@ npm run eval:perf -- \
 
 ## 并发基准
 
-`npm run eval:perf:concurrency` 是并发读路径的补充 harness。与串行 harness 不同，它测的是**同时多个独立 `shlog` 进程**访问同一个只读 SQLite index 时的吞吐与 tail latency。它不执行 `sync`，要求 `--db` 已存在。可配合 `--fixture-mb <n>` 自动生成临时 fixture 并 sync：
+`npm run eval:perf:concurrency` 测的是**同时多个独立 `shlog` 进程**访问同一个只读 SQLite index 时的吞吐与 tail latency。负载选择与串行 harness 相同：无路径 = 合成烟雾（自动 sync `--best-effort`）；同时给 `--root` 和 `--db` = 本机校准（不 sync）。
 
 ```bash
-# 自动生成 16MB fixture 并测试
-npm run eval:perf:concurrency -- \
-  --bin ./target/release/shlog \
-  --fixture-mb 16
+# 默认：合成烟雾
+npm run eval:perf:concurrency -- --bin ./target/release/shlog
 
-# 或使用预建 index
+# 本机校准（只读，必须两个路径一起传）
 npm run eval:perf:concurrency -- \
   --bin ./target/release/shlog \
-  --root /absolute/path/to/fixture/sessions \
-  --db /absolute/path/to/fixture/index.sqlite \
+  --root ~/.codex/sessions \
+  --db ~/.local/state/shlog/index.sqlite \
   --shapes "find:hammerspoon|find:edge tts|read-range|read-page|status" \
   --levels "1 2 4 8 16 32" \
   --total 80
@@ -155,9 +158,9 @@ npm run eval:perf:concurrency -- \
   - `errors`（非零退出计数）
 - 默认写入 `data/shlog-perf/concurrency/<timestamp>/report.json` 与 `report.md`；`--json-only` 只向 stdout 输出。
 
-### 本机基线（2026-08-17，Apple M4 / 10 核 / 16GB）
+### 本机校准观察（2026-08-17，Apple M4 / 10 核 / 16GB）
 
-被测 `target/release/shlog` 0.5.1（native），真实 Codex index：6217 sessions / 318k messages / 420MB SQLite，热缓存。数字来自 `npm run eval:perf:concurrency`（`total=40`、`levels 1 2 4 8 16 32`），为 per-op E2E p50/p95（毫秒）与峰值吞吐（ops/s）：
+这是作者机器上对**真实** Codex index 的只读校准，**不是**合成烟雾，也不是 git 回归基线。被测 `target/release/shlog` 0.5.1（native），6217 sessions / 318k messages / 420MB SQLite，热缓存。数字来自 `npm run eval:perf:concurrency`（`total=40`、`levels 1 2 4 8 16 32`），为 per-op E2E p50/p95（毫秒）与峰值吞吐（ops/s）：
 
 | shape | 1 并发 p50/p95 | 4 并发 p50/p95 | 16 并发 p50/p95 | 峰值吞吐（@并发） |
 |---|---|---|---|---|
