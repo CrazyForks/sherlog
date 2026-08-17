@@ -8,6 +8,17 @@
   See domain-modeling skill for the definition format.
 -->
 
+## 架构分层
+
+Sherlog 仓库有两条明确的技术栈边界：
+
+| 层 | 语言 | 角色 | 路径 |
+|---|---|---|---|
+| **Production CLI** | Rust | 用户安装的 `shlog` binary：SQLite FTS5、tokenizer、sync、find/read/stats | `rust/src/`，产物 `target/release/shlog` |
+| **Eval harness** | TypeScript | 开发期测试工具：fork Rust binary 当子进程，测其延迟/吞吐/正确性/契约。**不实现任何检索逻辑，不是 product runtime** | `eval/`，`src/`（legacy TS oracle） |
+
+eval harness 是"裁判"，Rust binary 是"选手"。`eval/perf-bench.ts` 做的事情是 `spawn("target/release/shlog", ["find", "豆包输入法", ...])` 然后掐表——它自身不执行 tokenization、不访问 SQLite、不参与检索。contract-gate、acceptance-gate、dogfood runner、concurrency-bench 都遵循同一模式。
+
 ## 性能
 
 - **性能基线**（perf baseline）：在某指定机器类上，对固定工作负载（合成 fixture 或真实 dogfood 数据）跑 `eval:perf` / `eval:perf:concurrency` 产出的 p50/p95 延迟、吞吐、RSS、DB 体积等数字。基线 JSON 随代码一起进 git，作为回归门判据的参照点。基线只在标定它的那台机器类上有比较意义。
