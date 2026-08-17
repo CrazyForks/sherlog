@@ -110,6 +110,44 @@ npm run eval:perf -- \
 
 无 executable override 时，dogfood 与其他 eval runner 一样默认使用 TypeScript oracle。
 
+## 并发基准
+
+`npm run eval:perf:concurrency` 是并发读路径的补充 harness。与串行 harness 不同，它测的是**同时多个独立 `shlog` 进程**访问同一个只读 SQLite index 时的吞吐与 tail latency。它不执行 `sync`，要求 `--db` 已存在。
+
+```bash
+npm run eval:perf:concurrency -- \
+  --bin ./target/release/shlog \
+  --root /absolute/path/to/fixture/sessions \
+  --db /absolute/path/to/fixture/index.sqlite \
+  --shapes "find:hammerspoon|find:edge tts|read-range|read-page|status" \
+  --levels "1 2 4 8 16 32" \
+  --total 80   # 每级并发总共跑多少 op
+```
+
+- executable selector 与串行 harness 完全一致（`--bin` / `--cli-argv-json` / 环境变量 / TS reference fallback）。
+- command shapes：`find:<query>` 构造 `find` 命令；`read-range` / `read-page` / `status` 是字面命令。read shapes 会先用 `list --limit 1` 解析一个真实 session ref 作为 anchor；解析失败时只跳过该 shape 并警告，不使整个 run 失败。
+- 方法：worker 池 + 共享任务队列，每个 op 独立 spawn 一个被测进程；并发度 = worker 数。每个 level 的记录包含：
+  - `throughputPerSec`（完成 ops / wall time）
+  - per-op `processE2E` 的 p50/p95/p99/max（毫秒）
+  - payload `elapsedMs` 的 p50/p95/p99/max（若被测命令提供；`status` 不提供时为 `null`）
+  - `errors`（非零退出计数）
+- 默认写入 `data/shlog-perf/concurrency/<timestamp>/report.json` 与 `report.md`；`--json-only` 只向 stdout 输出。
+
+### 本机基线（2026-08-17，Apple M4 / 10 核 / 16GB）
+
+被测 `target/release/shlog` 0.5.1（native），真实 Codex index：6217 sessions / 318k messages / 420MB SQLite，热缓存。数字来自 `npm run eval:perf:concurrency`（`total=40`、`levels 1 2 4 8 16 32`），为 per-op E2E p50/p95（毫秒）与峰值吞吐（ops/s）：
+
+| shape | 1 并发 p50/p95 | 4 并发 p50/p95 | 16 并发 p50/p95 | 峰值吞吐（@并发） |
+|---|---|---|---|---|
+| find:hammerspoon | 12.4 / 13.3 | 18.7 / 24.3 | 82.2 / 114.0 | 204.7 @4 |
+| find:edge tts | 33.9 / 41.4 | 49.8 / 64.8 | 176.1 / 250.3 | 91.4 @16 |
+| find:豆包输入法 | 13.1 / 13.9 | 17.8 / 19.2 | 74.7 / 105.8 | 222.2 @4 |
+| read-range | 4.3 / 5.3 | 4.7 / 6.4 | 9.5 / 16.9 | 1257.6 @16 |
+| read-page | 4.2 / 4.8 | 4.7 / 6.0 | 11.0 / 22.7 | 1226.9 @32 |
+| status | 84.1 / 123.7 | 106.1 / 121.5 | 359.9 / 558.4 | 45.9 @8 |
+
+> 该基线是热缓存稳态；冷启动首击明显更慢（`find` 首次可达 ~0.6s、`status` 首次 ~2.5s）。并发读路径没有写锁，实测 0 error；超过 ~8 并发时 find 类 latency 劣化明显，超过 ~16 后吞吐不再增长，建议作为限流参考而不是无限开并发。
+
 ## 输出
 
 默认写入：

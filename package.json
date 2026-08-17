@@ -37,6 +37,7 @@
     "eval:contract": "tsx ./eval/run-contract-eval.ts",
     "eval:compare": "tsx ./eval/compare-eval-batches.ts",
     "eval:perf": "tsx ./eval/perf-bench.ts",
+    "eval:perf:concurrency": "tsx ./eval/concurrency-bench.ts",
     "eval:dogfood": "tsx ./eval/run-dogfood-eval.ts"
   },
   "devDependencies": {
