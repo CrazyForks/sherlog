@@ -33,6 +33,9 @@ export interface ConcurrencyArgs {
   totalPerLevel: number;
   jsonOnly: boolean;
   commandUnderTest: CommandUnderTest;
+  /** When set, generate fixture of this many MB before running. */
+  fixtureMb: number;
+  keepFixture: boolean;
 }
 
 export interface OpSample {
@@ -90,6 +93,8 @@ export function parseConcurrencyArgs(argv: string[]): ConcurrencyArgs {
   let executable: string | undefined;
   let cliArgvJson: string | undefined;
   let artifactPath: string | undefined;
+  let fixtureMb = 0;
+  let keepFixture = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const next = () => argv[++i];
@@ -99,6 +104,9 @@ export function parseConcurrencyArgs(argv: string[]): ConcurrencyArgs {
     else if (a === "--shapes") shapes = parseShapes(next() ?? "");
     else if (a === "--levels") levels = parseLevels(next() ?? "");
     else if (a === "--total") totalPerLevel = parsePositiveInt(next(), DEFAULT_TOTAL_PER_LEVEL);
+    else if (a === "--fixture-mb") fixtureMb = parsePositiveInt(next(), 16);
+    else if (a === "--fixture") { /* no-op: fixture is now default */ }
+    else if (a === "--keep-fixture") keepFixture = true;
     else if (a === "--bin") executable = next();
     else if (a === "--cli-argv-json") cliArgvJson = next();
     else if (a === "--artifact") artifactPath = next();
@@ -107,7 +115,7 @@ export function parseConcurrencyArgs(argv: string[]): ConcurrencyArgs {
       throw new HelpRequested();
     }
   }
-  if (!db) throw new Error("--db is required (concurrency benchmark is read-only against an existing index)");
+  if (!db && !fixtureMb) throw new Error("--db is required (concurrency benchmark is read-only against an existing index; use --fixture-mb to auto-generate one)");
   const commandUnderTest = resolveCommandUnderTest({
     root: ROOT,
     cliEntry: CLI_ENTRY,
@@ -115,7 +123,7 @@ export function parseConcurrencyArgs(argv: string[]): ConcurrencyArgs {
     argvJson: cliArgvJson,
     artifactPath,
   });
-  return { root, db, source, shapes, levels, totalPerLevel, jsonOnly, commandUnderTest };
+  return { root, db, source, shapes, levels, totalPerLevel, jsonOnly, commandUnderTest, fixtureMb, keepFixture };
 }
 
 export class HelpRequested extends Error {
@@ -128,7 +136,7 @@ export class HelpRequested extends Error {
 export const USAGE = `Usage: npm run eval:perf:concurrency -- \\
   --db <index.sqlite> [--root <sessions>] [--source <id>] \\
   [--shapes "find:hammerspoon|read-range|read-page|status"] \\
-  [--levels "1 2 4 8 16 32"] [--total 80] \\
+  [--levels "1 2 4 8 16 32"] [--total 80] [--fixture-mb <n>] [--keep-fixture] \\
   [--bin <executable> | --cli-argv-json <json>] [--artifact <path>] [--json-only]`;
 
 /** Literal command shapes that must not be reinterpreted as find queries. */

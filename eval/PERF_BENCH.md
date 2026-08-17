@@ -41,19 +41,35 @@ npm run eval:perf -- --root <root> --db <db> --skip-sync --json-only
 
 ## Safety 与输入范围
 
-无参数的兼容默认值是本机默认 Codex root 与默认 state DB，并在读测试前执行 strict `sync`。这会修改所选 SQLite，适合明确的本机 dogfood，不适合作为隔离基准。
+无参数运行时，harness 自动在临时目录生成**确定性合成 fixture**（默认 ~16 MB CJK-heavy 正文），对其执行 sync 和读测试，结束后自动清理。这不会触碰你的真实 session 数据或默认 state DB——适合作为隔离基准。
 
-推荐显式传入 sanitized fixture root 和独立 DB。若 DB 已预建，使用 `--skip-sync`；此时 DB 必须存在，harness 不执行任何 sync：
+### 使用真实数据（opt-in）
+
+要对自己的本机 session 做 dogfood 基准，必须**显式传 `--root` 或 `--db`**：
 
 ```bash
 npm run eval:perf -- \
   --bin ./target/release/shlog \
-  --artifact ./target/release/shlog \
-  --root /absolute/path/to/fixture/sessions \
-  --db /absolute/path/to/fixture/index.sqlite \
-  --skip-sync \
-  --json-only
+  --root ~/.codex/sessions \
+  --db ~/.local/state/shlog/index.sqlite \
+  --skip-sync
 ```
+
+不显式传 `--root`/`--db` 时，harness **永远不会访问你的真实数据**。
+
+### 合成 fixture
+
+`--fixture-mb <n>` 控制 fixture 体积（默认 16）。fixture 由 `eval/perf-fixture.ts` 确定性生成——相同参数在任何机器上产出相同的 session 集合。内容为 ~60% CJK（中文运维场景）、~25% Latin（英文 tech）、~15% 路径/命令。
+
+```bash
+# 4 MB 快速 smoke
+npm run eval:perf -- --bin ./target/release/shlog --fixture-mb 4 --json-only
+
+# 保留生成文件供检查
+npm run eval:perf -- --bin ./target/release/shlog --fixture-mb 4 --keep-fixture
+```
+
+fixture 的 sync 自动走 `--best-effort`（临时目录在 macOS 上可能因文件系统事件触发 strict 的 "source_file_set_changed" 误判）。对真实数据（显式 `--root`/`--db`）仍走 strict 以保证覆盖度。
 
 `status` 会按公开 contract 建立 live privacy-filtered inventory 并计算 requested selector coverage；它不返回/检索正文、不写 index，但 cache miss 可流式读取 raw accepted records/body，成本可能为 O(raw bytes)，exact `mtime_ns`/checkpoint cache hit 则不重 parse。`find`、`read-range`、`read-page`、`stats` 只读 index。Harness 会把显式 root 传给 status/find，但 find 不自行扫描 raw transcript freshness。
 
@@ -112,16 +128,22 @@ npm run eval:perf -- \
 
 ## 并发基准
 
-`npm run eval:perf:concurrency` 是并发读路径的补充 harness。与串行 harness 不同，它测的是**同时多个独立 `shlog` 进程**访问同一个只读 SQLite index 时的吞吐与 tail latency。它不执行 `sync`，要求 `--db` 已存在。
+`npm run eval:perf:concurrency` 是并发读路径的补充 harness。与串行 harness 不同，它测的是**同时多个独立 `shlog` 进程**访问同一个只读 SQLite index 时的吞吐与 tail latency。它不执行 `sync`，要求 `--db` 已存在。可配合 `--fixture-mb <n>` 自动生成临时 fixture 并 sync：
 
 ```bash
+# 自动生成 16MB fixture 并测试
+npm run eval:perf:concurrency -- \
+  --bin ./target/release/shlog \
+  --fixture-mb 16
+
+# 或使用预建 index
 npm run eval:perf:concurrency -- \
   --bin ./target/release/shlog \
   --root /absolute/path/to/fixture/sessions \
   --db /absolute/path/to/fixture/index.sqlite \
   --shapes "find:hammerspoon|find:edge tts|read-range|read-page|status" \
   --levels "1 2 4 8 16 32" \
-  --total 80   # 每级并发总共跑多少 op
+  --total 80
 ```
 
 - executable selector 与串行 harness 完全一致（`--bin` / `--cli-argv-json` / 环境变量 / TS reference fallback）。

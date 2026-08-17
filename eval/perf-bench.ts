@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { DEFAULT_DB_PATH } from "../src/env";
+import { cleanupFixture, generateFixture, type FixturePaths } from "./perf-fixture";
 import {
   DEFAULT_TOTAL_RUNS,
   commandArgv,
@@ -212,6 +213,8 @@ interface CliArgs {
   skipSync: boolean;
   collectRss: boolean;
   commandUnderTest: CommandUnderTest;
+  fixture: FixturePaths | null;
+  keepFixture: boolean;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -229,12 +232,18 @@ function parseArgs(argv: string[]): CliArgs {
   let executable: string | undefined;
   let cliArgvJson: string | undefined;
   let artifactPath: string | undefined;
+  let explicitRoot = false;
+  let explicitDb = false;
+  let fixtureMb = 16;
+  let keepFixture = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--root") {
       root = resolve(argv[++i] ?? root);
+      explicitRoot = true;
     } else if (a === "--db") {
       db = resolve(argv[++i] ?? db);
+      explicitDb = true;
     } else if (a === "--source") {
       source = argv[++i] ?? source;
     } else if (a === "--runs") {
@@ -251,6 +260,12 @@ function parseArgs(argv: string[]): CliArgs {
       skipSync = true;
     } else if (a === "--collect-rss") {
       collectRss = true;
+    } else if (a === "--fixture-mb") {
+      fixtureMb = parsePositiveInt(argv[++i], 16);
+    } else if (a === "--fixture") {
+      // no-op: explicit marker; fixture is now the default
+    } else if (a === "--keep-fixture") {
+      keepFixture = true;
     } else if (a === "--bin") {
       executable = argv[++i];
     } else if (a === "--cli-argv-json") {
@@ -260,10 +275,21 @@ function parseArgs(argv: string[]): CliArgs {
     } else if (a === "--json-only") {
       jsonOnly = true;
     } else if (a === "--help" || a === "-h") {
-      console.log("Usage: npm run eval:perf -- [--source <id>] [--root <dir>] [--db <path>] [--runs <n>] [--read-runs <n>] [--status-runs <n>] [--skip-sync] [--bin <executable> | --cli-argv-json <json>] [--artifact <path>] [--collect-rss] [--dogfood <goldens.jsonl>] [--best-effort] [--json-only]");
+      console.log("Usage: npm run eval:perf -- [--source <id>] [--root <dir>] [--db <path>] [--runs <n>] [--read-runs <n>] [--status-runs <n>] [--skip-sync] [--fixture-mb <n>] [--keep-fixture] [--bin <executable> | --cli-argv-json <json>] [--artifact <path>] [--collect-rss] [--dogfood <goldens.jsonl>] [--best-effort] [--json-only]");
       process.exit(0);
     }
   }
+
+  // Default to deterministic synthetic fixture when no explicit data source
+  // is provided. Real local data is opt-in via explicit --root or --db.
+  let fixture: FixturePaths | null = null;
+  if (!explicitRoot && !explicitDb) {
+    fixture = generateFixture(fixtureMb, source);
+    root = fixture.root;
+    db = fixture.db;
+    skipSync = false; // fixture is fresh — must sync
+  }
+
   const commandUnderTest = resolveCommandUnderTest({
     root: ROOT,
     cliEntry: CLI_ENTRY,
@@ -284,6 +310,8 @@ function parseArgs(argv: string[]): CliArgs {
     skipSync,
     collectRss,
     commandUnderTest,
+    fixture,
+    keepFixture,
   };
 }
 
@@ -471,7 +499,7 @@ if (args.skipSync) {
   // Default to strict sync so coverage is actually written and the status
   // probe below measures the fresh path (the one agents hit in practice).
   const syncCmd = ["sync", "--source", args.source, "--db", args.db, "--root", args.root];
-  if (args.bestEffortSync) syncCmd.push("--best-effort");
+  if (args.bestEffortSync || args.fixture) syncCmd.push("--best-effort");
   const syncRun = await runOrThrow(cliCommand(...syncCmd, "--json"), { collectRss: args.collectRss });
   syncMs = syncRun.ms;
   syncPeakRssBytes = syncRun.peakRssBytes;
@@ -601,6 +629,11 @@ const summary = {
   } : null,
 };
 console.log(JSON.stringify(args.jsonOnly ? report : summary, null, 2));
+
+// Clean up synthetic fixture unless --keep-fixture was requested.
+if (args.fixture && !args.keepFixture) {
+  cleanupFixture(args.fixture);
+}
 
 function topHitFromFind(payload: FindJsonPayload): TopHitRecord | null {
   const first = payload.results?.[0];

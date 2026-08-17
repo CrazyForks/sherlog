@@ -1,9 +1,10 @@
 #!/usr/bin/env -S node --import tsx
 
 import { mkdirSync, writeFileSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
+import { cleanupFixture, generateFixture, type FixturePaths } from "./perf-fixture";
 import {
   USAGE,
   HelpRequested,
@@ -31,6 +32,24 @@ try {
   console.error(`error: ${error instanceof Error ? error.message : String(error)}`);
   console.error(USAGE);
   process.exit(1);
+}
+
+// Generate synthetic fixture when --fixture-mb was explicitly set.
+let fixture: FixturePaths | null = null;
+if (process.argv.includes("--fixture-mb")) {
+  fixture = generateFixture(args.fixtureMb, args.source);
+  args.root = fixture.root;
+  args.db = fixture.db;
+  // Auto-sync the fresh fixture so the read-only benchmark has data.
+  const syncCmd = ["sync", "--source", args.source, "--db", args.db, "--root", args.root, "--json"];
+  const syncResult = spawnSync(args.commandUnderTest.executable, [...args.commandUnderTest.prefixArgv, ...syncCmd], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (syncResult.status !== 0) {
+    console.error(`error: fixture sync failed (exit ${syncResult.status}): ${syncResult.stderr.toString().slice(0, 500)}`);
+    cleanupFixture(fixture);
+    process.exit(1);
+  }
 }
 
 if (!args.db) {
@@ -196,3 +215,8 @@ const summary = {
   } : null,
 };
 console.log(JSON.stringify(args.jsonOnly ? report : summary, null, 2));
+
+// Clean up synthetic fixture unless --keep-fixture was requested.
+if (fixture && !args.keepFixture) {
+  cleanupFixture(fixture);
+}
