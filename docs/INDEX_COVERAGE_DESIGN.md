@@ -4,7 +4,7 @@
 
 ## 范围与真相源
 
-当前 public source：`codex`、experimental `claude-code`、experimental `pi`。Coverage 是 SQLite v8 对 canonical selector 的 stored sync proof，不是内容副本，也不是 live filesystem 状态。
+当前 public source：`codex`、experimental `claude-code`、experimental `pi`、experimental `dsh`。Coverage 是 SQLite v8 对 canonical selector 的 stored sync proof，不是内容副本，也不是 live filesystem 状态。
 
 - 内容真相来自 privacy-filtered `documents` projection。
 - 在 `shlog` CLI 内，raw transcript 只由 `sync` 做 bounded projection，或由 `status` 在 inventory cache miss 时流式解析 accepted projection；query/read 不读取 raw。

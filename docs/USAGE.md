@@ -83,6 +83,7 @@ shlog find "X" --cwd /Users/you/work/project --sort ended \
 - `codex`
 - `claude-code`（experimental transcript reader）
 - `pi`（experimental transcript reader）
+- `dsh`（experimental zstd transcript reader）
 
 默认 root：
 
@@ -90,6 +91,7 @@ shlog find "X" --cwd /Users/you/work/project --sort ended \
 codex        ~/.codex/sessions
 claude-code  ~/.claude/projects
 pi           ~/.pi/agent/sessions
+dsh          ~/.dsh/sessions
 ```
 
 `find` 省略 `--source` 时跨所有公开 source 搜索；`--source all` 等价。`status`、`sync`、`list`、`stats` 省略时默认 Codex。bare session id 也按 Codex 解释，跨 source 请直接使用 `find` 返回的 `sessionRef`：

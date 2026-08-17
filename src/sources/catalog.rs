@@ -16,11 +16,12 @@ use super::{
     ProjectionCheckpoint, ProjectionOutcome, SourceError, SourceFile, SourceMetadataCache,
     SourceScan, SourceScanFailure,
 };
-use super::{claude_code, codex, pi};
+use super::{claude_code, codex, dsh, pi};
 
 const CODEX_ACCEPTED_PREFIX: &str = "accepted-v1:codex:";
 const CLAUDE_ACCEPTED_PREFIX: &str = "accepted-v1:claude-code:";
 const PI_ACCEPTED_PREFIX: &str = "accepted-v1:pi:";
+const DSH_ACCEPTED_PREFIX: &str = "accepted-v1:dsh:";
 
 #[derive(Clone, Debug)]
 pub(crate) struct AcceptedMetadata {
@@ -115,9 +116,7 @@ impl SourceCatalog {
                         .unwrap_or_else(|| std::io::Error::other("source traversal failed")),
                 )
             })?;
-            if !entry.file_type().is_file()
-                || entry.path().extension().and_then(|value| value.to_str()) != Some("jsonl")
-            {
+            if !entry.file_type().is_file() || !source_file_accepted(source_id, entry.path()) {
                 continue;
             }
             if entry.path().to_str().is_none() {
@@ -226,7 +225,19 @@ impl SourceCatalog {
             SourceId::Codex => codex::project(file, read_limit, checkpoint),
             SourceId::ClaudeCode => claude_code::project(file, read_limit, checkpoint),
             SourceId::Pi => pi::project(file, read_limit, checkpoint),
+            SourceId::Dsh => dsh::project(file, read_limit, checkpoint),
         }
+    }
+}
+
+fn source_file_accepted(source_id: SourceId, path: &Path) -> bool {
+    let extension = path.extension().and_then(|value| value.to_str());
+    match source_id {
+        // DSH sessions are always zstd-compressed; the adapter decodes every
+        // accepted file as zstd, so accepting a plain `.jsonl` here would turn
+        // format drift into a hard sync failure instead of a skip.
+        SourceId::Dsh => matches!(extension, Some("zstd" | "zst")),
+        _ => extension == Some("jsonl"),
     }
 }
 
@@ -245,6 +256,7 @@ fn accepted_metadata(
         SourceId::Codex => codex::inventory_metadata(path).map(Some),
         SourceId::ClaudeCode => claude_code::inventory_metadata(path),
         SourceId::Pi => pi::inventory_metadata(path),
+        SourceId::Dsh => dsh::inventory_metadata(path),
     }
 }
 
@@ -253,6 +265,7 @@ fn accepted_fingerprint_prefix(source_id: SourceId) -> &'static str {
         SourceId::Codex => CODEX_ACCEPTED_PREFIX,
         SourceId::ClaudeCode => CLAUDE_ACCEPTED_PREFIX,
         SourceId::Pi => PI_ACCEPTED_PREFIX,
+        SourceId::Dsh => DSH_ACCEPTED_PREFIX,
     }
 }
 

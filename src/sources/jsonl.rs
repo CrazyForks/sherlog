@@ -186,6 +186,189 @@ pub(crate) fn scan_json_records(
     Ok(())
 }
 
+/// The zstd read decoder signals a truncated final frame as
+/// `ErrorKind::UnexpectedEof` + "incomplete frame" (zstd stream/raw.rs);
+/// every other decode failure is `ErrorKind::Other` with the C library
+/// error name. Match both halves so corrupt data can never masquerade as a
+/// torn tail.
+fn is_incomplete_zstd_frame(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::UnexpectedEof
+        && error
+            .to_string()
+            .to_ascii_lowercase()
+            .contains("incomplete frame")
+}
+/// Metadata scan over a zstd-compressed JSONL file. DSH sessions are stored
+/// as `session.jsonl.zstd`; the adapter treats the compressed file as the raw
+/// source and streams the decompressed records for privacy-reviewed metadata.
+pub(crate) fn scan_zstd_json_records(
+    path: &Path,
+    callback: impl FnMut(&Map<String, Value>) -> bool,
+) -> Result<(), SourceError> {
+    let handle = File::open(path).map_err(|source| SourceError::Io {
+        operation: "open source metadata",
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let decoder = zstd::stream::read::Decoder::new(handle).map_err(|source| SourceError::Io {
+        operation: "decompress source metadata",
+        path: path.to_path_buf(),
+        source,
+    })?;
+    // Metadata scans only run over fully captured files, so a final
+    // unterminated record (captured between writes) may still be parsed.
+    for_each_zstd_record(decoder, path, "read source metadata", true, callback)
+}
+
+/// Shared zstd JSONL decode loop: streams newline-delimited JSON objects,
+/// skipping blank, malformed, and non-object lines as format drift. When
+/// accept_unterminated_tail is false, a final non-newline-terminated record
+/// is not delivered, keeping projection append-safe. A false return from the
+/// callback stops the scan early.
+fn for_each_zstd_record(
+    reader: impl Read,
+    path: &Path,
+    operation: &'static str,
+    accept_unterminated_tail: bool,
+    mut callback: impl FnMut(&Map<String, Value>) -> bool,
+) -> Result<(), SourceError> {
+    let mut reader = BufReader::new(reader);
+    let mut buffer = Vec::new();
+
+    loop {
+        buffer.clear();
+        let bytes_read = match reader.read_until(b'\n', &mut buffer) {
+            Ok(bytes_read) => bytes_read,
+            // A torn final frame (DSH writes sessions incrementally and
+            // repairs torn tails itself) ends the decodable record stream:
+            // project the complete prefix; the next sync replays in full once
+            // the file is repaired. Any other decode failure (corrupt block,
+            // bad frame parameter, ...) stays a hard error.
+            Err(source) if is_incomplete_zstd_frame(&source) => break,
+            Err(source) => {
+                return Err(SourceError::Io {
+                    operation,
+                    path: path.to_path_buf(),
+                    source,
+                });
+            }
+        };
+        if bytes_read == 0 {
+            break;
+        }
+        let newline_terminated = buffer.last() == Some(&b'\n');
+        if !newline_terminated && !accept_unterminated_tail {
+            continue;
+        }
+        let content_len = if newline_terminated {
+            content_len_without_newline(&buffer)
+        } else {
+            buffer.len()
+        };
+        let json = trim_ascii(&buffer[..content_len]);
+        if json.is_empty() {
+            continue;
+        }
+        let Ok(Value::Object(record)) = serde_json::from_slice::<Value>(json) else {
+            continue;
+        };
+        if !callback(&record) {
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// Full-file projection reader for zstd-compressed JSONL sources.
+///
+/// DSH does not currently support append deltas, so this helper always reads
+/// the full compressed file and verifies the raw compressed prefix. The
+/// decompressed JSONL line offsets are not linear in the compressed file;
+/// source documents therefore use `0` raw locators and `read-*` continues to
+/// serve text from SQLite.
+pub(crate) fn read_bounded_zstd_lines(
+    file: &SourceFile,
+    requested_limit: u64,
+    mut callback: impl FnMut(&Map<String, Value>) -> Result<(), FullProjectionReason>,
+) -> Result<BoundedRead, SourceError> {
+    let handle = File::open(&file.file_path).map_err(|source| SourceError::Io {
+        operation: "open source file",
+        path: file.file_path.clone(),
+        source,
+    })?;
+    let opened_metadata = handle.metadata().map_err(|source| SourceError::Io {
+        operation: "stat opened source file",
+        path: file.file_path.clone(),
+        source,
+    })?;
+    let opened = file_stamp(&file.file_path, &opened_metadata);
+    let effective_limit = requested_limit.min(opened.size);
+
+    // Raw compressed bytes are the source-of-truth proof; decompressed JSONL
+    // offsets are not stable raw offsets for a compressed source.
+    let safe_prefix_digest =
+        super::prefix_sha256(&file.file_path, effective_limit).map_err(|source| {
+            SourceError::Io {
+                operation: "hash compressed source file",
+                path: file.file_path.clone(),
+                source,
+            }
+        })?;
+
+    let handle = File::open(&file.file_path).map_err(|source| SourceError::Io {
+        operation: "open source file",
+        path: file.file_path.clone(),
+        source,
+    })?;
+    let decoder =
+        zstd::stream::read::Decoder::new(handle.take(effective_limit)).map_err(|source| {
+            SourceError::Io {
+                operation: "decompress source file",
+                path: file.file_path.clone(),
+                source,
+            }
+        })?;
+    let mut callback_failure = None;
+    // An unterminated tail is not part of the append-safe projection; after a
+    // callback failure the reader keeps draining to surface late decode errors.
+    for_each_zstd_record(
+        decoder,
+        &file.file_path,
+        "read source file",
+        false,
+        |record| {
+            if callback_failure.is_none() {
+                if let Err(reason) = callback(record) {
+                    callback_failure = Some(reason);
+                }
+            }
+            true
+        },
+    )?;
+
+    let completed_metadata = fs::metadata(&file.file_path).map_err(|source| SourceError::Io {
+        operation: "stat completed source file",
+        path: file.file_path.clone(),
+        source,
+    })?;
+    let completed = file_stamp(&file.file_path, &completed_metadata);
+    Ok(BoundedRead {
+        proof: ReadProof {
+            requested_limit,
+            effective_limit,
+            byte_count: effective_limit,
+            safe_offset: effective_limit,
+            content_fingerprint: safe_prefix_digest.clone(),
+            safe_prefix_fingerprint: safe_prefix_digest.clone(),
+            opened,
+            completed,
+        },
+        safe_prefix_digest,
+        prefix_at_parse: None,
+        callback_failure,
+    })
+}
+
 pub(crate) fn metadata_times(metadata: &Metadata) -> (i128, f64) {
     let nanoseconds = match metadata.modified().and_then(|value| {
         value

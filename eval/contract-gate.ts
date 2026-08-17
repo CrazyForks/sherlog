@@ -518,6 +518,13 @@ function normalizeIntentionalV8Differences(
           if (isRecord(entry)) normalizeQueryOnlyCoverage(entry.coverage);
         }
       }
+      // Intentional v8 divergence: the legacy oracle still wraps non-fresh
+      // coverage into a check_coverage_then_retry nextAction, while native v8
+      // emits find nextAction only for zero-result diagnosis and surfaces the
+      // same state via coverageBySource. The dsh oracle adapter is a stub that
+      // can never be synced in this fixture, so the oracle always emits the
+      // coverage advice for the all-source and unscoped cases.
+      delete output.nextAction;
     }
   }
 
@@ -660,7 +667,7 @@ function assertContractObservation(
       expectPath(json, ["results", 0, "sessionRef"], CLAUDE_SESSION_REF, definition.id);
       break;
     case "find-all-sources": {
-      expectContract(deepPathEqual(json, ["sourceIds"], ["codex", "claude-code", "pi"]), definition.id, "all-source find sourceIds changed");
+      expectContract(deepPathEqual(json, ["sourceIds"], ["codex", "claude-code", "pi", "dsh"]), definition.id, "all-source find sourceIds changed");
       const sources = Array.isArray(json?.results)
         ? json.results.map((entry) => isRecord(entry) ? entry.sourceId : null).sort()
         : [];
