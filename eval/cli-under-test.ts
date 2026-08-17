@@ -1,10 +1,11 @@
+import { existsSync } from "node:fs";
 import { spawn as childSpawn } from "node:child_process";
 import { resolve } from "node:path";
 
 export const SHLOG_BIN_UNDER_TEST = "SHLOG_BIN_UNDER_TEST";
 export const SHLOG_CLI_ARGV_JSON = "SHLOG_CLI_ARGV_JSON";
 
-export type CliUnderTestSource = "argv-json" | "env-bin" | "typescript-reference";
+export type CliUnderTestSource = "argv-json" | "env-bin" | "native-release" | "native-debug";
 
 export interface CliUnderTest {
   argv: string[];
@@ -19,6 +20,8 @@ export interface ResolveCliUnderTestOptions {
    */
   argvJson?: string;
   env?: NodeJS.ProcessEnv;
+  /** Checkout root used to locate target/{release,debug}/shlog. */
+  repoRoot?: string;
 }
 
 export interface CliRunResult {
@@ -27,14 +30,25 @@ export interface CliRunResult {
   stderr: string;
 }
 
+export class NativeCliMissingError extends Error {
+  constructor(repoRoot: string) {
+    super(
+      `no shlog binary under ${repoRoot}/target/{release,debug}/shlog; run cargo build --release --locked --bin shlog or set SHLOG_BIN_UNDER_TEST / SHLOG_CLI_ARGV_JSON`,
+    );
+    this.name = "NativeCliMissingError";
+  }
+}
+
+const DEFAULT_REPO_ROOT = resolve(import.meta.dirname, "..");
+
 /**
  * Resolve one executable command prefix for black-box evals.
  *
- * Precedence is intentionally strict:
- * 1. explicit argv JSON (can safely carry fixed wrapper arguments),
- * 2. SHLOG_CLI_ARGV_JSON from the environment,
- * 3. SHLOG_BIN_UNDER_TEST (one executable/path, never shell-split),
- * 4. the checkout's TypeScript CLI reference implementation.
+ * Precedence:
+ * 1. explicit argv JSON,
+ * 2. SHLOG_CLI_ARGV_JSON,
+ * 3. SHLOG_BIN_UNDER_TEST (one path, never shell-split),
+ * 4. checkout target/release/shlog, then target/debug/shlog.
  */
 export function resolveCliUnderTest(options: ResolveCliUnderTestOptions = {}): CliUnderTest {
   const env = options.env ?? process.env;
@@ -46,16 +60,12 @@ export function resolveCliUnderTest(options: ResolveCliUnderTestOptions = {}): C
   const envBin = env[SHLOG_BIN_UNDER_TEST]?.trim();
   if (envBin) return { argv: [envBin], source: "env-bin" };
 
-  return {
-    argv: [
-      process.execPath,
-      "--disable-warning=ExperimentalWarning",
-      "--import",
-      "tsx",
-      resolve(import.meta.dirname, "..", "src", "cli.ts"),
-    ],
-    source: "typescript-reference",
-  };
+  const repoRoot = options.repoRoot ?? DEFAULT_REPO_ROOT;
+  const release = resolve(repoRoot, "target", "release", "shlog");
+  if (existsSync(release)) return { argv: [release], source: "native-release" };
+  const debug = resolve(repoRoot, "target", "debug", "shlog");
+  if (existsSync(debug)) return { argv: [debug], source: "native-debug" };
+  throw new NativeCliMissingError(repoRoot);
 }
 
 export function parseCliArgvJson(value: string): string[] {
@@ -99,8 +109,6 @@ export function runCliUnderTest(
     proc.stderr.on("data", (chunk: string) => { stderr += chunk; });
     proc.on("error", reject);
     proc.on("close", (code) => {
-      // A process terminated by a signal has no numeric exit code; keep that
-      // observable as failure instead of accidentally treating it as success.
       resolvePromise({ exitCode: code ?? 1, stdout, stderr });
     });
   });

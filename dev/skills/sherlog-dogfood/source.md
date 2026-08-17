@@ -9,9 +9,9 @@ Dev-only interactive workflow for maintaining private Sherlog dogfood golden exa
 
 ## Repo root
 
-运行时解析：从当前目录向上查找同时含 `Cargo.toml`、`rust/`、`skill-packages/sherlog` 的目录；找不到就向用户要 checkout 路径。所有命令都从该 `<repo-root>` 执行，golden 路径恒为 `<repo-root>/data/cxs-dogfood/goldens.local.jsonl`，handoff 里输出解析后的路径。不要在 skill 源码里保存机器绝对路径。
+运行时解析：从当前目录向上查找同时含 `Cargo.toml`、`src/main.rs`、`skill-packages/sherlog` 的目录；找不到就向用户要 checkout 路径。所有命令都从该 `<repo-root>` 执行，golden 路径恒为 `<repo-root>/data/cxs-dogfood/goldens.local.jsonl`，handoff 里输出解析后的路径。不要在 skill 源码里保存机器绝对路径。
 
-This skill is **not** a user-facing Sherlog feature and must not be copied into `skill-packages/sherlog` or repo-local `.agents/skills`. Focused reproduction must run the in-development native CLI via `cargo run --locked --bin shlog --` (or its `npm run shlog --` wrapper), so it tracks the Rust working tree regardless of which global `shlog` is installed. `npm run shlog:reference --` is the legacy TypeScript differential oracle, not the production candidate. `npm run eval:dogfood` reuses the shared CLI-under-test selector: bind it to the native binary with `--cli-argv-json`, `SHLOG_CLI_ARGV_JSON`, or `SHLOG_BIN_UNDER_TEST`; without an override it defaults to the TypeScript oracle.
+This skill is **not** a user-facing Sherlog feature and must not be copied into `skill-packages/sherlog` or repo-local `.agents/skills`. Focused reproduction must run the in-development native CLI via `cargo run --locked --bin shlog --` (or its `npm run shlog --` wrapper). `npm run eval:dogfood` defaults to checkout `target/release/shlog` (else debug); override with `--cli-argv-json`, `SHLOG_CLI_ARGV_JSON`, or `SHLOG_BIN_UNDER_TEST`.
 
 ## Interaction contract
 

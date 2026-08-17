@@ -12,28 +12,24 @@ import {
 } from "./perf-bench-core";
 
 const ROOT = resolve(import.meta.dirname, "..");
-const CLI_ENTRY = resolve(ROOT, "src", "cli.ts");
 
 describe("perf benchmark command target", () => {
-  test("keeps the current TSX source command as the default", () => {
-    const target = resolveCommandUnderTest({ root: ROOT, cliEntry: CLI_ENTRY, env: {} });
+  test("uses SHLOG_BIN_UNDER_TEST when no argv JSON is given", () => {
+    const target = resolveCommandUnderTest({
+      root: ROOT,
+      cliEntry: "",
+      env: { SHLOG_BIN_UNDER_TEST: "/tmp/shlog-under-test" },
+    });
 
-    expect(target.executable).toBe(process.execPath);
-    expect(target.prefixArgv).toEqual([
-      "--disable-warning=ExperimentalWarning",
-      "--import",
-      "tsx",
-      CLI_ENTRY,
-    ]);
-    expect(target.source).toBe("typescript-reference");
-    expect(target.artifactPath).toBe(CLI_ENTRY);
-    expect(target.artifactSizeBytes).toBeGreaterThan(0);
+    expect(target.executable).toBe("/tmp/shlog-under-test");
+    expect(target.source).toBe("env-bin");
+    expect(target.prefixArgv).toEqual([]);
   });
 
   test("accepts a full JSON command prefix from the shared eval environment", () => {
     const target = resolveCommandUnderTest({
       root: ROOT,
-      cliEntry: CLI_ENTRY,
+      cliEntry: "",
       env: {
         PATH: dirname(process.execPath),
         SHLOG_BIN_UNDER_TEST: "/tmp/lower-precedence-shlog",
@@ -52,7 +48,7 @@ describe("perf benchmark command target", () => {
   test("rejects shell-like argv strings instead of guessing how to split them", () => {
     expect(() => resolveCommandUnderTest({
       root: ROOT,
-      cliEntry: CLI_ENTRY,
+      cliEntry: "",
       env: {
         SHLOG_CLI_ARGV_JSON: "--flag value",
       },
@@ -62,7 +58,7 @@ describe("perf benchmark command target", () => {
   test("builds commands without a shell and propagates root to find", () => {
     const target = resolveCommandUnderTest({
       root: ROOT,
-      cliEntry: CLI_ENTRY,
+      cliEntry: "",
       argvJson: JSON.stringify(["/tmp/custom-shlog", "--launcher-mode"]),
       env: {},
     });

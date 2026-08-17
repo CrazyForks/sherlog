@@ -332,4 +332,4 @@ export function buildConcurrencyReportMarkdown(r: ConcurrencyReport): string {
 
 // Executable resolution context mirrors the serial perf harness.
 const ROOT = resolve(import.meta.dirname, "..");
-const CLI_ENTRY = resolve(ROOT, "src", "cli.ts");
+const CLI_ENTRY = "";

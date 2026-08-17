@@ -19,7 +19,7 @@ message 与 session-profile 共用 `documents`/`documents_fts`，但 evidence pr
 
 ### 已有基础
 
-- dogfood runner 已复用统一的 CLI-under-test 解析，可通过 `--cli-argv-json`、`SHLOG_CLI_ARGV_JSON` 或 `SHLOG_BIN_UNDER_TEST` 显式绑定 native candidate，并把实际 argv/source 写入 scorecard；无 override 时才默认 TypeScript oracle；
+- dogfood runner 已复用统一的 CLI-under-test 解析，可通过 `--cli-argv-json`、`SHLOG_CLI_ARGV_JSON` 或 `SHLOG_BIN_UNDER_TEST` 显式绑定 native candidate，并把实际 argv/source 写入 scorecard；无 override 时默认 checkout 的 `target/release/shlog`；
 - executable-neutral contract gate 已把 help prose、query-only coverage freshness、typed error semantics 与 native strict-incomplete reason 编码为 intentional-difference policy；当前 `target/release/shlog` 对 TypeScript reference 实测 **24/24**；
 - synthetic acceptance gate 已显式绑定同一 native release candidate；message hit、session-profile hit、CJK、source-aware read、command restatement 等 evidence-level fixtures 当前实测 **8/8**；
 - candidate-aware perf harness：可显式选择 release binary、记录 process/operation latency、RSS、artifact/DB size 和 progressive reads；默认跑确定性合成烟雾 fixture（隔离、不代表真实体积分布），本机校准必须同时显式 `--root` 和 `--db`（建议 `--skip-sync`）；附 concurrency 补充 harness；尚未有进 git 的回归基线 JSON，也尚未按真实体积分布做形状拟合语料；

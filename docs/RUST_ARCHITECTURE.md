@@ -45,11 +45,11 @@ one short-lived binary
 
 ## Package 与 binary
 
-根 `Cargo.toml` 定义 workspace，production package 是 `rust/Cargo.toml` 中的 `sherlog-cli`，binary：
+根 `Cargo.toml` 就是 production package `sherlog-cli`，binary：
 
 ```text
 name: shlog
-path: rust/src/main.rs
+path: src/main.rs
 ```
 
 关键依赖：
@@ -65,7 +65,7 @@ path: rust/src/main.rs
 生产模块：
 
 ```text
-rust/src/
+src/
   app/          command orchestration, output, status
   sources/      raw adapters and privacy projection
   sync/         lock, transition, stage, commit, cold retention

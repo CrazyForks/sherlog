@@ -6,7 +6,7 @@ import { resolveCliUnderTest, runCliUnderTest } from "./cli-under-test";
 import { buildDogfoodScoreboard, buildFindCliArgs, buildReadRangeContextArgs, desiredContextMode, evaluateDogfoodItem, missingContextNeedles, type DogfoodEvaluation, type DogfoodScoreboard } from "./dogfood-eval-core";
 import { measureReturnedContext, summarizeReturnedContext, type ReturnedContextMetric, type ReturnedContextSummary } from "./returned-context";
 import { parseDogfoodJsonl, type DogfoodGolden } from "./dogfood-schema";
-import type { FindResult, FindSort, Selector } from "../src/types";
+import type { FindResult, FindSort, Selector } from "./types";
 
 interface FindOutput {
   query: string;

@@ -15,7 +15,7 @@ status --(read-only allowlisted inventory scan)--> live coverage diagnosis
 
 ## Runtime 与命令权限
 
-生产入口是 `rust/src/main.rs` 生成的 `shlog`。`src/` 下的 TypeScript 只保留为 differential oracle 和 eval 基线；用户运行 production CLI 不需要 Node.js。
+生产入口是 `src/main.rs` 生成的 `shlog`。`eval/` 是评测 harness；用户运行 production CLI 不需要 Node.js。
 
 | 命令 | raw source | SQLite | 是否写状态 |
 | --- | --- | --- | --- |
@@ -29,12 +29,12 @@ status --(read-only allowlisted inventory scan)--> live coverage diagnosis
 
 ## 深模块与 seam
 
-- `app`（`rust/src/app/`）隐藏 CLI orchestration、输出和 coverage guidance；调用者只看到固定命令 contract。
-- `sources`（`rust/src/sources/`）是 raw-format adapter seam；adapter 负责 inventory、bounded read 与 allowlisted projection，核心层不理解各家 JSONL 细节。
-- `sync`（`rust/src/sync/`）把锁、snapshot transition、并行 parse、staging、事务发布和 prune 集中在一个 writer module。
-- `index`（`rust/src/index/`）隐藏 v7/v8 layout、query-only reader、v8 writer、SQL filter pushdown 和 invariant checks。
-- `retrieval`（`rust/src/retrieval/`）接收 storage candidate，负责 deterministic ranking、snippet、evidence-read plan 和 zero-result guidance。
-- `migration`（`rust/src/migration/`）封装 v7 -> v8 copy/verify/backup/atomic publish；普通 reader 不知道 migration 如何发生。
+- `app`（`src/app/`）隐藏 CLI orchestration、输出和 coverage guidance；调用者只看到固定命令 contract。
+- `sources`（`src/sources/`）是 raw-format adapter seam；adapter 负责 inventory、bounded read 与 allowlisted projection，核心层不理解各家 JSONL 细节。
+- `sync`（`src/sync/`）把锁、snapshot transition、并行 parse、staging、事务发布和 prune 集中在一个 writer module。
+- `index`（`src/index/`）隐藏 v7/v8 layout、query-only reader、v8 writer、SQL filter pushdown 和 invariant checks。
+- `retrieval`（`src/retrieval/`）接收 storage candidate，负责 deterministic ranking、snippet、evidence-read plan 和 zero-result guidance。
+- `migration`（`src/migration/`）封装 v7 -> v8 copy/verify/backup/atomic publish；普通 reader 不知道 migration 如何发生。
 
 共享的 identity、selector、coverage 与 tokenizer 分别在 `identity.rs`、`selector.rs`、`coverage.rs`、`tokenizer.rs`。
 

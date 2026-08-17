@@ -1,9 +1,9 @@
 # Sherlog ranking 当前规则
 
 本文描述 production Rust retrieval 的确定性规则。实现入口是
-[ranking.rs](../rust/src/retrieval/ranking.rs)、
-[reader.rs](../rust/src/index/reader.rs) 与
-[global.rs](../rust/src/retrieval/global.rs)。`src/**` 中的 TypeScript 排序实现只用于开发期 differential oracle，不是 production 真相。
+[ranking.rs](../src/retrieval/ranking.rs)、
+[reader.rs](../src/index/reader.rs) 与
+[global.rs](../src/retrieval/global.rs)。
 
 ## Pipeline 与候选上限
 

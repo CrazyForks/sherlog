@@ -1,7 +1,13 @@
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { beforeAll, describe, expect, test } from "vitest";
 import { runAcceptanceGate, type AcceptanceGateResult } from "./acceptance-gate";
 
-describe("acceptance gate", () => {
+const ROOT = resolve(import.meta.dirname, "..");
+const hasCheckoutShlog = ["target/release/shlog", "target/debug/shlog"]
+  .some((rel) => existsSync(resolve(ROOT, rel)));
+
+describe.skipIf(!hasCheckoutShlog)("acceptance gate", () => {
   let result: AcceptanceGateResult;
 
   beforeAll(async () => {
@@ -61,8 +67,10 @@ describe("acceptance gate", () => {
     // Dense within-session follow-up stays available through result metadata.
     expect(result.rows.every((row) => row.diversity.topK > 0)).toBe(true);
   });
+});
 
-  test("can require an explicit candidate instead of silently testing the oracle", async () => {
+describe("acceptance gate helpers", () => {
+  test("can require an explicit candidate instead of silently testing the checkout binary", async () => {
     await expect(runAcceptanceGate({ requireCandidateOverride: true })).rejects.toThrow(
       "requires an explicit candidate executable override",
     );

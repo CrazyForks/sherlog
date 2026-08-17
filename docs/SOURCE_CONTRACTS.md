@@ -4,7 +4,7 @@ This document defines the searchable projection contract for the native Rust sou
 
 ## Public seam
 
-`rust/src/sources/mod.rs` exposes one narrow seam:
+`src/sources/mod.rs` exposes one narrow seam:
 
 - `SourceCatalog::scan(selector, cache)` performs one traversal plus cache-aware inventory projection and returns accepted files, inventory, snapshot, and per-file scan failures. A cache miss may stream raw records/body; an exact metadata/checkpoint hit avoids re-parsing.
 - projection converts one byte-bounded `SourceFile` into a privacy-reviewed `SessionProjection`, accepted message documents, `ReadProof`, and an opaque checkpoint.
@@ -53,7 +53,7 @@ The registry is static: `codex`, `claude-code`, `pi`. Adding a runtime plugin is
 
 ## Codex adapter
 
-Implementation: `rust/src/sources/codex.rs`.
+Implementation: `src/sources/codex.rs`.
 
 Accepted metadata/profile input:
 
@@ -80,7 +80,7 @@ Codex is the only adapter currently implementing true append delta. The checkpoi
 
 ## Claude Code adapter (experimental)
 
-Implementation: `rust/src/sources/claude_code.rs`.
+Implementation: `src/sources/claude_code.rs`.
 
 Accepted:
 
@@ -102,7 +102,7 @@ Claude Code currently requests full replay when an existing checkpoint is offere
 
 ## Pi adapter (experimental)
 
-Implementation: `rust/src/sources/pi.rs`.
+Implementation: `src/sources/pi.rs`.
 
 Accepted metadata/profile input:
 

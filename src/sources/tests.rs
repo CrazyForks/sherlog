@@ -588,9 +588,6 @@ fn codex_short_file_name_uses_fallback_without_panicking() {
 
 fn repository_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .to_path_buf()
 }
 
 fn scan_all(source_id: SourceId, root: &Path) -> super::SourceScan {

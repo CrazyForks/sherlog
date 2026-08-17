@@ -1518,7 +1518,7 @@ fn v8_cold_writer_lock_failure_preserves_json_stdout_contract() {
 fn status_succeeds_without_a_database_and_scans_only_the_fixture_root() {
     let directory = TempDir::new().unwrap();
     let fixture_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../eval/fixtures/contract/codex")
+        .join("eval/fixtures/contract/codex")
         .canonicalize()
         .unwrap();
     let paths = resolved_paths(&directory, &fixture_root);
@@ -1553,7 +1553,7 @@ fn status_succeeds_without_a_database_and_scans_only_the_fixture_root() {
 fn status_selector_performs_live_freshness_proof_without_writing() {
     let directory = TempDir::new().unwrap();
     let fixture_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../eval/fixtures/contract/codex")
+        .join("eval/fixtures/contract/codex")
         .canonicalize()
         .unwrap();
     let paths = resolved_paths(&directory, &fixture_root);

@@ -4,22 +4,11 @@
 
 ## 先选对被测 executable
 
-未传任何 override 时，harness 默认运行：
-
-```text
-node --import tsx <repo>/src/cli.ts
-```
-
-这是 differential oracle，不是 production candidate，也不能作为 native acceptance 证据。验证当前 Rust checkout 时应显式选择 release binary：
+未传任何 override 时，harness 使用 checkout 的 `target/release/shlog`，没有 release 再用 `target/debug/shlog`。找不到 binary 则失败。验证当前 checkout：
 
 ```bash
 cargo build --release --locked --bin shlog
-
-npm run eval:perf -- \
-  --bin ./target/release/shlog \
-  --artifact ./target/release/shlog \
-  --root /absolute/path/to/fixture/sessions \
-  --db /absolute/path/to/fixture/index.sqlite
+npm run eval:perf -- --artifact ./target/release/shlog
 ```
 
 选择优先级为：
@@ -28,7 +17,7 @@ npm run eval:perf -- \
 2. `--bin`，内部等价为单元素 argv array；
 3. 环境变量 `SHLOG_CLI_ARGV_JSON`；
 4. 环境变量 `SHLOG_BIN_UNDER_TEST`；
-5. TypeScript reference fallback。
+5. checkout `target/release/shlog`，否则 `target/debug/shlog`。
 
 `--artifact` 或 `SHLOG_ARTIFACT_UNDER_TEST` 指定要记录体积的 artifact。需要 launcher 与固定参数时使用 JSON argv，不做 shell split：
 
@@ -129,7 +118,7 @@ npm run eval:perf -- \
   --dogfood data/cxs-dogfood/goldens.local.jsonl
 ```
 
-无 executable override 时，dogfood 与其他 eval runner 一样默认使用 TypeScript oracle。
+无 executable override 时，dogfood 与其他 eval runner 一样默认使用 checkout 的 `shlog`。
 
 ## 并发基准
 

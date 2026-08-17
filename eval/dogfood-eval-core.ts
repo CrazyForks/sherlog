@@ -1,4 +1,4 @@
-import type { FindResult } from "../src/types";
+import type { FindResult } from "./types";
 import type { DogfoodFailureClass, DogfoodGolden, DogfoodStatus } from "./dogfood-schema";
 
 export type DogfoodMark = "pass" | "fail" | "skip";

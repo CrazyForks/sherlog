@@ -6,17 +6,9 @@ import {
 } from "./cli-under-test";
 
 describe("CLI under test", () => {
-  test("defaults to the checkout TypeScript reference", () => {
-    const cli = resolveCliUnderTest({ env: {} });
-
-    expect(cli.source).toBe("typescript-reference");
-    expect(cli.argv.slice(0, 4)).toEqual([
-      process.execPath,
-      "--disable-warning=ExperimentalWarning",
-      "--import",
-      "tsx",
-    ]);
-    expect(cli.argv[4]).toMatch(/\/src\/cli\.ts$/);
+  test("defaults to checkout target/release/shlog then target/debug/shlog", () => {
+    const repoRoot = "/tmp/sherlog-cli-under-test-missing";
+    expect(() => resolveCliUnderTest({ env: {}, repoRoot })).toThrow(/no shlog binary/);
   });
 
   test("uses explicit argv JSON before SHLOG_BIN_UNDER_TEST without shell splitting", () => {

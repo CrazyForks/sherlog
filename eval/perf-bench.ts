@@ -196,7 +196,7 @@ const DEFAULT_RUNS_PER_QUERY = DEFAULT_TOTAL_RUNS;
 const DEFAULT_READ_RUNS_PER_PROBE = DEFAULT_TOTAL_RUNS;
 const DEFAULT_STATUS_RUNS = DEFAULT_TOTAL_RUNS;
 const ROOT = resolve(import.meta.dirname, "..");
-const CLI_ENTRY = resolve(ROOT, "src", "cli.ts");
+const CLI_ENTRY = "";
 const OUT_BASE = resolve(ROOT, "data", "shlog-perf");
 
 interface CliArgs {
