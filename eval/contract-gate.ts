@@ -133,8 +133,8 @@ export function resolveContractExecutables(options: ContractGateOptions = {}): C
   const env = options.env ?? process.env;
   const reference = resolveCliUnderTest({
     ...(options.referenceArgvJson !== undefined ? { argvJson: options.referenceArgvJson } : {}),
-    // The reference is deliberately stable: ambient candidate overrides must
-    // never silently replace the checkout TypeScript implementation.
+    // Reference ignores ambient candidate env so a leftover SHLOG_BIN does
+    // not silently replace the checkout binary used as the stable side.
     env: {},
   });
   const candidate = resolveCliUnderTest({
@@ -144,11 +144,20 @@ export function resolveContractExecutables(options: ContractGateOptions = {}): C
   return { reference, candidate };
 }
 
+function hasExplicitCandidate(options: ContractGateOptions): boolean {
+  const env = options.env ?? process.env;
+  return Boolean(
+    options.candidateArgvJson
+    || env.SHLOG_CLI_ARGV_JSON
+    || env.SHLOG_BIN_UNDER_TEST?.trim(),
+  );
+}
+
 export async function runContractGate(options: ContractGateOptions = {}): Promise<ContractGateResult> {
-  const executables = resolveContractExecutables(options);
-  if (options.requireCandidateOverride && executables.candidate.source === "typescript-reference") {
+  if (options.requireCandidateOverride && !hasExplicitCandidate(options)) {
     throw new Error("contract gate requires an explicit candidate executable override");
   }
+  const executables = resolveContractExecutables(options);
   const base = mkdtempSync(join(tmpdir(), "sherlog-contract-"));
   const fixture = prepareContractFixture(base);
   const reference = prepareSide(base, "reference", executables.reference, fixture, options.env);
@@ -708,7 +717,6 @@ function assertNativeV8Contract(
   observation: ContractObservation,
   cli: CliUnderTest,
 ): void {
-  if (cli.source === "typescript-reference") return;
   const json = definition.outputKind === "json-stdout"
     ? (isRecord(observation.stdout) ? observation.stdout : null)
     : definition.outputKind === "json-stderr"

@@ -15,7 +15,7 @@
 
 ## 当前实现真相
 
-- 当前生产代码在 `rust/`；根 workspace 生成单个 `shlog` binary。`src/` 下的 TypeScript 只保留为开发期 differential oracle，不是用户 runtime，也不是发布入口。
+- 当前生产代码在仓库根 crate：`src/` 是 Rust，生成单个 `shlog` binary。`eval/` 是 TypeScript 评测 harness，只 fork `shlog`，不再保留第二套 TypeScript CLI。
 - v8 SQLite 是唯一持久化真相源：`meta`、物理表 `session_rows`、只读兼容 view `sessions`、`source_files`、统一 `documents`、contentless `documents_fts`、`coverage`、`cold_roots`。没有 metadata sidecar。
 - v8 writer 固定使用 rollback `journal_mode=DELETE` 与 `synchronous=FULL`。这是短命 CLI + 显式 single-writer 的有意识取舍：发布态 index 保持单文件，所有只读命令在 DB `0444`、目录 `0555` 时也不会创建 `-wal` / `-shm`；不要改成 `immutable=1` 或 close-time WAL seal，它们在并发 writer/reader 下会读旧数据或留下转换竞态。
 - `sessions` view 故意没有 `INSTEAD OF` trigger：高级只读 SQL 保持兼容，旧 TypeScript writer 对 v8 写入时会 fail closed。
@@ -47,19 +47,18 @@
 
 ## 代码地图
 
-- [main.rs](rust/src/main.rs): native binary entrypoint
-- [cli.rs](rust/src/cli.rs): fixed CLI surface and flags
-- [app/](rust/src/app): command orchestration, output and status
-- [runner.rs](rust/src/runner.rs): parse/dispatch/error routing
-- [sources/](rust/src/sources): source adapters, inventory and privacy projection
-- [sync/](rust/src/sync): lock, scan/project/stage, append/full transitions, cold retention and publish
-- [index/](rust/src/index): v8 reader/writer/schema/SQL invariants；v7 仅作为 migration 的 import 格式（内容命令 fail-closed）
-- [retrieval/](rust/src/retrieval): query analysis, candidate aggregation, ranking, snippets and evidence-read plans
-- [migration/](rust/src/migration): v7 -> v8 copy/verify/atomic publication
-- [selector.rs](rust/src/selector.rs), [coverage.rs](rust/src/coverage.rs), [tokenizer.rs](rust/src/tokenizer.rs): shared invariants
-- [model.rs](rust/src/model.rs): public JSON/data contracts
-- [src/](src): legacy TypeScript differential oracle only
-- [eval/](eval): manual eval、batch compare
+- [main.rs](src/main.rs): native binary entrypoint
+- [cli.rs](src/cli.rs): fixed CLI surface and flags
+- [app/](src/app): command orchestration, output and status
+- [runner.rs](src/runner.rs): parse/dispatch/error routing
+- [sources/](src/sources): source adapters, inventory and privacy projection
+- [sync/](src/sync): lock, scan/project/stage, append/full transitions, cold retention and publish
+- [index/](src/index): v8 reader/writer/schema/SQL invariants；v7 仅作为 migration 的 import 格式（内容命令 fail-closed）
+- [retrieval/](src/retrieval): query analysis, candidate aggregation, ranking, snippets and evidence-read plans
+- [migration/](src/migration): v7 -> v8 copy/verify/atomic publication
+- [selector.rs](src/selector.rs), [coverage.rs](src/coverage.rs), [tokenizer.rs](src/tokenizer.rs): shared invariants
+- [model.rs](src/model.rs): public JSON/data contracts
+- [eval/](eval): eval harness（fork `shlog`、acceptance/contract/perf/dogfood）
 
 ## 文档规则
 
@@ -110,7 +109,6 @@ CLI 改动需要对外生效时，走 native 发布流程：同步 bump Cargo wo
 
 - 改 CLI 行为时，同步更新 `skill-packages/sherlog`，并判断是否需要正式 native release；未 release 前只验证 checkout binary，不要更新或覆盖全局 CLI
 - 验证当前 checkout 的未发布 production code 时，优先用 `cargo run --locked --bin shlog -- <args>`；`npm run shlog -- <args>` 只是该命令的开发包装
-- TypeScript oracle 用 `npm run shlog:reference -- <args>`，不得作为 production smoke
 - 验证已安装 / 已发布行为时，用 `shlog <args>`，并先核对 `command -v shlog` 与 `shlog --version`
 - 全局 `sherlog` skill 通过 `npx skills add` 更新；不要再创建 `cxsd` skill 或 symlink
 
@@ -133,7 +131,7 @@ Dogfood golden 是开发者本机的真实历史检索验收集，不是普通�
 用户让 agent 根据 dogfood test 改进 Sherlog 时，先复现和分层，不要直接改实现：
 
 1. 构建 native candidate，并用 `SHLOG_BIN_UNDER_TEST=./target/debug/shlog npm run eval:dogfood -- data/cxs-dogfood/goldens.local.jsonl`（或等价 `--cli-argv-json`）运行 eval
-2. 对失败 case 用 `cargo run --locked --bin shlog -- find ... --json`、`read-range` 或 `read-page` 复现；必要时再用 `npm run shlog:reference -- ...` 做 differential diagnosis
+2. 对失败 case 用 `cargo run --locked --bin shlog -- find ... --json`、`read-range` 或 `read-page` 复现
 3. 先判断问题层级：
    - index/coverage stale → 修同步/selector 使用流程，不改排序代码
    - skill guidance 问题 → 改 `skill-packages/sherlog`，不改 CLI
@@ -141,7 +139,7 @@ Dogfood golden 是开发者本机的真实历史检索验收集，不是普通�
    - golden 期望不稳 → 保持 `candidate` 或请用户确认 stale，不硬凑实现
 4. 如果是从 `$sherlog-dogfood` 交接来的修复 handoff，先按 handoff 里的 case id、命令、期望 session/context 复现；handoff 是入口，不是结论
 5. 禁止为了通过 dogfood 直接改 golden、hardcode 某个 query/session/id、或新增不必要实体；修复必须能解释成通用 Sherlog 改进
-6. 收口至少跑 Rust gates、`npm run check`、focused native repro 和绑定 native candidate 的 dogfood eval（`--cli-argv-json`、`SHLOG_CLI_ARGV_JSON` 或 `SHLOG_BIN_UNDER_TEST`）；无 override 时 runner 默认 TypeScript oracle。涉及 skill 行为时再验证全局 skill 安装状态
+6. 收口至少跑 Rust gates、`npm run check`、focused native repro 和 dogfood eval。eval 默认使用 checkout 的 `target/release/shlog`（否则 debug）。涉及 skill 行为时再验证全局 skill 安装状态
 
 ## 默认验证
 
@@ -151,7 +149,7 @@ Dogfood golden 是开发者本机的真实历史检索验收集，不是普通�
 - `cargo test --workspace --all-targets --all-features --locked`
 - `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`
 - `cargo build --release --locked --bin shlog`
-- `npm run check`（仅 TypeScript oracle/eval workspace）
+- `npm run check`（eval harness TypeScript）
 - 必要时补一条 release binary 烟测，例如 `target/release/shlog status --json` 或 sanitized fixture sync/find/read
 - 涉及 skill 通道时，验证 `npx skills ls -g --json` 和 `shlog --help`
 - 涉及发布 / 安装态时，回读 GitHub Release assets、`which -a shlog`、`shlog --version`，并说明本机 CLI 是否来自 native release

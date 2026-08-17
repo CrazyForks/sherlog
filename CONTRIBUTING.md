@@ -42,7 +42,7 @@ npm run eval:acceptance -- --require-candidate --cli-argv-json '["./target/relea
 npm run eval:contract -- --require-candidate --candidate-argv-json '["./target/release/shlog"]'
 ```
 
-`npm run check` 只验证 TypeScript oracle/eval workspace，不能替代 Rust gates。手工评测与批次比较仍可用：
+`npm run check` 只验证 eval harness TypeScript，不能替代 Rust gates。手工评测与批次比较仍可用：
 
 ```bash
 npm run eval:manual
@@ -53,7 +53,7 @@ npm run eval:compare -- data/shlog-eval/<before-batch> data/shlog-eval/<after-ba
 
 - `sync` 是唯一 content/index/coverage writer；`cold add/remove` 只写 retention state。
 - `find`、`read-*`、`list`、`stats`、`cold list` 只读 SQLite。`status` 不返回/检索正文、不写 index；inventory cache miss 会流式读取 raw 并只用 privacy-allowlisted projection 派生 proof，exact cache hit 不重 parse。
-- TypeScript `src/**` 是 differential oracle，不是 production entrypoint；行为修改以 Rust contract 为主，并决定 oracle/eval 是否需要同步。
+- 生产代码只在仓库根 crate 的 `src/**`（Rust）。`eval/` 是评测 harness，不是第二套 CLI。
 - v8 SQLite 是唯一持久化真相；不要重新引入 metadata sidecar、daemon/watcher 或第二状态存储。
 - 保持 source privacy allowlist、query-only read、SQL scope-filter pushdown、message evidence provenance 与 `incremental == full replay` 不变量。
 - 不要把目标态建议写成当前已实现事实；涉及 CLI/JSON/storage 的变更同步更新 `skill-packages/sherlog` 与当前态文档。
@@ -63,4 +63,4 @@ npm run eval:compare -- data/shlog-eval/<before-batch> data/shlog-eval/<after-ba
 
 至少运行与改动相关的 Rust gates 与 `npm run check`。查询、排序或 JSON contract 变更还应使用显式 native candidate 跑 acceptance/contract；sync/migration/cold 变更应补对应 Rust state/failure tests。
 
-Native tag/assets 发布前只能说明 source-ready。不要用本地 build、全局旧 `shlog` 或 TypeScript oracle 冒充已发布 native CLI。
+Native tag/assets 发布前只能说明 source-ready。不要用本地 build 或全局旧 `shlog` 冒充已发布 native CLI。

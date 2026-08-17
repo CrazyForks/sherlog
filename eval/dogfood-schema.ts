@@ -1,5 +1,5 @@
-import { canonicalizeSelector } from "../src/selector";
-import { isSessionSourceId, type FindSort, type MatchSource, type Selector, type SessionSourceId } from "../src/types";
+import { canonicalizeSelector } from "./selector";
+import { isSessionSourceId, type FindSort, type MatchSource, type Selector, type SessionSourceId } from "./types";
 
 export type DogfoodStatus = "candidate" | "hard" | "stale";
 export type DogfoodOriginKind = "observed-user-ask" | "evidence-backed-derived" | "manual";

@@ -27,7 +27,7 @@ curl -fsSL https://github.com/catoncat/sherlog/releases/latest/download/install.
 ```bash
 cargo run --locked --bin shlog -- status --json
 npm run shlog -- status --json           # Rust command 的开发包装
-npm run shlog:reference -- status --json # TypeScript differential oracle
+cargo run --locked --bin shlog -- status --json
 ```
 
 最后两项只用于仓库开发；Node.js 不是 production CLI dependency。

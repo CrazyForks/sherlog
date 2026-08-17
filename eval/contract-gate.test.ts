@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { beforeAll, describe, expect, test } from "vitest";
 import {
   normalizeContractValue,
@@ -6,7 +8,11 @@ import {
   type ContractGateResult,
 } from "./contract-gate";
 
-describe("executable-neutral contract gate", { timeout: 120_000 }, () => {
+const ROOT = resolve(import.meta.dirname, "..");
+const hasCheckoutShlog = ["target/release/shlog", "target/debug/shlog"]
+  .some((rel) => existsSync(resolve(ROOT, rel)));
+
+describe.skipIf(!hasCheckoutShlog)("native contract gate", { timeout: 120_000 }, () => {
   let result: ContractGateResult;
 
   beforeAll(async () => {
@@ -16,9 +22,9 @@ describe("executable-neutral contract gate", { timeout: 120_000 }, () => {
     result = await runContractGate({ env });
   }, 120_000);
 
-  test("deep-compares the complete public CLI surface against the TypeScript reference", () => {
-    expect(result.referenceCli.source).toBe("typescript-reference");
-    expect(result.candidateCli.source).toBe("typescript-reference");
+  test("deep-compares two isolated native runs of the public CLI surface", () => {
+    expect(["native-release", "native-debug"]).toContain(result.referenceCli.source);
+    expect(["native-release", "native-debug"]).toContain(result.candidateCli.source);
     expect(result).toMatchObject({ total: 27, passed: 27, failed: 0 });
     expect(result.cases.map((entry) => entry.id)).toEqual([
       "version",
@@ -52,6 +58,21 @@ describe("executable-neutral contract gate", { timeout: 120_000 }, () => {
     expect(result.cases.every((entry) => entry.mismatchPaths.length === 0)).toBe(true);
   });
 
+  test("keeps the reference immune to ambient candidate overrides", () => {
+    const commands = resolveContractExecutables({
+      candidateArgvJson: JSON.stringify(["cargo", "run", "--quiet", "--"]),
+      env: { SHLOG_BIN_UNDER_TEST: "/tmp/ignored-candidate" },
+    });
+
+    expect(["native-release", "native-debug"]).toContain(commands.reference.source);
+    expect(commands.candidate).toEqual({
+      source: "argv-json",
+      argv: ["cargo", "run", "--quiet", "--"],
+    });
+  });
+});
+
+describe("contract gate helpers", () => {
   test("keeps runtime normalization narrowly allowlisted", () => {
     const value = {
       elapsedMs: 19,
@@ -75,19 +96,6 @@ describe("executable-neutral contract gate", { timeout: 120_000 }, () => {
       sourceFingerprint: "must-remain-exact",
       id: 7,
       path: "<STATE>/main.sqlite",
-    });
-  });
-
-  test("keeps the reference immune to ambient candidate overrides", () => {
-    const commands = resolveContractExecutables({
-      candidateArgvJson: JSON.stringify(["cargo", "run", "--quiet", "--"]),
-      env: { SHLOG_BIN_UNDER_TEST: "/tmp/ignored-candidate" },
-    });
-
-    expect(commands.reference.source).toBe("typescript-reference");
-    expect(commands.candidate).toEqual({
-      source: "argv-json",
-      argv: ["cargo", "run", "--quiet", "--"],
     });
   });
 

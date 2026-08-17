@@ -3,7 +3,7 @@
   "version": "0.5.1",
   "private": true,
   "type": "module",
-  "description": "Development and differential-evaluation workspace for the native Sherlog CLI",
+  "description": "Eval harness workspace for the native Sherlog CLI",
   "license": "MIT",
   "homepage": "https://github.com/catoncat/sherlog",
   "repository": {
@@ -31,7 +31,6 @@
     "test": "vitest run",
     "check": "tsc --noEmit && vitest run",
     "shlog": "cargo run --quiet --bin shlog --",
-    "shlog:reference": "tsx ./src/cli.ts",
     "eval:manual": "tsx ./eval/run-manual-eval.ts",
     "eval:acceptance": "tsx ./eval/run-acceptance-eval.ts",
     "eval:contract": "tsx ./eval/run-contract-eval.ts",

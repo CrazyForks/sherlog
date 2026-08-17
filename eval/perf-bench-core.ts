@@ -42,9 +42,7 @@ export function resolveCommandUnderTest(options: CommandUnderTestOptions): Comma
   const explicitArtifact = options.artifactPath?.trim() || env.SHLOG_ARTIFACT_UNDER_TEST?.trim() || null;
   const artifactPath = explicitArtifact
     ? resolve(options.root, explicitArtifact)
-    : cli.source === "typescript-reference"
-      ? options.cliEntry
-      : resolvedExecutablePath;
+    : resolvedExecutablePath;
 
   return {
     executable,

@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import { buildFindCliArgs, buildReadRangeContextArgs, desiredContextMode, evaluateDogfoodItem, missingContextNeedles, selectDogfoodHit } from "./dogfood-eval-core";
 import { parseDogfoodJsonl } from "./dogfood-schema";
 import type { DogfoodGolden } from "./dogfood-schema";
-import type { FindResult } from "../src/types";
+import type { FindResult } from "./types";
 
 describe("dogfood eval core", () => {
   test("selects an acceptable session inside topK instead of blindly using top1", () => {

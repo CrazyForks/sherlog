@@ -46,7 +46,7 @@ describe("concurrency shape parsing", () => {
 
 describe("concurrency arg parsing", () => {
   test("no paths selects synthetic smoke and does not default to ~/.codex", () => {
-    const args = parseConcurrencyArgs([]);
+    const args = parseConcurrencyArgs(["--bin", "/tmp/shlog"]);
     expect(args.workload).toBe("synthetic_smoke");
     expect(args.fixtureMb).toBe(16);
     expect(args.root).toBe("");
@@ -75,6 +75,7 @@ describe("concurrency arg parsing", () => {
       "--levels", "1 4 16",
       "--total", "40",
       "--json-only",
+      "--bin", "/tmp/shlog",
     ]);
     expect(args.workload).toBe("private_calibration");
     expect(args.db).toBe("/tmp/index.sqlite");
@@ -84,14 +85,13 @@ describe("concurrency arg parsing", () => {
     expect(args.levels).toEqual([1, 4, 16]);
     expect(args.totalPerLevel).toBe(40);
     expect(args.jsonOnly).toBe(true);
-    // No executable override: resolves to the TypeScript reference by default.
-    expect(args.commandUnderTest.source).toBe("typescript-reference");
+    expect(args.commandUnderTest.source).toBe("argv-json");
   });
 
   test("accepts explicit executable override on smoke", () => {
     const args = parseConcurrencyArgs(["--bin", "/tmp/shlog"]);
     expect(args.workload).toBe("synthetic_smoke");
-    expect(args.commandUnderTest.source).not.toBe("typescript-reference");
+    expect(args.commandUnderTest.source).toBe("argv-json");
   });
 });
 

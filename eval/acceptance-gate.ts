@@ -5,7 +5,7 @@ import { resolveCliUnderTest, runCliUnderTest, type CliUnderTest } from "./cli-u
 import { buildDogfoodScoreboard, desiredContextMode, evaluateDogfoodItem, type DogfoodEvaluation, type DogfoodScoreboard } from "./dogfood-eval-core";
 import type { DogfoodGolden } from "./dogfood-schema";
 import { measureReturnedContext, summarizeReturnedContext, type ReturnedContextMetric, type ReturnedContextSummary } from "./returned-context";
-import type { FindResult, SyncSummary } from "../src/types";
+import type { FindResult, SyncSummary } from "./types";
 
 const MESSAGE_HIT_SESSION = "11111111-1111-4111-8111-111111111111";
 const SESSION_HIT_SESSION = "22222222-2222-4222-8222-222222222222";
@@ -83,10 +83,15 @@ export interface AcceptanceGateResult {
 }
 
 export async function runAcceptanceGate(options: AcceptanceGateOptions = {}): Promise<AcceptanceGateResult> {
-  const cliUnderTest = resolveCliUnderTest({ argvJson: options.cliArgvJson });
-  if (options.requireCandidateOverride && cliUnderTest.source === "typescript-reference") {
+  if (
+    options.requireCandidateOverride
+    && !options.cliArgvJson
+    && !process.env.SHLOG_CLI_ARGV_JSON
+    && !process.env.SHLOG_BIN_UNDER_TEST?.trim()
+  ) {
     throw new Error("acceptance gate requires an explicit candidate executable override");
   }
+  const cliUnderTest = resolveCliUnderTest({ argvJson: options.cliArgvJson });
   const base = mkdtempSync(join(tmpdir(), "sherlog-acceptance-"));
   try {
     const dbPath = join(base, "index.sqlite");

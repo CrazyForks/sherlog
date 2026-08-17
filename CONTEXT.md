@@ -14,12 +14,12 @@ Sherlog 仓库有两条明确的技术栈边界：
 
 | 层 | 语言 | 角色 | 路径 |
 |---|---|---|---|
-| **Production CLI** | Rust | 用户安装的 `shlog` binary：SQLite FTS5、tokenizer、sync、find/read/stats | `rust/src/`，产物 `target/release/shlog` |
-| **Eval harness** | TypeScript | 开发期裁判：fork 被测 CLI 当子进程，观测延迟/吞吐/正确性/契约。不实现检索逻辑，不是 product runtime | `eval/`，`src/`（legacy TS oracle） |
+| **Production CLI** | Rust | 用户安装的 `shlog` binary：SQLite FTS5、tokenizer、sync、find/read/stats | `src/`，产物 `target/release/shlog` |
+| **Eval harness** | TypeScript | 开发期裁判：fork `shlog` 当子进程，观测延迟/吞吐/正确性/契约。不实现检索逻辑 | `eval/` |
 
 eval harness 是"裁判"，Rust binary 是"选手"。`eval/perf-bench.ts` 做的事情是 `spawn(<candidate>, ["find", "豆包输入法", ...])` 然后掐表——它自身不执行 tokenization、不参与检索。contract-gate、acceptance-gate、dogfood runner、concurrency-bench 都遵循同一模式。Harness 可以用开发期 Node `node:sqlite` 读已生成 index 的 `dbstat` 做体积记账；这不是检索路径，也不进入发布态 CLI。
 
-未传 `--bin` / `--cli-argv-json` 时，harness 默认测 TypeScript oracle，不是 Rust production candidate。
+未传 `--bin` / `--cli-argv-json` 时，harness 使用 checkout 里的 `target/release/shlog`（否则 `target/debug/shlog`）；找不到 binary 则失败。
 
 ## 性能
 

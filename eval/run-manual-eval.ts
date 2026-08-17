@@ -4,7 +4,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawn as childSpawn } from "node:child_process";
 import { join, resolve } from "node:path";
 import { evaluateManualQuery, type ManualQuery, type PassMark } from "./manual-eval-core";
-import type { FindResult } from "../src/types";
+import { resolveCliUnderTest } from "./cli-under-test";
+import type { FindResult } from "./types";
 
 interface FindOutput {
   query: string;
@@ -12,7 +13,7 @@ interface FindOutput {
 }
 
 const ROOT = resolve(import.meta.dirname, "..");
-const CLI_ENTRY = resolve(ROOT, "src", "cli.ts");
+const CLI = resolveCliUnderTest();
 const QUERY_FILE = resolve(import.meta.dirname, "manual-queries.json");
 const OUT_BASE = resolve(ROOT, "data", "shlog-eval");
 
@@ -50,8 +51,8 @@ const perQuery: Array<{
 
 for (const [index, item] of queries.entries()) {
   const prefix = String(index + 1).padStart(2, "0");
-  const findJson = await runCommand([process.execPath, "--import", "tsx", CLI_ENTRY, "find", item.query, "--limit", "5", "--json"]);
-  const findText = await runCommand([process.execPath, "--import", "tsx", CLI_ENTRY, "find", item.query, "--limit", "5"]);
+  const findJson = await runCommand([...CLI.argv, "find", item.query, "--limit", "5", "--json"]);
+  const findText = await runCommand([...CLI.argv, "find", item.query, "--limit", "5"]);
   const findJsonPath = join(outDir, `${prefix}-${item.id}.find.json`);
   const findTxtPath = join(outDir, `${prefix}-${item.id}.find.txt`);
   writeFileSync(findJsonPath, findJson);
@@ -170,7 +171,7 @@ function buildTopContextCommand(top: FindResult): { kind: "read-range" | "read-p
     return {
       kind: "read-range",
       args: [
-        process.execPath, "--import", "tsx", CLI_ENTRY,
+        ...CLI.argv,
         "read-range",
         top.sessionUuid,
         "--seq",
@@ -186,7 +187,7 @@ function buildTopContextCommand(top: FindResult): { kind: "read-range" | "read-p
   return {
     kind: "read-page",
     args: [
-      process.execPath, "--import", "tsx", CLI_ENTRY,
+      ...CLI.argv,
       "read-page",
       top.sessionUuid,
       "--offset",
