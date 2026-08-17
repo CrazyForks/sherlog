@@ -8,14 +8,14 @@ if (argv.includes("--help") || argv.includes("-h")) {
     "Usage: npm run eval:contract -- [options]",
     "",
     "Options:",
-    "  --reference-argv-json '<json-array>'  Override the TypeScript reference command prefix",
+    "  --reference-argv-json '<json-array>'  Override the reference command prefix",
     "  --candidate-argv-json '<json-array>'  Override the candidate command prefix",
-    "  --require-candidate                   Fail instead of falling back to the TypeScript candidate",
+    "  --require-candidate                   Fail unless an explicit candidate is set",
     "  --keep-temp                           Keep fixture and database directories",
     "",
-    "The reference defaults to this checkout's TypeScript CLI. The candidate",
-    "uses explicit argv JSON first, then SHLOG_CLI_ARGV_JSON, then",
-    "SHLOG_BIN_UNDER_TEST, and finally the same TypeScript CLI.",
+    "Both sides default to checkout target/release/shlog (else debug).",
+    "If only the candidate is overridden and no checkout binary exists,",
+    "the reference uses the same candidate (isolated state dirs still differ).",
   ].join("\n"));
   process.exit(0);
 }
