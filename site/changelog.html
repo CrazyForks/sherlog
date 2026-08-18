@@ -198,6 +198,19 @@
   <main>
     <section>
       <div class="release-header">
+        <span class="release-version">v0.5.3</span>
+        <span class="release-date">2026-08-18</span>
+      </div>
+      <ul class="en">
+        <li><strong>Closed first-use recovery.</strong> A missing index now returns a typed <code>sync</code> that already includes the failed query’s <code>--source</code>, <code>--selector</code>, <code>--db</code>, and <code>sideEffect: write_index</code>. Scoped <code>find --cwd</code> no longer recommends a full Codex history sync.</li>
+      </ul>
+      <ul class="zh">
+        <li><strong>首次使用的恢复命令已闭包。</strong>缺少 index 时返回已带失败查询 <code>--source</code> / <code>--selector</code> / <code>--db</code> 和 <code>sideEffect: write_index</code> 的 <code>sync</code>。带 <code>--cwd</code> 的 find 不会再建议同步全部 Codex 历史。</li>
+      </ul>
+    </section>
+
+    <section>
+      <div class="release-header">
         <span class="release-version">v0.5.2</span>
         <span class="release-date">2026-08-17</span>
       </div>
@@ -429,8 +442,8 @@
   </main>
 
   <footer>
-    <span class="en">Standalone Rust source &middot; native v0.5.2 published &middot; historical npm releases retained below</span>
-    <span class="zh">Standalone Rust 源码 &middot; 原生 v0.5.2 已发布 &middot; 下方保留历史 npm 版本记录</span>
+    <span class="en">Standalone Rust source &middot; native v0.5.3 published &middot; historical npm releases retained below</span>
+    <span class="zh">Standalone Rust 源码 &middot; 原生 v0.5.3 已发布 &middot; 下方保留历史 npm 版本记录</span>
   </footer>
 
   <script>
