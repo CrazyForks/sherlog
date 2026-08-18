@@ -257,7 +257,7 @@ shlog read-page <sessionRef> --offset 0 --limit 20 --json
 {"error":{"code":"index_unavailable","message":"...","nextAction":{}}}
 ```
 
-`index_unavailable.nextAction.commands[]` 保留兼容 `argv`，并提供可原样执行的闭包 `command`（`executable: "inherit"`、完整 `args`、`sideEffect: "write_index"`）。它保留产生错误的 DB、单 source 与 selector；宿主可依据 side effect 决定执行或请求授权，不需要让 skill 重建 sync 命令。
+`index_unavailable.nextAction.commands[]` 保留兼容 `argv`，并提供可原样执行的闭包 `command`（`executable: "inherit"`、完整 `args`、`sideEffect: "write_index"`）。有确切 source 或显式 `--root/--cwd/--selector` 时，它保留失败查询的 DB 与该 scope（多 source 时每 source 一条，Codex 为 `recommended`）；无显式 scope 的跨 source find 仍给出默认 Codex `all`+`cwd` alternatives。宿主应执行 recommended（或唯一）command，并依据 side effect 决定授权，不需要让 skill 重建 sync 命令。
 
 常见 code：`unsupported_source`、`invalid_selector`、`index_unavailable`、`index_schema_upgrade_required`、`session_not_found`、`invalid_cold_root`、`index_error`。
 

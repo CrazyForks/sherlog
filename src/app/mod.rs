@@ -53,8 +53,8 @@ use self::output::{
     write_page_text, write_range_text, write_stats_text, write_status_text, write_sync_text,
 };
 use self::selectors::{
-    all_selector, find_selector, find_sources, list_selector, list_source, read_session_ref,
-    sync_selector,
+    all_selector, find_bootstrap_selectors, find_selector, find_sources, list_selector,
+    list_source, read_session_ref, sync_selector,
 };
 use self::status::collect_status;
 
@@ -103,14 +103,16 @@ impl NativeAppServices {
     fn reader(
         &self,
         path: &Path,
-        bootstrap_selector: Option<Selector>,
+        bootstrap_selectors: Option<Vec<Selector>>,
     ) -> Result<IndexReader, AppError> {
         let path = resolve_lexical(path, &self.cwd);
         IndexReader::open(&path).map_err(|error| {
             let error = map_index_error(error, &path, &self.cwd, &self.paths);
-            match bootstrap_selector {
-                Some(selector) => error.with_index_bootstrap_selector(selector),
-                None => error,
+            match bootstrap_selectors {
+                Some(selectors) if !selectors.is_empty() => {
+                    error.with_index_bootstrap_selectors(selectors)
+                }
+                _ => error,
             }
         })
     }
@@ -686,21 +688,8 @@ impl AppServices for NativeAppServices {
         stdout: &mut dyn Write,
         _stderr: &mut dyn Write,
     ) -> Result<(), AppError> {
-        let sources = find_sources(args)?;
-        let bootstrap_selector = if sources.len() == 1 {
-            let source = sources[0];
-            Some(
-                find_selector(args, source, &self.paths, &self.cwd)?.unwrap_or(all_selector(
-                    source,
-                    None,
-                    &self.paths,
-                    &self.cwd,
-                )?),
-            )
-        } else {
-            None
-        };
-        let reader = self.reader(&args.database.db, bootstrap_selector)?;
+        let bootstrap_selectors = find_bootstrap_selectors(args, &self.paths, &self.cwd)?;
+        let reader = self.reader(&args.database.db, bootstrap_selectors)?;
         let summary = self.find_summary(&reader, args)?;
         let elapsed_ms = self.elapsed_ms();
         if args.json {
@@ -724,7 +713,7 @@ impl AppServices for NativeAppServices {
     ) -> Result<(), AppError> {
         let session_ref = read_session_ref(&args.session_ref, args.source.as_deref())?;
         let bootstrap_selector = all_selector(session_ref.source_id, None, &self.paths, &self.cwd)?;
-        let reader = self.reader(&args.database.db, Some(bootstrap_selector))?;
+        let reader = self.reader(&args.database.db, Some(vec![bootstrap_selector]))?;
         let session = reader
             .load_session(&session_ref)
             .map_err(|error| map_index_error(error, reader.path(), &self.cwd, &self.paths))?;
@@ -762,7 +751,7 @@ impl AppServices for NativeAppServices {
     ) -> Result<(), AppError> {
         let session_ref = read_session_ref(&args.session_ref, args.source.as_deref())?;
         let bootstrap_selector = all_selector(session_ref.source_id, None, &self.paths, &self.cwd)?;
-        let reader = self.reader(&args.database.db, Some(bootstrap_selector))?;
+        let reader = self.reader(&args.database.db, Some(vec![bootstrap_selector]))?;
         let mut summary = reader
             .read_page(&session_ref, args.offset as u64, args.limit as u64)
             .map_err(|error| match error {
@@ -800,7 +789,7 @@ impl AppServices for NativeAppServices {
             selector
                 .clone()
                 .unwrap_or(all_selector(source, None, &self.paths, &self.cwd)?);
-        let reader = self.reader(&args.database.db, Some(bootstrap_selector))?;
+        let reader = self.reader(&args.database.db, Some(vec![bootstrap_selector]))?;
         let query = SessionListQuery {
             source_id: Some(source),
             cwd: args.cwd.clone(),
@@ -844,7 +833,7 @@ impl AppServices for NativeAppServices {
             .parse::<SourceId>()
             .map_err(|_| AppError::unsupported_source(args.source.as_deref().unwrap_or("codex")))?;
         let bootstrap_selector = all_selector(source, None, &self.paths, &self.cwd)?;
-        let reader = self.reader(&args.database.db, Some(bootstrap_selector))?;
+        let reader = self.reader(&args.database.db, Some(vec![bootstrap_selector]))?;
         let summary = reader
             .stats(source)
             .map_err(|error| map_index_error(error, reader.path(), &self.cwd, &self.paths))?;

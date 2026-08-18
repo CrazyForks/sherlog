@@ -292,6 +292,53 @@ fn run_cli(services: &mut NativeAppServices, args: Vec<String>) -> (u8, Vec<u8>,
     (code, stdout, stderr)
 }
 
+fn string_args(value: &serde_json::Value) -> Vec<String> {
+    value
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item.as_str().unwrap().to_owned())
+        .collect()
+}
+
+fn recommended_bootstrap(error: &serde_json::Value) -> &serde_json::Value {
+    error["error"]["nextAction"]["commands"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|command| command["recommended"] == true)
+        .unwrap()
+}
+
+fn assert_closed_sync_command(
+    command: &serde_json::Value,
+    source: &str,
+    selector_kind: &str,
+    db: &str,
+) {
+    assert_eq!(command["command"]["executable"], "inherit");
+    assert_eq!(command["command"]["sideEffect"], "write_index");
+    assert_eq!(command["selector"]["source"], source);
+    assert_eq!(command["selector"]["kind"], selector_kind);
+    let args = string_args(&command["command"]["args"]);
+    let argv = string_args(&command["argv"]);
+    assert_eq!(argv[0], "shlog");
+    assert_eq!(&argv[1..], args.as_slice());
+    assert_eq!(args[0], "sync");
+    assert!(
+        args.windows(2)
+            .any(|pair| pair[0] == "--source" && pair[1] == source)
+    );
+    assert!(
+        args.windows(2)
+            .any(|pair| pair[0] == "--db" && pair[1] == db)
+    );
+    assert!(args.windows(2).any(|pair| pair[0] == "--selector"
+        && pair[1].contains(&format!(r#""kind":"{selector_kind}""#))
+        && pair[1].contains(&format!(r#""source":"{source}""#))));
+    assert_eq!(args.last().map(String::as_str), Some("--json"));
+}
+
 #[test]
 fn index_unavailable_bootstrap_action_closes_scope_and_recovers_the_query() {
     let directory = TempDir::new().unwrap();
@@ -325,22 +372,18 @@ fn index_unavailable_bootstrap_action_closes_scope_and_recovers_the_query() {
     assert_eq!(code, 1);
     assert!(stderr.is_empty());
     let error: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
-    let action = &error["error"]["nextAction"]["commands"][0]["command"];
-    assert_eq!(action["executable"], "inherit");
-    assert_eq!(action["sideEffect"], "write_index");
-    let mut bootstrap_argv = vec!["shlog".to_owned()];
-    bootstrap_argv.extend(
-        action["args"]
+    let action = recommended_bootstrap(&error);
+    assert_eq!(
+        error["error"]["nextAction"]["commands"]
             .as_array()
             .unwrap()
-            .iter()
-            .map(|value| value.as_str().unwrap().to_owned()),
+            .len(),
+        1
     );
-    assert!(
-        bootstrap_argv
-            .windows(2)
-            .any(|pair| pair[0] == "--db" && pair[1] == db)
-    );
+    assert_closed_sync_command(action, "codex", "cwd", &db);
+    assert_eq!(action["selector"]["cwd"], "/repo");
+    let mut bootstrap_argv = vec!["shlog".to_owned()];
+    bootstrap_argv.extend(string_args(&action["command"]["args"]));
 
     let (code, stdout, stderr) = run_cli(&mut services, bootstrap_argv);
     assert_eq!(code, 0);
@@ -354,6 +397,93 @@ fn index_unavailable_bootstrap_action_closes_scope_and_recovers_the_query() {
     assert!(stderr.is_empty());
     let found: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
     assert_eq!(found["results"][0]["sessionRef"], session_id);
+}
+
+#[test]
+fn index_unavailable_find_cwd_without_source_closes_cwd_not_all_history() {
+    let directory = TempDir::new().unwrap();
+    let raw_root = directory.path().join("sessions");
+    let session_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    let raw = raw_root
+        .join("2026/08/15")
+        .join(format!("rollout-2026-08-15T00-00-00-{session_id}.jsonl"));
+    write_codex_session(
+        &raw,
+        session_id,
+        &[("user_message", "bootstrap recovery beacon")],
+    );
+    let paths = resolved_paths(&directory, &raw_root);
+    let db = paths.db_path.to_string_lossy().into_owned();
+    let mut services = NativeAppServices::new(paths, PathBuf::from("/repo"));
+    let query_argv = vec![
+        "shlog".to_owned(),
+        "find".to_owned(),
+        "bootstrap recovery beacon".to_owned(),
+        "--cwd".to_owned(),
+        "/repo".to_owned(),
+        "--db".to_owned(),
+        db.clone(),
+        "--json".to_owned(),
+    ];
+
+    let (code, stdout, stderr) = run_cli(&mut services, query_argv.clone());
+    assert_eq!(code, 1);
+    assert!(stderr.is_empty());
+    let error: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
+    let commands = error["error"]["nextAction"]["commands"].as_array().unwrap();
+    assert!(commands.len() > 1);
+    for command in commands {
+        assert_eq!(command["selector"]["kind"], "cwd");
+        assert_eq!(command["selector"]["cwd"], "/repo");
+    }
+    let action = recommended_bootstrap(&error);
+    assert_closed_sync_command(action, "codex", "cwd", &db);
+    assert_eq!(action["selector"]["cwd"], "/repo");
+    let mut bootstrap_argv = vec!["shlog".to_owned()];
+    bootstrap_argv.extend(string_args(&action["command"]["args"]));
+
+    let (code, stdout, stderr) = run_cli(&mut services, bootstrap_argv);
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+    let report: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
+    assert_eq!(report["added"], 1);
+    assert_eq!(report["errors"], 0);
+
+    let (code, stdout, stderr) = run_cli(&mut services, query_argv);
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+    let found: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
+    assert_eq!(found["results"][0]["sessionRef"], session_id);
+}
+
+#[test]
+fn index_unavailable_unscoped_find_keeps_default_codex_alternatives() {
+    let directory = TempDir::new().unwrap();
+    let raw_root = directory.path().join("sessions");
+    let paths = resolved_paths(&directory, &raw_root);
+    let db = paths.db_path.to_string_lossy().into_owned();
+    let mut services = NativeAppServices::new(paths, PathBuf::from("/repo"));
+    let (code, stdout, stderr) = run_cli(
+        &mut services,
+        vec![
+            "shlog".to_owned(),
+            "find".to_owned(),
+            "unscoped bootstrap".to_owned(),
+            "--db".to_owned(),
+            db.clone(),
+            "--json".to_owned(),
+        ],
+    );
+    assert_eq!(code, 1);
+    assert!(stderr.is_empty());
+    let error: serde_json::Value = serde_json::from_slice(&stdout).unwrap();
+    let commands = error["error"]["nextAction"]["commands"].as_array().unwrap();
+    assert_eq!(commands.len(), 2);
+    assert_closed_sync_command(&commands[0], "codex", "all", &db);
+    assert_eq!(commands[0]["recommended"], true);
+    assert_closed_sync_command(&commands[1], "codex", "cwd", &db);
+    assert_eq!(commands[1]["recommended"], false);
+    assert_eq!(commands[1]["selector"]["cwd"], "/repo");
 }
 
 fn has_imported_cold_backup(config_path: &Path) -> bool {

@@ -174,20 +174,41 @@ impl AppError {
         }
     }
 
-    pub fn with_index_bootstrap_selector(mut self, selector: Selector) -> Self {
+    pub fn with_index_bootstrap_selector(self, selector: Selector) -> Self {
+        self.with_index_bootstrap_selectors(vec![selector])
+    }
+
+    pub fn with_index_bootstrap_selectors(mut self, selectors: Vec<Selector>) -> Self {
+        if selectors.is_empty() {
+            return self;
+        }
         if let Self::IndexUnavailable {
             db_path,
             bootstrap_commands,
             ..
         } = &mut self
         {
-            *bootstrap_commands = vec![IndexBootstrapCommand::for_selector(
-                selector,
-                db_path.clone(),
-                "sync requested history scope",
-                "the failed indexed-content command requires this source and selector",
-                true,
-            )];
+            let recommend_codex = selectors
+                .iter()
+                .any(|selector| selector.source() == SourceId::Codex);
+            *bootstrap_commands = selectors
+                .into_iter()
+                .enumerate()
+                .map(|(index, selector)| {
+                    let recommended = if recommend_codex {
+                        selector.source() == SourceId::Codex
+                    } else {
+                        index == 0
+                    };
+                    IndexBootstrapCommand::for_selector(
+                        selector,
+                        db_path.clone(),
+                        "sync requested history scope",
+                        "the failed indexed-content command requires this source and selector",
+                        recommended,
+                    )
+                })
+                .collect();
         }
         self
     }
@@ -364,10 +385,9 @@ impl AppError {
             }),
             Self::IndexUnavailable {
                 db_path,
-                cwd,
                 bootstrap_commands,
                 ..
-            } => self.index_unavailable_envelope(db_path, cwd, bootstrap_commands),
+            } => self.index_unavailable_envelope(db_path, bootstrap_commands),
             Self::IndexSchemaUpgradeRequired {
                 message,
                 db_path,
@@ -426,10 +446,8 @@ impl AppError {
     fn index_unavailable_envelope(
         &self,
         db_path: &str,
-        cwd: &str,
         bootstrap_commands: &[IndexBootstrapCommand],
     ) -> Value {
-        let cwd_arg = serde_json::to_string(cwd).unwrap_or_else(|_| format!("\"{cwd}\""));
         let commands = bootstrap_commands
             .iter()
             .map(IndexBootstrapCommand::envelope)
@@ -438,9 +456,7 @@ impl AppError {
             "code": self.code(),
             "message": self.message(),
             "dbPath": db_path,
-            "hint": format!(
-                "Run `shlog sync` first to create the default Codex index. Only for explicitly current-project questions, run `shlog sync --cwd {cwd_arg}` instead. No separate init command is needed; sync initializes and updates it."
-            ),
+            "hint": index_unavailable_hint(bootstrap_commands),
             "nextAction": {
                 "kind": "bootstrap_index",
                 "reason": "index_unavailable",
@@ -539,6 +555,37 @@ impl AppError {
             }
         })
     }
+}
+
+fn index_unavailable_hint(commands: &[IndexBootstrapCommand]) -> String {
+    let recommended = commands
+        .iter()
+        .find(|command| command.recommended)
+        .or_else(|| commands.first());
+    let Some(recommended) = recommended else {
+        return "Run `shlog sync --json` to create the index.".to_owned();
+    };
+    let rendered = std::iter::once("shlog")
+        .chain(recommended.args.iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut hint = format!(
+        "Run `{rendered}` to create the missing index. Execute the recommended nextAction.command unchanged when host policy allows write_index."
+    );
+    if commands.len() > 1
+        && matches!(
+            recommended.selector,
+            Selector::All {
+                source: SourceId::Codex,
+                ..
+            }
+        )
+    {
+        hint.push_str(
+            " The cwd alternative is only for questions scoped to the current working directory.",
+        );
+    }
+    hint
 }
 
 fn default_index_bootstrap_commands(
@@ -668,5 +715,37 @@ mod tests {
         );
         assert_eq!(command["selector"]["source"], "claude-code");
         assert_eq!(command["selector"]["cwd"], "/repo/project");
+        assert!(
+            value["error"]["hint"]
+                .as_str()
+                .unwrap()
+                .contains("claude-code")
+        );
+    }
+
+    #[test]
+    fn index_unavailable_recommends_codex_when_closing_multiple_sources() {
+        let value = AppError::index_unavailable("/state/custom.sqlite", "/repo", "/raw")
+            .with_index_bootstrap_selectors(vec![
+                Selector::Cwd {
+                    source: SourceId::ClaudeCode,
+                    root: "/claude".to_owned(),
+                    cwd: "/repo".to_owned(),
+                },
+                Selector::Cwd {
+                    source: SourceId::Codex,
+                    root: "/raw".to_owned(),
+                    cwd: "/repo".to_owned(),
+                },
+            ])
+            .envelope();
+        let commands = value["error"]["nextAction"]["commands"].as_array().unwrap();
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0]["recommended"], false);
+        assert_eq!(commands[0]["selector"]["source"], "claude-code");
+        assert_eq!(commands[1]["recommended"], true);
+        assert_eq!(commands[1]["selector"]["kind"], "cwd");
+        assert_eq!(commands[1]["selector"]["source"], "codex");
+        assert_eq!(commands[1]["selector"]["cwd"], "/repo");
     }
 }
