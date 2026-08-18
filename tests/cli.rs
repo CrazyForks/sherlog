@@ -137,10 +137,17 @@ fn native_find_reports_actionable_missing_index_on_stdout() {
     let payload: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("stdout should be JSON");
     assert_eq!(payload["error"]["code"], "index_unavailable");
+    let command = &payload["error"]["nextAction"]["commands"][0];
+    let argv = command["argv"].as_array().unwrap();
+    assert_eq!(argv[0], "shlog");
     assert_eq!(
-        payload["error"]["nextAction"]["commands"][0]["argv"],
-        serde_json::json!(["shlog", "sync"])
+        command["command"]["args"],
+        serde_json::Value::Array(argv[1..].to_vec())
     );
+    assert_eq!(command["command"]["executable"], "inherit");
+    assert_eq!(command["command"]["sideEffect"], "write_index");
+    assert_eq!(command["selector"]["kind"], "all");
+    assert_eq!(command["selector"]["source"], "codex");
 }
 
 #[test]

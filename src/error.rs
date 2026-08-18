@@ -2,6 +2,9 @@ use std::fmt;
 
 use serde_json::{Value, json};
 
+use crate::identity::SourceId;
+use crate::selector::Selector;
+
 pub const EXIT_SUCCESS: u8 = 0;
 pub const EXIT_FAILURE: u8 = 1;
 pub const EXIT_INVALID_ARGUMENTS: u8 = 2;
@@ -15,6 +18,62 @@ pub struct AnchorNotFound {
     pub query: String,
     pub matched_profile_fields: Vec<String>,
     pub read_page_argv: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct IndexBootstrapCommand {
+    pub label: String,
+    pub when: String,
+    pub recommended: bool,
+    pub selector: Selector,
+    pub args: Vec<String>,
+}
+
+impl IndexBootstrapCommand {
+    pub fn for_selector(
+        selector: Selector,
+        db_path: impl Into<String>,
+        label: impl Into<String>,
+        when: impl Into<String>,
+        recommended: bool,
+    ) -> Self {
+        let db_path = db_path.into();
+        let args = vec![
+            "sync".to_owned(),
+            "--source".to_owned(),
+            selector.source().as_str().to_owned(),
+            "--selector".to_owned(),
+            selector.storage_key(),
+            "--db".to_owned(),
+            db_path,
+            "--json".to_owned(),
+        ];
+        Self {
+            label: label.into(),
+            when: when.into(),
+            recommended,
+            selector,
+            args,
+        }
+    }
+
+    fn envelope(&self) -> Value {
+        let argv = std::iter::once("shlog".to_owned())
+            .chain(self.args.iter().cloned())
+            .collect::<Vec<_>>();
+        json!({
+            "label": self.label,
+            "when": self.when,
+            "recommended": self.recommended,
+            "argv": argv,
+            "selector": self.selector,
+            "command": {
+                "executable": "inherit",
+                "args": self.args,
+                "sideEffect": "write_index",
+            },
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -35,7 +94,7 @@ pub enum AppError {
     IndexUnavailable {
         db_path: String,
         cwd: String,
-        default_root: String,
+        bootstrap_commands: Vec<IndexBootstrapCommand>,
     },
     IndexSchemaUpgradeRequired {
         message: String,
@@ -104,11 +163,54 @@ impl AppError {
         cwd: impl Into<String>,
         default_root: impl Into<String>,
     ) -> Self {
+        let db_path = db_path.into();
+        let cwd = cwd.into();
+        let default_root = default_root.into();
+        let bootstrap_commands = default_index_bootstrap_commands(&db_path, &cwd, &default_root);
         Self::IndexUnavailable {
-            db_path: db_path.into(),
-            cwd: cwd.into(),
-            default_root: default_root.into(),
+            db_path,
+            cwd,
+            bootstrap_commands,
         }
+    }
+
+    pub fn with_index_bootstrap_selector(self, selector: Selector) -> Self {
+        self.with_index_bootstrap_selectors(vec![selector])
+    }
+
+    pub fn with_index_bootstrap_selectors(mut self, selectors: Vec<Selector>) -> Self {
+        if selectors.is_empty() {
+            return self;
+        }
+        if let Self::IndexUnavailable {
+            db_path,
+            bootstrap_commands,
+            ..
+        } = &mut self
+        {
+            let recommend_codex = selectors
+                .iter()
+                .any(|selector| selector.source() == SourceId::Codex);
+            *bootstrap_commands = selectors
+                .into_iter()
+                .enumerate()
+                .map(|(index, selector)| {
+                    let recommended = if recommend_codex {
+                        selector.source() == SourceId::Codex
+                    } else {
+                        index == 0
+                    };
+                    IndexBootstrapCommand::for_selector(
+                        selector,
+                        db_path.clone(),
+                        "sync requested history scope",
+                        "the failed indexed-content command requires this source and selector",
+                        recommended,
+                    )
+                })
+                .collect();
+        }
+        self
     }
 
     pub fn schema_upgrade_required(
@@ -283,9 +385,9 @@ impl AppError {
             }),
             Self::IndexUnavailable {
                 db_path,
-                cwd,
-                default_root,
-            } => self.index_unavailable_envelope(db_path, cwd, default_root),
+                bootstrap_commands,
+                ..
+            } => self.index_unavailable_envelope(db_path, bootstrap_commands),
             Self::IndexSchemaUpgradeRequired {
                 message,
                 db_path,
@@ -341,34 +443,24 @@ impl AppError {
         json!({"error": error})
     }
 
-    fn index_unavailable_envelope(&self, db_path: &str, cwd: &str, default_root: &str) -> Value {
-        let cwd_arg = serde_json::to_string(cwd).unwrap_or_else(|_| format!("\"{cwd}\""));
+    fn index_unavailable_envelope(
+        &self,
+        db_path: &str,
+        bootstrap_commands: &[IndexBootstrapCommand],
+    ) -> Value {
+        let commands = bootstrap_commands
+            .iter()
+            .map(IndexBootstrapCommand::envelope)
+            .collect::<Vec<_>>();
         json!({
             "code": self.code(),
             "message": self.message(),
             "dbPath": db_path,
-            "hint": format!(
-                "Run `shlog sync` first to create the default Codex index. Only for explicitly current-project questions, run `shlog sync --cwd {cwd_arg}` instead. No separate init command is needed; sync initializes and updates it."
-            ),
+            "hint": index_unavailable_hint(bootstrap_commands),
             "nextAction": {
                 "kind": "bootstrap_index",
                 "reason": "index_unavailable",
-                "commands": [
-                    {
-                        "label": "default Codex history",
-                        "when": "first install or unscoped history query",
-                        "recommended": true,
-                        "argv": ["shlog", "sync"],
-                        "selector": {"kind": "all", "source": "codex", "root": default_root},
-                    },
-                    {
-                        "label": "current working directory only",
-                        "when": "question is explicitly scoped to the current working directory",
-                        "recommended": false,
-                        "argv": ["shlog", "sync", "--cwd", cwd],
-                        "selector": {"kind": "cwd", "source": "codex", "root": default_root, "cwd": cwd},
-                    }
-                ]
+                "commands": commands,
             }
         })
     }
@@ -465,6 +557,67 @@ impl AppError {
     }
 }
 
+fn index_unavailable_hint(commands: &[IndexBootstrapCommand]) -> String {
+    let recommended = commands
+        .iter()
+        .find(|command| command.recommended)
+        .or_else(|| commands.first());
+    let Some(recommended) = recommended else {
+        return "Run `shlog sync --json` to create the index.".to_owned();
+    };
+    let rendered = std::iter::once("shlog")
+        .chain(recommended.args.iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut hint = format!(
+        "Run `{rendered}` to create the missing index. Execute the recommended nextAction.command unchanged when host policy allows write_index."
+    );
+    if commands.len() > 1
+        && matches!(
+            recommended.selector,
+            Selector::All {
+                source: SourceId::Codex,
+                ..
+            }
+        )
+    {
+        hint.push_str(
+            " The cwd alternative is only for questions scoped to the current working directory.",
+        );
+    }
+    hint
+}
+
+fn default_index_bootstrap_commands(
+    db_path: &str,
+    cwd: &str,
+    default_root: &str,
+) -> Vec<IndexBootstrapCommand> {
+    vec![
+        IndexBootstrapCommand::for_selector(
+            Selector::All {
+                source: SourceId::Codex,
+                root: default_root.to_owned(),
+            },
+            db_path,
+            "default Codex history",
+            "first install or unscoped history query",
+            true,
+        ),
+        IndexBootstrapCommand::for_selector(
+            Selector::Cwd {
+                source: SourceId::Codex,
+                root: default_root.to_owned(),
+                cwd: cwd.to_owned(),
+            },
+            db_path,
+            "current working directory only",
+            "question is explicitly scoped to the current working directory",
+            false,
+        ),
+    ]
+}
+
 impl fmt::Display for AppError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{}: {}", self.code(), self.message())
@@ -501,13 +654,98 @@ mod tests {
     fn index_unavailable_has_actionable_bootstrap_commands() {
         let value = AppError::index_unavailable("/state/index.sqlite", "/repo", "/raw").envelope();
         assert_eq!(value["error"]["code"], "index_unavailable");
+        let command = &value["error"]["nextAction"]["commands"][0];
+        assert_eq!(command["command"]["executable"], json!("inherit"));
+        assert_eq!(command["command"]["sideEffect"], json!("write_index"));
         assert_eq!(
-            value["error"]["nextAction"]["commands"][0]["argv"],
-            json!(["shlog", "sync"])
+            command["command"]["args"],
+            json!([
+                "sync",
+                "--source",
+                "codex",
+                "--selector",
+                r#"{"kind":"all","source":"codex","root":"/raw"}"#,
+                "--db",
+                "/state/index.sqlite",
+                "--json"
+            ])
+        );
+        assert_eq!(
+            command["argv"],
+            json!([
+                "shlog",
+                "sync",
+                "--source",
+                "codex",
+                "--selector",
+                r#"{"kind":"all","source":"codex","root":"/raw"}"#,
+                "--db",
+                "/state/index.sqlite",
+                "--json"
+            ])
         );
         assert_eq!(
             value["error"]["nextAction"]["commands"][1]["selector"]["cwd"],
             "/repo"
         );
+    }
+
+    #[test]
+    fn index_unavailable_can_close_the_failed_read_selector() {
+        let value = AppError::index_unavailable("/state/custom.sqlite", "/repo", "/raw")
+            .with_index_bootstrap_selector(Selector::Cwd {
+                source: SourceId::ClaudeCode,
+                root: "/claude".to_owned(),
+                cwd: "/repo/project".to_owned(),
+            })
+            .envelope();
+        let command = &value["error"]["nextAction"]["commands"][0];
+        assert_eq!(
+            command["command"]["args"],
+            json!([
+                "sync",
+                "--source",
+                "claude-code",
+                "--selector",
+                r#"{"kind":"cwd","source":"claude-code","root":"/claude","cwd":"/repo/project"}"#,
+                "--db",
+                "/state/custom.sqlite",
+                "--json"
+            ])
+        );
+        assert_eq!(command["selector"]["source"], "claude-code");
+        assert_eq!(command["selector"]["cwd"], "/repo/project");
+        assert!(
+            value["error"]["hint"]
+                .as_str()
+                .unwrap()
+                .contains("claude-code")
+        );
+    }
+
+    #[test]
+    fn index_unavailable_recommends_codex_when_closing_multiple_sources() {
+        let value = AppError::index_unavailable("/state/custom.sqlite", "/repo", "/raw")
+            .with_index_bootstrap_selectors(vec![
+                Selector::Cwd {
+                    source: SourceId::ClaudeCode,
+                    root: "/claude".to_owned(),
+                    cwd: "/repo".to_owned(),
+                },
+                Selector::Cwd {
+                    source: SourceId::Codex,
+                    root: "/raw".to_owned(),
+                    cwd: "/repo".to_owned(),
+                },
+            ])
+            .envelope();
+        let commands = value["error"]["nextAction"]["commands"].as_array().unwrap();
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0]["recommended"], false);
+        assert_eq!(commands[0]["selector"]["source"], "claude-code");
+        assert_eq!(commands[1]["recommended"], true);
+        assert_eq!(commands[1]["selector"]["kind"], "cwd");
+        assert_eq!(commands[1]["selector"]["source"], "codex");
+        assert_eq!(commands[1]["selector"]["cwd"], "/repo");
     }
 }

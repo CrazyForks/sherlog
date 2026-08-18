@@ -713,6 +713,40 @@ function assertContractObservation(
       break;
     case "error-index-unavailable":
       expectPath(json, ["error", "code"], "index_unavailable", definition.id);
+      expectPath(
+        json,
+        ["error", "nextAction", "commands", 0, "command", "executable"],
+        "inherit",
+        definition.id,
+      );
+      expectPath(
+        json,
+        ["error", "nextAction", "commands", 0, "command", "sideEffect"],
+        "write_index",
+        definition.id,
+      );
+      {
+        const bootstrap = valueAtPath(json, ["error", "nextAction", "commands", 0]);
+        const argv = isRecord(bootstrap) && Array.isArray(bootstrap.argv) ? bootstrap.argv : [];
+        const command = isRecord(bootstrap) && isRecord(bootstrap.command) ? bootstrap.command : null;
+        const args = command && Array.isArray(command.args) ? command.args : [];
+        const dbPath = valueAtPath(json, ["error", "dbPath"]);
+        expectContract(
+          argv[0] === "shlog" && isDeepStrictEqual(argv.slice(1), args),
+          definition.id,
+          "bootstrap argv must mirror the closed command",
+        );
+        expectContract(
+          args[0] === "sync"
+            && args.includes("--source")
+            && args.includes("--selector")
+            && args.includes("--json")
+            && typeof dbPath === "string"
+            && args.some((value, index) => value === "--db" && args[index + 1] === dbPath),
+          definition.id,
+          "bootstrap command must close sync --source/--selector/--db/--json",
+        );
+      }
       break;
     case "error-session-not-found":
       expectPath(json, ["error", "code"], "session_not_found", definition.id);

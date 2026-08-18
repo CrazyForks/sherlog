@@ -77,6 +77,33 @@ pub(super) fn find_selector(
     )
 }
 
+pub(super) fn find_has_explicit_scope(args: &FindArgs) -> bool {
+    args.selector.is_some() || args.cwd.is_some() || args.root.is_some()
+}
+
+pub(super) fn find_bootstrap_selectors(
+    args: &FindArgs,
+    paths: &ResolvedPaths,
+    cwd: &Path,
+) -> Result<Option<Vec<Selector>>, AppError> {
+    let sources = find_sources(args)?;
+    if sources.len() != 1 && !find_has_explicit_scope(args) {
+        return Ok(None);
+    }
+    let mut selectors = Vec::with_capacity(sources.len());
+    for source in sources {
+        selectors.push(
+            find_selector(args, source, paths, cwd)?.unwrap_or(all_selector(
+                source,
+                args.root.as_deref(),
+                paths,
+                cwd,
+            )?),
+        );
+    }
+    Ok(Some(selectors))
+}
+
 pub(super) fn list_selector(
     args: &ListArgs,
     source: SourceId,
