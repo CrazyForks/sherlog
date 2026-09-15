@@ -27,6 +27,7 @@
 - `source` / root / cwd / date / session / exclude 约束尽量在 SQL candidate generation 阶段下推，不先召回大集合再在 app 层过滤。
 - 任何新增的快速候选层都必须返回 conservative superset：只能排除可证明不匹配的记录，tokenizer、delta 或 source 状态不确定时必须保守纳入并交给精确层；不得制造 false negative。
 - `source_files` 保存 append cursor、digest、checkpoint 与 epoch。可证明 append 走增量 projection；truncate、prefix rewrite、identity/epoch 不安全时走 full replay。设计验收不变量是 `incremental projection == full replay projection`。
+- Codex 的解析标记同时版本化 inventory fingerprint 与 reducer checkpoint；升级时全部旧游标（包括非空）重放。父 UUID 保存在 reducer，分页段 UUID 只用于输出身份；新旧消息表示只配对相邻的同角色同正文镜像，跨 sync 保留配对状态。具体边界见 `docs/SOURCE_CONTRACTS.md`。
 - `status` 返回 execution context、source inventory、index 状态与可选 requested coverage；它不返回或检索 raw content、不写 index。inventory cache miss 会流式解析 raw accepted records/body，仅按 privacy allowlist 派生 cwd/time/session identity 与 fingerprint；rejected/private record 不影响 proof。exact `mtime_ns`/checkpoint cache hit 不重 parse。
 - coverage 只由成功的 `sync` 写入。裸 `sync` 是默认 Codex `all(root)` bootstrap；只读命令不会隐式 sync 或 migrate。
 - strict sync 遇到选中输入错误时不发布部分 coverage；`--best-effort` 可提交成功文件，但不会伪造 complete coverage。`--prune` 只删除 hot 与 registered cold 都不存在的同 source 投影。
@@ -95,7 +96,7 @@ npx skills add -g catoncat/sherlog
 对外生效的改动不要停在源码。closeout 必须逐层写明已更新还是未更新：
 
 1. 源码：Rust、`skill-packages/sherlog`、`site/` 版本文案、tests、commit / push。
-2. Native release：`v<version>` tag 触发 `.github/workflows/release.yml`，GitHub Release 上有三目标 archive、对应 SPDX、`SHA256SUMS`、`install.sh`、`sherlog.rb`。没有这些 assets 就不能说 native 已发布。
+2. Native release：`v<version>` tag 触发 `.github/workflows/release.yml`，GitHub Release 上有两个目标 archive、对应 SPDX、`SHA256SUMS`、`install.sh`、`sherlog.rb`。没有这些 assets 就不能说 native 已发布。
 3. Homebrew tap：`catoncat/homebrew-sherlog` 已拉到该版渲染后的 `sherlog.rb`。
 4. 官网：https://sherlog.net 已部署同一 commit 的 `site/`。
 5. 本机 PATH：`which -a shlog` 与 `shlog --version` 是该发布版。`target/release/shlog` 只代表本地 build。
@@ -110,7 +111,7 @@ npx skills add -g catoncat/sherlog
 3. 在该 commit 打 annotated tag `v<version>` 并 push。已有同名 tag 但 `gh release view v<version>` 仍是 release not found 时，把 tag 改挂到修完 release 门的 commit 再 force-push。
    完成：`gh release view` 看得到该 tag，且 assets 齐全。
 4. 盯 release 工作流直到 **Publish native GitHub Release** 成功。Linux **Validate Linux archive contract** 只解包 candidate；checkout 里没有 `target/release/shlog` 时，contract gate 的 reference 必须复用 candidate。
-   完成：workflow success，三 archive + SBOM + checksums + installer + formula 都在 Release 上。
+   完成：workflow success，两个 archive + SBOM + checksums + installer + formula 都在 Release 上。
 5. 立刻更新 tap，不要等次日 cron：
 
    ```bash

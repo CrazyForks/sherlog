@@ -80,7 +80,7 @@ v8 reader 要求当前 schema、projection epoch、analyzer epoch 和 index vers
 
 每个 source adapter 只投影 allowlisted session metadata、user/assistant text 以及明确允许的 session-level handoff 字段。tool results、attachments、diagnostics、thinking、sidechain/meta 等记录默认不进入 searchable projection。
 
-- Codex：`session_meta` / `turn_context` metadata，`event_msg` user/agent messages，允许的 compact 与 reasoning summary。
+- Codex：`session_meta` / `turn_context` metadata，新旧 user/assistant 消息表示、允许的 compact 与 reasoning summary；镜像配对、分页身份和升级重放见 [SOURCE_CONTRACTS.md](SOURCE_CONTRACTS.md#codex-adapter)。
 - Claude Code（experimental）：policy-approved user/assistant text 与对应 metadata。
 - Pi（experimental）：session/model metadata、user/assistant text 与允许的 compaction summary。
 
@@ -104,7 +104,8 @@ acquire writer lock
 ### Transition
 
 - unchanged：复用现有 projection；
-- proven append：从 `indexed_bytes` 与 reducer checkpoint 继续；
+- proven append：从 `indexed_bytes` 与 reducer checkpoint 继续；合法空投影的第一条消息从 seq 0 建立 session；
+- Codex 解析版本变化：同一个 adapter 标记使 inventory cache 和旧 reducer 同时失效，整文件重放；分页和消息镜像规则见 [SOURCE_CONTRACTS.md](SOURCE_CONTRACTS.md#codex-adapter)；
 - truncate、prefix rewrite、identity/epoch 不安全：完整 replay 并原子替换旧 projection；
 - source/file-set 在严格窗口中发生无法证明安全的变化：不发布完整 coverage。
 
@@ -184,9 +185,9 @@ read-only command 不会移动 legacy data dir 或触发上述流程。
 
 ## 发布状态
 
-源码、native installer 与 release workflow 已 source-ready。声明的 archive target 只有：
+Native CLI 已通过 GitHub Releases 分发；当前 release workflow 构建的目标是：
 
 - macOS arm64：`aarch64-apple-darwin`（仅 Apple Silicon）
 - Linux x64 GNU：`x86_64-unknown-linux-gnu`（非 musl）
 
-本次 cutover 尚未发布 native tag/assets，因此不能把现有 GitHub/npm release 或全局 `shlog` 当作上述 Rust build；本机全局 `shlog --version` 当前仍为旧发布版 `0.4.4`。详情见 [RUST_ARCHITECTURE.md](RUST_ARCHITECTURE.md)。
+每版分别核对 tag/assets、Homebrew tap、官网和本机 PATH。已发布版本以 [GitHub Releases](https://github.com/catoncat/sherlog/releases) 为准；本机以 `shlog --version` 为准。发布步骤见 [AGENTS.md](../AGENTS.md#发布--更新闭环)。

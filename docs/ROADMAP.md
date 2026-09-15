@@ -15,24 +15,19 @@ documents_fts candidate recall
 
 message 与 session-profile 共用 `documents`/`documents_fts`，但 evidence provenance 分离。当前不是 resource-level reranker，也没有 duplicate collapse、vector retrieval、全文 fuzzy、watcher/daemon。
 
-## P0: 完成 native cutover acceptance 与首次发布
+## P0: 持续提高 acceptance gate 的可信度
 
-### 已有基础
+Native release 已存在，固定 CLI、跨 source 检索与发布资产验证已进入 CI。每版仍需独立回读 release、tap、官网与本机安装态，不能用本地 build 代替发布证据。
 
-- dogfood runner 已复用统一的 CLI-under-test 解析，可通过 `--cli-argv-json`、`SHLOG_CLI_ARGV_JSON` 或 `SHLOG_BIN_UNDER_TEST` 显式绑定 native candidate，并把实际 argv/source 写入 scorecard；无 override 时默认 checkout 的 `target/release/shlog`；
-- executable-neutral contract gate 已把 help prose、query-only coverage freshness、typed error semantics 与 native strict-incomplete reason 编码为 intentional-difference policy；当前 `target/release/shlog` 对 TypeScript reference 实测 **24/24**；
-- synthetic acceptance gate 已显式绑定同一 native release candidate；message hit、session-profile hit、CJK、source-aware read、command restatement 等 evidence-level fixtures 当前实测 **8/8**；
-- candidate-aware perf harness：可显式选择 release binary、记录 process/operation latency、RSS、artifact/DB size 和 progressive reads；默认跑确定性合成烟雾 fixture（隔离、不代表真实体积分布），本机校准必须同时显式 `--root` 和 `--db`（建议 `--skip-sync`）；附 concurrency 补充 harness；尚未有进 git 的回归基线 JSON，也尚未按真实体积分布做形状拟合语料；
-- Rust unit/integration tests：sources、index、sync、migration、retrieval、app；
-- native CI 会实际构建并检查 `target/release/shlog` 后以 `--require-candidate` 运行 contract/acceptance；release workflow 则下载 Linux GNU archive、解包并验证其中的 executable，再运行同一 gates；
-- native release workflow：macOS arm64、Linux x64 GNU archives、SBOM、checksums、attestation、installer/formula。
+已有基础：
 
-### 仍需收口
+- `eval/` 只调用指定的 native binary；contract 与 evidence-level acceptance 会验证归档内的 Linux executable；
+- Rust unit/integration tests 覆盖 sources、index、sync、migration、retrieval、app 与真实 CLI；
+- Codex 新旧消息表示、隐私过滤、解释版本升级、空投影追加、分页连续追加与逐条增量/full 对比已进入聚焦测试；
+- private dogfood runner 可验证已有本机验收集；新增与 promote 仍需用户显式触发 dev-only skill；
+- synthetic perf 与用户指定 root/DB 的本机校准分开，尚无真实体积分布的持续回归基线。
 
-- 完成首次 native tag/release 前的全量 Rust、Node oracle/eval、workflow/installer gates；当前 24/24 contract 与 8/8 acceptance 只证明本地 release candidate，不代表 release 已发布；
-- 发布后回读 GitHub assets/attestations，并独立验证 installed `shlog` 的路径、`--version` 与 smoke；当前 global `shlog` 仍是旧发布版 `0.4.4`。
-
-在 native tag/assets 实际存在前，文档和 closeout 都必须保持“source-ready，尚未发布”。
+继续补强 gold set / rubric / error taxonomy 与失败归因，不以单次测试全绿替代产品验收。
 
 ## P1: `incremental == full replay` acceptance
 

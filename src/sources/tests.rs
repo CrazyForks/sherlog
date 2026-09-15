@@ -936,3 +936,61 @@ fn stale_accepted_fingerprint_scheme_forces_reinventory() {
         "accepted-v1:codex:stale"
     );
 }
+
+#[test]
+fn response_message_projection_accepts_only_classified_text_parts() {
+    let temp = tempdir().unwrap();
+    let path = temp
+        .path()
+        .join("rollout-2026-08-15T00-00-00-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jsonl");
+    write_lines(
+        &path,
+        &[
+            codex_line(
+                "session_meta",
+                json!({"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","cwd":"/safe"}),
+            ),
+            codex_line(
+                "response_item",
+                json!({
+                    "type":"message", "role":"user", "content":[
+                        {"type":"input_text","text":"injected private context"},
+                        {"type":"input_text","text":"accepted request"},
+                        {"type":"future_private_text","text":"unknown item must not leak"},
+                        {"type":"input_text","text":"unclassified tail must not leak"}
+                    ], "internal_chat_message_metadata_passthrough":{"content_item_kinds":["context", "user.text", "user.text"]}
+                }),
+            ),
+        ],
+    );
+    let baseline = scan_all(SourceId::Codex, temp.path());
+    let projected = expect_projected(project(&baseline.files[0], baseline.files[0].size, None));
+    assert_eq!(projected.documents.len(), 1);
+    assert_eq!(
+        projected.documents[0].message.content_text,
+        "accepted request"
+    );
+    for payload in [
+        json!({"type":"message", "role":"assistant", "content":[{"type":"future_private_text","text":"private"}]}),
+        json!({"type":"message", "role":"user", "content":[{"type":"input_text","text":"private"}], "internal_chat_message_metadata_passthrough":{"content_item_kinds":"malformed"}}),
+        json!({"type":"message", "role":"developer", "content":[{"type":"input_text","text":"private"}]}),
+        json!({"type":"message", "role":"user", "content":[{"type":"input_text","text":"# AGENTS.md instructions for /private"}]}),
+    ] {
+        append(&path, &codex_line("response_item", payload));
+    }
+    let private_append = scan_all(SourceId::Codex, temp.path());
+    assert_eq!(
+        baseline.snapshot.fingerprint,
+        private_append.snapshot.fingerprint
+    );
+    let projected = expect_projected(project(
+        &private_append.files[0],
+        private_append.files[0].size,
+        None,
+    ));
+    assert_eq!(projected.documents.len(), 1);
+    assert_eq!(
+        projected.documents[0].message.content_text,
+        "accepted request"
+    );
+}

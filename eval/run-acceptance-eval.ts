@@ -7,7 +7,7 @@ if (argv.includes("--help") || argv.includes("-h")) {
   console.log([
     "Usage: npm run eval:acceptance -- [--keep-temp] [--require-candidate] [--cli-argv-json '<json-array>']",
     "",
-    "By default the checkout TypeScript CLI is tested.",
+    "By default the checkout native shlog binary is tested.",
     "Set SHLOG_BIN_UNDER_TEST to test one executable, or use --cli-argv-json",
     "for an executable prefix with fixed arguments. Explicit argv JSON wins.",
   ].join("\n"));

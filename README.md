@@ -25,6 +25,19 @@ The installer places `shlog` in `$HOME/.local/bin`, verifies SHA-256, and never 
 
 Prebuilt archives for macOS (arm64 only) and Linux (x64 GNU). Node.js is not required to run Sherlog.
 
+## Upgrade and recover Codex history
+
+```bash
+brew update
+brew upgrade catoncat/sherlog/sherlog
+shlog --version
+shlog sync --source codex
+```
+
+Version 0.5.4 reads both legacy and current Codex conversation records. The first sync after upgrading automatically replays outdated projections, including files previously indexed as empty. No index deletion is needed. Project-scoped and custom-root users should keep their existing `--cwd`, `--root`, and `--db` options.
+
+Paginated Codex continuations are independently searchable segments. Use the returned `sessionRef` to read each segment. For archived plain JSONL history, sync and search that directory explicitly with `--root`; registering a cold root only protects existing projections from prune. Compressed Codex cold files are retained, not reindexed.
+
 ## Quick Start
 
 ```bash

@@ -576,14 +576,8 @@ fn projection_inputs(
             refreshes.push(refreshed);
             continue;
         }
-        // A cursor that consumed raw bytes without ever producing a message is
-        // not a trustworthy resume point: it is what a stale interpretation
-        // leaves behind after a source changes shape, and resuming from it would
-        // keep the file's real content invisible forever.  Replay from zero
-        // whenever such a file needs projecting again.
         let checkpoint = state
             .filter(|state| state.projection_epoch == PROJECTION_EPOCH)
-            .filter(|state| state.next_seq > 0 || state.indexed_bytes == 0)
             .and_then(|state| state.reducer_checkpoint.as_deref())
             .and_then(|value| serde_json::from_slice::<ProjectionCheckpoint>(value).ok());
         inputs.push(ProjectionInput {
@@ -964,13 +958,21 @@ fn apply_staged(
                     let prior = prior.ok_or_else(|| {
                         "delta projection has no persisted source cursor".to_owned()
                     })?;
-                    if prior.session.as_ref() != Some(&identity) {
+                    if prior.session.is_none() && prior.next_seq == 0 {
+                        // An empty projection still has a valid reducer/cursor.
+                        // Its first message creates the session from seq zero.
+                        transaction
+                            .replace_session(&session, &messages)
+                            .map_err(|error| error.to_string())?;
+                        applied.added = applied.added.saturating_add(1);
+                    } else if prior.session.as_ref() != Some(&identity) {
                         return Err("delta session identity differs from stored cursor".to_owned());
+                    } else {
+                        transaction
+                            .append_session(&session, prior.next_seq, &messages)
+                            .map_err(|error| error.to_string())?;
+                        applied.updated = applied.updated.saturating_add(1);
                     }
-                    transaction
-                        .append_session(&session, prior.next_seq, &messages)
-                        .map_err(|error| error.to_string())?;
-                    applied.updated = applied.updated.saturating_add(1);
                 }
                 ProjectionMode::Full => {
                     transaction

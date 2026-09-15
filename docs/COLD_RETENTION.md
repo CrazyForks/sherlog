@@ -57,7 +57,7 @@ shlog sync --source codex --prune --json
 
 ## Cold 文件识别
 
-当前 destructive cold-presence pruning 只支持 Codex。walker 不解压文件，只从 filename 中提取标准 UUID；支持：
+当前 destructive cold-presence pruning 只支持 Codex。walker 不解压文件，从 filename 中提取末尾标准 UUID，并保守保留 rollout filename stem（分页段没有独立 UUID 时的身份）；支持：
 
 ```text
 ...<uuid>.jsonl

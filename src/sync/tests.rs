@@ -89,6 +89,22 @@ fn append_message(path: &Path, kind: &str, message: &str, second: u64) {
     .unwrap();
 }
 
+fn response_line(role: &str, text: &str, second: u64) -> serde_json::Value {
+    serde_json::json!({
+        "timestamp":format!("2026-08-15T00:00:{second:02}Z"),
+        "type":"response_item",
+        "payload":{"type":"message","role":role,"content":[{
+            "type":if role == "user" { "input_text" } else { "output_text" },
+            "text":text
+        }]}
+    })
+}
+
+fn append_response(path: &Path, role: &str, text: &str, second: u64) {
+    let mut file = OpenOptions::new().append(true).open(path).unwrap();
+    writeln!(file, "{}", response_line(role, text, second)).unwrap();
+}
+
 fn append_private_call(path: &Path, argument: &str, second: u64) {
     let mut file = OpenOptions::new().append(true).open(path).unwrap();
     writeln!(
@@ -1380,92 +1396,77 @@ fn codex_response_item_rollouts_are_indexed_without_injected_context() {
 }
 
 #[test]
-fn consumed_cursor_without_messages_is_replayed_in_full() {
-    let temp = tempdir().unwrap();
-    let root = temp.path().join("sessions/2026/08/15");
-    fs::create_dir_all(&root).unwrap();
-    let id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
-    let path = root.join(format!("rollout-2026-08-15T00-00-00-{id}.jsonl"));
-    fs::write(&path, "{}\n").unwrap();
+fn codex_interpretation_upgrade_replays_empty_and_nonempty_consumed_cursors() {
+    for (legacy_count, version) in [(0, "v1"), (1, "v1"), (1, "v2")] {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("sessions");
+        let id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+        let path = root.join(format!("rollout-2026-08-15T00-00-00-{id}.jsonl"));
+        let legacy_messages = if legacy_count == 0 {
+            vec![]
+        } else {
+            vec![("user_message", "legacy evidence")]
+        };
+        write_session(&path, id, "/work", &legacy_messages);
+        let db = temp.path().join("incremental.sqlite");
+        run(SyncRequest::new(&db, selector(&root))).unwrap();
+        let mut prior = load_existing_state(&SyncRequest::new(&db, selector(&root)))
+            .unwrap()
+            .source_files
+            .remove(0);
+        let mut checkpoint = persisted_checkpoint(&prior).unwrap();
+        append_response(&path, "assistant", "recovered response evidence", 2);
 
-    let scan = SourceCatalog
-        .scan(&selector(&root), &SourceMetadataCache::default())
-        .unwrap();
-    let file = scan.files.into_iter().next().unwrap();
-    let path_key = file.file_path.to_string_lossy().into_owned();
-    // A cursor that already sits at end of file with zero accepted records:
-    // the shape a stale interpretation leaves behind.
-    let consumed = SourceFileState {
-        source_id: SourceId::Codex,
-        file_path: path_key.clone(),
-        source_root: root.to_string_lossy().into_owned(),
-        source_generation: String::new(),
-        mtime_ms: file.mtime_ms,
-        mtime_ns: Some(i64::try_from(file.mtime_ns).unwrap()),
-        size: file.size,
-        indexed_bytes: file.size,
-        head_digest: String::new(),
-        boundary_digest: String::new(),
-        next_seq: 0,
-        reducer_checkpoint: Some(
-            serde_json::to_vec(&ProjectionCheckpoint {
-                source_id: SourceId::Codex,
-                file_identity: file.identity.clone(),
-                indexed_bytes: file.size,
-                prefix_digest: String::new(),
-                next_seq: 0,
-                reducer_state: String::new(),
-            })
-            .unwrap(),
-        ),
-        cwd: file.cwd.clone(),
-        path_date: file.path_date.clone(),
-        extra_fingerprint: String::new(),
-        projection_epoch: PROJECTION_EPOCH,
-        analyzer_epoch: ANALYZER_EPOCH,
-        coverage_epoch: COVERAGE_EPOCH,
-        session: None,
-    };
-    let mut states = HashMap::new();
-    states.insert(path_key.clone(), consumed.clone());
-    let (inputs, _, _) = projection_inputs(std::slice::from_ref(&file), &states);
-    assert_eq!(inputs.len(), 1);
-    assert!(
-        inputs[0].checkpoint.is_none(),
-        "a cursor that produced no message must not be resumed"
-    );
+        // Faithfully model an old adapter that consumed this response_item but
+        // did not project it: same raw prefix proof, EOF cursor, old reduction.
+        let file = SourceCatalog
+            .scan(&selector(&root), &SourceMetadataCache::default())
+            .unwrap()
+            .files
+            .remove(0);
+        checkpoint.indexed_bytes = file.size;
+        checkpoint.prefix_digest = fingerprint_prefix(&path, file.size).unwrap();
+        let mut reducer: serde_json::Value =
+            serde_json::from_str(&checkpoint.reducer_state).unwrap();
+        let object = reducer.as_object_mut().unwrap();
+        object.remove("interpretation");
+        object.remove("message_mirror");
+        object.remove("turn_id");
+        checkpoint.reducer_state = reducer.to_string();
+        prior.size = file.size;
+        prior.indexed_bytes = file.size;
+        prior.head_digest = checkpoint.prefix_digest.clone();
+        prior.boundary_digest = checkpoint.prefix_digest.clone();
+        prior.mtime_ms = file.mtime_ms;
+        prior.mtime_ns = exact_mtime_ns(file.mtime_ns);
+        prior.extra_fingerprint = format!("accepted-{version}:codex:old");
+        prior.reducer_checkpoint = Some(serde_json::to_vec(&checkpoint).unwrap());
+        let mut writer = IndexWriter::open_v8(&db).unwrap();
+        let mut transaction = writer.begin().unwrap();
+        transaction.upsert_source_file(&prior).unwrap();
+        transaction.commit().unwrap();
+        drop(writer);
 
-    let mut productive = consumed.clone();
-    productive.next_seq = 3;
-    states.insert(path_key.clone(), productive);
-    let (inputs, _, _) = projection_inputs(std::slice::from_ref(&file), &states);
-    assert_eq!(inputs.len(), 1);
-    assert!(
-        inputs[0].checkpoint.is_some(),
-        "a cursor that already produced messages is still appended to"
-    );
-
-    let mut fresh = consumed;
-    fresh.indexed_bytes = 0;
-    states.insert(path_key, fresh);
-    let (inputs, _, _) = projection_inputs(std::slice::from_ref(&file), &states);
-    assert_eq!(inputs.len(), 1);
-    assert!(
-        inputs[0].checkpoint.is_some(),
-        "a cursor that consumed nothing yet is still reused"
-    );
+        let upgraded = run(SyncRequest::new(&db, selector(&root))).unwrap();
+        assert!(upgraded.coverage.written);
+        let full_db = temp.path().join("full.sqlite");
+        run(SyncRequest::new(&full_db, selector(&root))).unwrap();
+        assert_eq!(projection_view(&db, id), projection_view(&full_db, id));
+        assert_eq!(projection_view(&db, id).1.len(), legacy_count + 1);
+        let noop = run(SyncRequest::new(&db, selector(&root))).unwrap();
+        assert_eq!((noop.updated, noop.skipped), (0, 1));
+    }
 }
 
 #[test]
-fn rollout_whose_shape_becomes_understood_is_recovered_on_the_next_sync() {
+fn valid_empty_cursor_accepts_first_message_on_append() {
     let temp = tempdir().unwrap();
     let root = temp.path().join("sessions");
     let day = root.join("2026/08/15");
     let id = "ffffffff-ffff-4fff-8fff-ffffffffffff";
     let path = day.join(format!("rollout-2026-08-15T00-00-00-{id}.jsonl"));
     fs::create_dir_all(&day).unwrap();
-    // First sync: nothing in this file is understood yet, so the projection is
-    // empty and the cursor lands at end of file.
+    // First sync accepts the profile but has no message yet.
     fs::write(
         &path,
         format!(
@@ -1508,7 +1509,7 @@ fn rollout_whose_shape_becomes_understood_is_recovered_on_the_next_sync() {
         messages
             .iter()
             .any(|message| message.content_text.contains("recovered rollout evidence")),
-        "the file must be replayed in full instead of resuming at end of file"
+        "the first message must be indexed after a valid empty cursor"
     );
 }
 
@@ -1586,4 +1587,140 @@ fn paginated_continuation_segment_does_not_overwrite_its_parent_session() {
             .content_text
             .contains("continuation segment evidence")
     }));
+
+    for step in 0..3 {
+        append_response(
+            &continuation,
+            "assistant",
+            &format!("segment append {step}"),
+            10 + step,
+        );
+        append_message(
+            &parent,
+            "agent_message",
+            &format!("parent append {step}"),
+            20 + step,
+        );
+        let appended = run(SyncRequest::new(&db, selector(&root))).unwrap();
+        assert_eq!((appended.updated, appended.errors), (2, 0));
+        let full_db = temp.path().join(format!("full-{step}.sqlite"));
+        run(SyncRequest::new(&full_db, selector(&root))).unwrap();
+        for id in [base, segment] {
+            let mut incremental = projection_view(&db, id);
+            let mut full = projection_view(&full_db, id);
+            // SQLite row allocation depends on parallel projection order.
+            incremental.0.id = 0;
+            full.0.id = 0;
+            assert_eq!(incremental, full);
+        }
+    }
+}
+
+#[test]
+fn mixed_codex_stream_matches_full_replay_after_every_record() {
+    let temp = tempdir().unwrap();
+    let root = temp.path().join("sessions");
+    let id = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    let path = root.join(format!("rollout-2026-08-15T00-00-00-{id}.jsonl"));
+    write_session(&path, id, "/work", &[]);
+    let event = |kind: &str, text: &str| {
+        serde_json::json!({
+            "timestamp":"2026-08-15T00:00:01Z", "type":"event_msg",
+            "payload":{"type":kind,"message":text}
+        })
+    };
+    let records = vec![
+        (response_line("user", "paired question", 1), 1),
+        (event("user_message", "paired question"), 1),
+        (event("agent_message", "paired answer"), 2),
+        (response_line("assistant", "paired answer", 2), 2),
+        (response_line("assistant", "same genuine message", 3), 3),
+        (response_line("assistant", "same genuine message", 4), 4),
+        (event("agent_message", "same genuine message"), 4),
+        (event("agent_message", "event only"), 5),
+        (event("agent_message", "event only"), 6),
+        (response_line("user", "repeat in another turn", 5), 7),
+        (event("task_complete", ""), 7),
+        (event("task_started", ""), 7),
+        (event("user_message", "repeat in another turn"), 8),
+        (response_line("user", "repeat in another turn", 6), 8),
+        (response_line("assistant", "new response only", 7), 9),
+        // Rejected records neither become evidence nor break a mirror pair.
+        (
+            serde_json::json!({"timestamp":"2026-08-15T00:00:08Z", "type":"response_item",
+            "payload":{"type":"function_call","arguments":"private"}}),
+            9,
+        ),
+        (event("agent_message", "new response only"), 9),
+        (
+            serde_json::json!({"timestamp":"2026-08-15T00:00:09Z", "type":"turn_context",
+            "payload":{"turn_id":"one", "model":"test-model"}}),
+            9,
+        ),
+        (event("user_message", "context boundary"), 10),
+        (
+            serde_json::json!({"timestamp":"2026-08-15T00:00:10Z", "type":"turn_context",
+            "payload":{"turn_id":"two", "model":"test-model"}}),
+            10,
+        ),
+        (response_line("user", "context boundary", 11), 11),
+    ];
+    let db = temp.path().join("incremental.sqlite");
+    run(SyncRequest::new(&db, selector(&root))).unwrap();
+    for (step, (record, count)) in records.into_iter().enumerate() {
+        writeln!(
+            OpenOptions::new().append(true).open(&path).unwrap(),
+            "{record}"
+        )
+        .unwrap();
+        run(SyncRequest::new(&db, selector(&root))).unwrap();
+        let full_db = temp.path().join(format!("full-{step}.sqlite"));
+        run(SyncRequest::new(&full_db, selector(&root))).unwrap();
+        let incremental = projection_view(&db, id);
+        assert_eq!(incremental.1.len(), count, "step {step}");
+        assert_eq!(incremental, projection_view(&full_db, id), "step {step}");
+    }
+}
+
+#[test]
+fn pagination_fallback_identity_and_repeated_metadata_stay_stable() {
+    let temp = tempdir().unwrap();
+    let root = temp.path().join("sessions");
+    let base = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    let stem = format!("rollout-2026-08-15T00-00-00-{base}");
+    let path = root.join(format!("{stem}.jsonl"));
+    fs::create_dir_all(&root).unwrap();
+    let meta = serde_json::json!({"timestamp":"2026-08-15T00:00:00Z", "type":"session_meta",
+        "payload":{"id":base,"cwd":"/work","history_base":{"thread_id":base,"end_ordinal_exclusive":5}}});
+    fs::write(
+        &path,
+        format!("{meta}\n{}\n", response_line("user", "fallback segment", 1)),
+    )
+    .unwrap();
+    let db = temp.path().join("incremental.sqlite");
+    run(SyncRequest::new(&db, selector(&root))).unwrap();
+    writeln!(
+        OpenOptions::new().append(true).open(&path).unwrap(),
+        "{meta}"
+    )
+    .unwrap();
+    append_response(&path, "assistant", "fallback appended", 2);
+    run(SyncRequest::new(&db, selector(&root))).unwrap();
+    let full_db = temp.path().join("full.sqlite");
+    run(SyncRequest::new(&full_db, selector(&root))).unwrap();
+    assert_eq!(
+        projection_view(&db, &stem),
+        projection_view(&full_db, &stem)
+    );
+    assert_eq!(projection_view(&db, &stem).1.len(), 2);
+
+    let cold = temp.path().join("cold");
+    fs::create_dir(&cold).unwrap();
+    fs::rename(&path, cold.join(path.file_name().unwrap())).unwrap();
+    let mut request = SyncRequest::new(&db, selector(&root));
+    request.prune = true;
+    request.cold_roots = vec![cold];
+    let retained = run(request).unwrap();
+    assert_eq!((retained.removed, retained.retained_cold), (0, 1));
+    assert_eq!(projection_view(&db, &stem).1.len(), 2);
 }
