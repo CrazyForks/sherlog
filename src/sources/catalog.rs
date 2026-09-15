@@ -18,7 +18,11 @@ use super::{
 };
 use super::{claude_code, codex, dsh, pi};
 
-const CODEX_ACCEPTED_PREFIX: &str = "accepted-v1:codex:";
+/// Versioned per-source prefix for accepted-record fingerprints.  Bumping one
+/// of these makes every cached fingerprint from the previous interpretation
+/// stale, so the next scan re-inventories those files instead of trusting a
+/// fingerprint produced by rules that no longer apply.
+const CODEX_ACCEPTED_PREFIX: &str = "accepted-v2:codex:";
 const CLAUDE_ACCEPTED_PREFIX: &str = "accepted-v1:claude-code:";
 const PI_ACCEPTED_PREFIX: &str = "accepted-v1:pi:";
 const DSH_ACCEPTED_PREFIX: &str = "accepted-v1:dsh:";

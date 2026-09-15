@@ -576,8 +576,14 @@ fn projection_inputs(
             refreshes.push(refreshed);
             continue;
         }
+        // A cursor that consumed raw bytes without ever producing a message is
+        // not a trustworthy resume point: it is what a stale interpretation
+        // leaves behind after a source changes shape, and resuming from it would
+        // keep the file's real content invisible forever.  Replay from zero
+        // whenever such a file needs projecting again.
         let checkpoint = state
             .filter(|state| state.projection_epoch == PROJECTION_EPOCH)
+            .filter(|state| state.next_seq > 0 || state.indexed_bytes == 0)
             .and_then(|state| state.reducer_checkpoint.as_deref())
             .and_then(|value| serde_json::from_slice::<ProjectionCheckpoint>(value).ok());
         inputs.push(ProjectionInput {

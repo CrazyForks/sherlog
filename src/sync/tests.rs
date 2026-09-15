@@ -1298,3 +1298,292 @@ fn scratch_path_is_adjacent_and_never_aliases_the_active_database() {
     assert_eq!(scratch.parent(), active.parent());
     assert_ne!(scratch, active);
 }
+
+#[test]
+fn codex_response_item_rollouts_are_indexed_without_injected_context() {
+    let temp = tempdir().unwrap();
+    let root = temp.path().join("sessions");
+    let day = root.join("2026/08/15");
+    let id = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    let path = day.join(format!("rollout-2026-08-15T00-00-00-{id}.jsonl"));
+    fs::create_dir_all(&day).unwrap();
+    let lines = [
+        serde_json::json!({
+            "timestamp":"2026-08-15T00:00:00Z",
+            "type":"session_meta",
+            "payload":{"id":id,"cwd":"/work"}
+        }),
+        serde_json::json!({
+            "timestamp":"2026-08-15T00:00:01Z",
+            "type":"response_item",
+            "payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"developer scaffolding"}]}
+        }),
+        serde_json::json!({
+            "timestamp":"2026-08-15T00:00:02Z",
+            "type":"response_item",
+            "payload":{
+                "type":"message",
+                "role":"user",
+                "content":[{"type":"input_text","text":"<environment_context>injected context</environment_context>"}],
+                "internal_chat_message_metadata_passthrough":{"content_item_kinds":["environments.environment_context"]}
+            }
+        }),
+        serde_json::json!({
+            "timestamp":"2026-08-15T00:00:03Z",
+            "type":"response_item",
+            "payload":{
+                "type":"message",
+                "role":"user",
+                "content":[{"type":"input_text","text":"新格式 rollout 用户消息"}],
+                "internal_chat_message_metadata_passthrough":{"content_item_kinds":["user.text"]}
+            }
+        }),
+        serde_json::json!({
+            "timestamp":"2026-08-15T00:00:04Z",
+            "type":"response_item",
+            "payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"新格式 rollout 助手回复"}]}
+        }),
+    ];
+    let body = lines
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(&path, format!("{body}\n")).unwrap();
+
+    let db = temp.path().join("index.sqlite");
+    let report = run(SyncRequest::new(&db, selector(&root))).unwrap();
+    assert_eq!((report.added, report.errors), (1, 0));
+
+    let (session, messages) = projection_view(&db, &format!("codex:{id}"));
+    assert_eq!(session.title, "新格式 rollout 用户消息");
+    let texts = messages
+        .iter()
+        .map(|message| message.content_text.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        texts
+            .iter()
+            .any(|text| text.contains("新格式 rollout 用户消息"))
+    );
+    assert!(
+        texts
+            .iter()
+            .any(|text| text.contains("新格式 rollout 助手回复"))
+    );
+    assert!(!texts.iter().any(|text| text.contains("injected context")));
+    assert!(
+        !texts
+            .iter()
+            .any(|text| text.contains("developer scaffolding"))
+    );
+}
+
+#[test]
+fn consumed_cursor_without_messages_is_replayed_in_full() {
+    let temp = tempdir().unwrap();
+    let root = temp.path().join("sessions/2026/08/15");
+    fs::create_dir_all(&root).unwrap();
+    let id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+    let path = root.join(format!("rollout-2026-08-15T00-00-00-{id}.jsonl"));
+    fs::write(&path, "{}\n").unwrap();
+
+    let scan = SourceCatalog
+        .scan(&selector(&root), &SourceMetadataCache::default())
+        .unwrap();
+    let file = scan.files.into_iter().next().unwrap();
+    let path_key = file.file_path.to_string_lossy().into_owned();
+    // A cursor that already sits at end of file with zero accepted records:
+    // the shape a stale interpretation leaves behind.
+    let consumed = SourceFileState {
+        source_id: SourceId::Codex,
+        file_path: path_key.clone(),
+        source_root: root.to_string_lossy().into_owned(),
+        source_generation: String::new(),
+        mtime_ms: file.mtime_ms,
+        mtime_ns: Some(i64::try_from(file.mtime_ns).unwrap()),
+        size: file.size,
+        indexed_bytes: file.size,
+        head_digest: String::new(),
+        boundary_digest: String::new(),
+        next_seq: 0,
+        reducer_checkpoint: Some(
+            serde_json::to_vec(&ProjectionCheckpoint {
+                source_id: SourceId::Codex,
+                file_identity: file.identity.clone(),
+                indexed_bytes: file.size,
+                prefix_digest: String::new(),
+                next_seq: 0,
+                reducer_state: String::new(),
+            })
+            .unwrap(),
+        ),
+        cwd: file.cwd.clone(),
+        path_date: file.path_date.clone(),
+        extra_fingerprint: String::new(),
+        projection_epoch: PROJECTION_EPOCH,
+        analyzer_epoch: ANALYZER_EPOCH,
+        coverage_epoch: COVERAGE_EPOCH,
+        session: None,
+    };
+    let mut states = HashMap::new();
+    states.insert(path_key.clone(), consumed.clone());
+    let (inputs, _, _) = projection_inputs(std::slice::from_ref(&file), &states);
+    assert_eq!(inputs.len(), 1);
+    assert!(
+        inputs[0].checkpoint.is_none(),
+        "a cursor that produced no message must not be resumed"
+    );
+
+    let mut productive = consumed.clone();
+    productive.next_seq = 3;
+    states.insert(path_key.clone(), productive);
+    let (inputs, _, _) = projection_inputs(std::slice::from_ref(&file), &states);
+    assert_eq!(inputs.len(), 1);
+    assert!(
+        inputs[0].checkpoint.is_some(),
+        "a cursor that already produced messages is still appended to"
+    );
+
+    let mut fresh = consumed;
+    fresh.indexed_bytes = 0;
+    states.insert(path_key, fresh);
+    let (inputs, _, _) = projection_inputs(std::slice::from_ref(&file), &states);
+    assert_eq!(inputs.len(), 1);
+    assert!(
+        inputs[0].checkpoint.is_some(),
+        "a cursor that consumed nothing yet is still reused"
+    );
+}
+
+#[test]
+fn rollout_whose_shape_becomes_understood_is_recovered_on_the_next_sync() {
+    let temp = tempdir().unwrap();
+    let root = temp.path().join("sessions");
+    let day = root.join("2026/08/15");
+    let id = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+    let path = day.join(format!("rollout-2026-08-15T00-00-00-{id}.jsonl"));
+    fs::create_dir_all(&day).unwrap();
+    // First sync: nothing in this file is understood yet, so the projection is
+    // empty and the cursor lands at end of file.
+    fs::write(
+        &path,
+        format!(
+            "{}\n",
+            serde_json::json!({
+                "timestamp":"2026-08-15T00:00:00Z",
+                "type":"response_item",
+                "payload":{"type":"reasoning","summary":[{"text":"only reasoning so far"}]}
+            })
+        ),
+    )
+    .unwrap();
+    let db = temp.path().join("index.sqlite");
+    let first = run(SyncRequest::new(&db, selector(&root))).unwrap();
+    assert_eq!((first.added, first.skipped), (0, 1));
+
+    // The file later gains a record the projector now understands.
+    let mut file = OpenOptions::new().append(true).open(&path).unwrap();
+    writeln!(
+        file,
+        "{}",
+        serde_json::json!({
+            "timestamp":"2026-08-15T00:00:01Z",
+            "type":"response_item",
+            "payload":{
+                "type":"message",
+                "role":"user",
+                "content":[{"type":"input_text","text":"recovered rollout evidence"}],
+                "internal_chat_message_metadata_passthrough":{"content_item_kinds":["user.text"]}
+            }
+        })
+    )
+    .unwrap();
+    drop(file);
+
+    let second = run(SyncRequest::new(&db, selector(&root))).unwrap();
+    assert_eq!((second.added, second.errors), (1, 0));
+    let (_, messages) = projection_view(&db, &format!("codex:{id}"));
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.content_text.contains("recovered rollout evidence")),
+        "the file must be replayed in full instead of resuming at end of file"
+    );
+}
+
+#[test]
+fn paginated_continuation_segment_does_not_overwrite_its_parent_session() {
+    let temp = tempdir().unwrap();
+    let root = temp.path().join("sessions");
+    let day = root.join("2026/08/30");
+    fs::create_dir_all(&day).unwrap();
+    let base = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    let segment = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    let parent = day.join(format!("rollout-2026-08-30T00-00-00-{base}.jsonl"));
+    let continuation = day.join(format!(
+        "rollout-2026-08-30T06-00-00-{base}_{segment}.jsonl"
+    ));
+    let message_line = |text: &str, timestamp: &str| {
+        serde_json::json!({
+            "timestamp":timestamp,
+            "type":"response_item",
+            "payload":{
+                "type":"message",
+                "role":"user",
+                "content":[{"type":"input_text","text":text}],
+                "internal_chat_message_metadata_passthrough":{"content_item_kinds":["user.text"]}
+            }
+        })
+        .to_string()
+    };
+    fs::write(
+        &parent,
+        format!(
+            "{}\n{}\n",
+            serde_json::json!({
+                "timestamp":"2026-08-30T00:00:00Z",
+                "type":"session_meta",
+                "payload":{"id":base,"cwd":"/work"}
+            }),
+            message_line("parent segment evidence", "2026-08-30T00:00:01Z"),
+        ),
+    )
+    .unwrap();
+    fs::write(
+        &continuation,
+        format!(
+            "{}\n{}\n",
+            serde_json::json!({
+                "timestamp":"2026-08-30T06:00:00Z",
+                "type":"session_meta",
+                "payload":{
+                    "id":base,
+                    "cwd":"/work",
+                    "history_base":{"thread_id":base,"end_ordinal_exclusive":10}
+                }
+            }),
+            message_line("continuation segment evidence", "2026-08-30T06:00:01Z"),
+        ),
+    )
+    .unwrap();
+
+    let db = temp.path().join("index.sqlite");
+    let report = run(SyncRequest::new(&db, selector(&root))).unwrap();
+    assert_eq!((report.added, report.errors), (2, 0));
+
+    let (parent_session, parent_messages) = projection_view(&db, &format!("codex:{base}"));
+    assert_eq!(parent_session.native_session_id, base);
+    assert!(
+        parent_messages
+            .iter()
+            .any(|message| message.content_text.contains("parent segment evidence"))
+    );
+    let (segment_session, segment_messages) = projection_view(&db, &format!("codex:{segment}"));
+    assert_eq!(segment_session.native_session_id, segment);
+    assert!(segment_messages.iter().any(|message| {
+        message
+            .content_text
+            .contains("continuation segment evidence")
+    }));
+}

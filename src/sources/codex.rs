@@ -23,11 +23,35 @@ const INTERNAL_MARKERS: &[&str] = &[
     ">>> APPROVAL REQUEST START",
 ];
 
+/// Per-turn context that Codex appends to the user turn.  Rollouts that carry
+/// `content_item_kinds` classify these records explicitly; older rollouts only
+/// expose the wrapper text, so the same envelopes are recognised by prefix.
+const INJECTED_USER_CONTEXT_MARKERS: &[&str] = &[
+    "# AGENTS.md instructions",
+    "<app-context>",
+    "<apps_instructions>",
+    "<codex_delegation>",
+    "<collaboration_mode>",
+    "<environment_context>",
+    "<in-app-browser-context",
+    "<model_switch>",
+    "<multi_agent_mode>",
+    "<multi_agent_role>",
+    "<permissions instructions>",
+    "<plugins_instructions>",
+    "<recommended_plugins>",
+    "<skills_instructions>",
+    "<user_instructions>",
+];
+
 #[derive(Clone, Debug)]
 enum CodexRecord {
     SessionMeta {
         id: String,
         cwd: String,
+        /// Paginated continuations of one thread share the base session id but
+        /// declare where their raw history resumes.
+        paginated_segment: bool,
     },
     TurnContext {
         model: String,
@@ -81,6 +105,8 @@ struct CodexReducerState {
     model: String,
     next_seq: i64,
     filtered_message_count: u64,
+    #[serde(default)]
+    paginated_segment: bool,
     first_user: Option<SummaryEntry>,
     first_assistant: Option<SummaryEntry>,
     latest_user: Option<SummaryEntry>,
@@ -172,7 +198,7 @@ impl CodexReducerState {
 pub(crate) fn inventory_metadata(path: &Path) -> Result<AcceptedMetadata, SourceError> {
     let mut cwd = String::new();
     let mut hasher = Sha256::new();
-    hasher.update(b"sherlog:codex:accepted:v1");
+    hasher.update(b"sherlog:codex:accepted:v2");
     scan_json_records(path, None, |record| {
         let Some(record) = classify_record(record) else {
             return true;
@@ -181,6 +207,7 @@ pub(crate) fn inventory_metadata(path: &Path) -> Result<AcceptedMetadata, Source
             CodexRecord::SessionMeta {
                 ref id,
                 cwd: ref record_cwd,
+                ..
             } => {
                 if !record_cwd.is_empty() {
                     cwd = record_cwd.clone();
@@ -348,6 +375,23 @@ fn finish_projection(
     documents: Vec<SourceDocument>,
     read: super::jsonl::BoundedRead,
 ) -> Result<ProjectionOutcome, SourceError> {
+    // A paginated continuation shares the base session id with the segment it
+    // resumes, but it is a distinct rollout file.  The index stores documents
+    // against one file per session, so each segment needs its own identity
+    // instead of overwriting the conversation it continues.
+    if state.paginated_segment {
+        let segment = extract_trailing_filename_uuid(&file.file_path)
+            .filter(|segment| *segment != state.session_id)
+            .or_else(|| {
+                file.file_path
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .map(str::to_owned)
+            });
+        if let Some(segment) = segment {
+            state.session_id = segment;
+        }
+    }
     if state.session_id.is_empty() && state.next_seq > 0 {
         state.session_id = fallback_session_id(file);
     }
@@ -415,12 +459,17 @@ fn process_record(
         return Ok(());
     };
     match record {
-        CodexRecord::SessionMeta { id, cwd } => {
+        CodexRecord::SessionMeta {
+            id,
+            cwd,
+            paginated_segment,
+        } => {
             if state.session_id.is_empty() && !id.is_empty() {
                 state.session_id = id;
             } else if delta && !id.is_empty() && id != state.session_id {
                 return Err(FullProjectionReason::SessionIdentityChanged);
             }
+            state.paginated_segment |= paginated_segment;
             if !cwd.is_empty() {
                 state.cwd = cwd;
             }
@@ -479,7 +528,12 @@ fn classify_record(record: &Map<String, Value>) -> Option<CodexRecord> {
         "session_meta" => {
             let id = raw_string(payload, "id");
             let cwd = raw_string(payload, "cwd");
-            (!id.is_empty() || !cwd.is_empty()).then_some(CodexRecord::SessionMeta { id, cwd })
+            let paginated_segment = payload.get("history_base").is_some_and(Value::is_object);
+            (!id.is_empty() || !cwd.is_empty()).then_some(CodexRecord::SessionMeta {
+                id,
+                cwd,
+                paginated_segment,
+            })
         }
         "turn_context" => {
             let model = raw_string(payload, "model");
@@ -491,18 +545,22 @@ fn classify_record(record: &Map<String, Value>) -> Option<CodexRecord> {
             let message = string(payload, "message");
             (!message.is_empty()).then_some(CodexRecord::Compacted { message })
         }
-        "response_item" if payload.get("type").and_then(Value::as_str) == Some("reasoning") => {
-            let texts = payload
-                .get("summary")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_object)
-                .map(|item| string(item, "text"))
-                .filter(|text| !text.is_empty())
-                .collect::<Vec<_>>();
-            (!texts.is_empty()).then_some(CodexRecord::Reasoning { texts })
-        }
+        "response_item" => match payload.get("type").and_then(Value::as_str) {
+            Some("reasoning") => {
+                let texts = payload
+                    .get("summary")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_object)
+                    .map(|item| string(item, "text"))
+                    .filter(|text| !text.is_empty())
+                    .collect::<Vec<_>>();
+                (!texts.is_empty()).then_some(CodexRecord::Reasoning { texts })
+            }
+            Some("message") => response_item_message(payload, &timestamp),
+            _ => None,
+        },
         "event_msg" => {
             let role = match payload.get("type").and_then(Value::as_str) {
                 Some("user_message") => MessageRole::User,
@@ -524,6 +582,67 @@ fn classify_record(record: &Map<String, Value>) -> Option<CodexRecord> {
         }
         _ => None,
     }
+}
+
+/// Current Codex rollouts carry conversation text in `response_item/message`
+/// records.  `role: developer` records are app/system scaffolding and are
+/// ignored; per-turn context shares the `user` role, so it is separated either
+/// by the explicit `content_item_kinds` classification or, for rollouts written
+/// before that metadata existed, by its wrapper text.
+fn response_item_message(payload: &Map<String, Value>, timestamp: &str) -> Option<CodexRecord> {
+    let role = match payload.get("role").and_then(Value::as_str) {
+        Some("user") => MessageRole::User,
+        Some("assistant") => MessageRole::Assistant,
+        _ => return None,
+    };
+    let content = payload.get("content").and_then(Value::as_array)?;
+    let kinds = payload
+        .get("internal_chat_message_metadata_passthrough")
+        .and_then(Value::as_object)
+        .and_then(|metadata| metadata.get("content_item_kinds"))
+        .and_then(Value::as_array);
+    let mut parts = Vec::new();
+    for (index, item) in content.iter().enumerate() {
+        let Some(item) = item.as_object() else {
+            continue;
+        };
+        let text = string(item, "text");
+        if text.is_empty() {
+            continue;
+        }
+        match kinds
+            .and_then(|kinds| kinds.get(index))
+            .and_then(Value::as_str)
+        {
+            Some(kind) => {
+                if role == MessageRole::User && kind != "user.text" {
+                    continue;
+                }
+            }
+            None if role == MessageRole::User && looks_injected_user_context(&text) => continue,
+            None => {}
+        }
+        parts.push(text);
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    let content_text = parts.join("\n");
+    if looks_internal(&content_text) {
+        return Some(CodexRecord::FilteredMessage);
+    }
+    Some(CodexRecord::Message {
+        role,
+        content_text,
+        timestamp: timestamp.to_owned(),
+    })
+}
+
+fn looks_injected_user_context(value: &str) -> bool {
+    let trimmed = value.trim_start();
+    INJECTED_USER_CONTEXT_MARKERS
+        .iter()
+        .any(|marker| trimmed.starts_with(marker))
 }
 
 fn hash_fields(hasher: &mut Sha256, tag: &str, fields: &[&str]) {
@@ -594,6 +713,29 @@ fn extract_filename_uuid(path: &Path) -> Option<String> {
 
 fn is_digits(value: &str, length: usize) -> bool {
     value.len() == length && value.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+/// Rollout files for a continuation segment are named
+/// `rollout-<time>-<base-uuid>_<segment-uuid>.jsonl`; the trailing uuid is the
+/// segment's own identity.
+fn extract_trailing_filename_uuid(path: &Path) -> Option<String> {
+    let name = path.file_name()?.to_str()?;
+    let bytes = name.as_bytes();
+    const UUID_LEN: usize = 36;
+    if bytes.len() < UUID_LEN {
+        return None;
+    }
+    (0..=bytes.len() - UUID_LEN).rev().find_map(|start| {
+        let candidate = &bytes[start..start + UUID_LEN];
+        let valid = candidate.iter().enumerate().all(|(index, byte)| {
+            if matches!(index, 8 | 13 | 18 | 23) {
+                *byte == b'-'
+            } else {
+                byte.is_ascii_digit() || (b'a'..=b'f').contains(byte)
+            }
+        });
+        valid.then(|| String::from_utf8_lossy(candidate).into_owned())
+    })
 }
 
 fn looks_internal(value: &str) -> bool {
