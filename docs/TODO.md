@@ -1,14 +1,13 @@
 # Sherlog TODO
 
-本页只列当前 checkout 之后的可执行工作；总体排序见 [ROADMAP.md](ROADMAP.md)。Production CLI 已是 standalone Rust，Node/TypeScript 只保留开发期 differential oracle。
+本页只列当前 checkout 之后的可执行工作；总体排序见 [ROADMAP.md](ROADMAP.md)。Production CLI 已是 standalone Rust，Node/TypeScript 只用于 eval harness。
 
-## P0: Native acceptance 与首次发布
+## P0: 持续强化验收
 
-- [x] dogfood / eval runner 默认绑定 checkout 的 `shlog`；可用 `--cli-argv-json`、`SHLOG_CLI_ARGV_JSON` 或 `SHLOG_BIN_UNDER_TEST` 覆盖。
-- [ ] 用 release binary 跑 synthetic acceptance、contract differential、isolated perf 与 multi-source end-to-end fixture。
-- [ ] 覆盖 initial/no-op/append sync、strict/best-effort failure、status coverage、find/read/list/stats、cold add/remove/prune 和 v7 -> v8 migration。
-- [ ] 固化 macOS arm64、Linux x64 GNU 的 release asset、checksum、SBOM、attestation 与 installer verification。
-- [ ] native tag/assets 发布前保持 source-ready 表述；发布后再验证安装态 `shlog --version`。本机全局 `shlog` 当前仍是旧发布版 `0.4.4`。
+- [x] eval runner 绑定 native candidate，CI 验证实际 release archive 的 contract/acceptance。
+- [x] Codex 新旧消息、隐私过滤、解释升级与分页增量回归进入 Rust tests。
+- [ ] 增加更强 gold set、rubric、错误分类与真实体积分布的性能回归基线。
+- [ ] 每次发布按 AGENTS.md 回读 release assets、tap、官网、PATH 与可选 skill。
 
 ## P1: `incremental == full replay`
 

@@ -25,6 +25,91 @@ fn run_isolated(args: &[&str], home: &Path) -> Output {
     command.output().expect("shlog should run")
 }
 
+#[test]
+fn response_rollout_find_returns_executable_deduplicated_evidence() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("sessions");
+    fs::create_dir(&root).unwrap();
+    let db = temp.path().join("custom.sqlite");
+    let id = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    let records = [
+        serde_json::json!({"type":"session_meta","payload":{"id":id,"cwd":"/work"}}),
+        serde_json::json!({"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"private scaffolding"}]}}),
+        serde_json::json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"repair response beacon"}]}}),
+        serde_json::json!({"type":"event_msg","payload":{"type":"user_message","message":"repair response beacon"}}),
+        serde_json::json!({"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"response recovery verified"}]}}),
+    ];
+    let text = records
+        .into_iter()
+        .enumerate()
+        .map(|(index, mut record)| {
+            record["timestamp"] = serde_json::json!(format!("2026-08-15T00:00:{index:02}Z"));
+            format!("{record}\n")
+        })
+        .collect::<String>();
+    fs::write(
+        root.join(format!("rollout-2026-08-15T00-00-00-{id}.jsonl")),
+        text,
+    )
+    .unwrap();
+    let sync = run_isolated(
+        &[
+            "sync",
+            "--source",
+            "codex",
+            "--root",
+            root.to_str().unwrap(),
+            "--db",
+            db.to_str().unwrap(),
+            "--json",
+        ],
+        temp.path(),
+    );
+    assert!(
+        sync.status.success(),
+        "{}",
+        String::from_utf8_lossy(&sync.stderr)
+    );
+    let find = run_isolated(
+        &[
+            "find",
+            "response beacon",
+            "--source",
+            "codex",
+            "--root",
+            root.to_str().unwrap(),
+            "--db",
+            db.to_str().unwrap(),
+            "--json",
+        ],
+        temp.path(),
+    );
+    assert!(find.status.success());
+    let found: serde_json::Value = serde_json::from_slice(&find.stdout).unwrap();
+    let hit = &found["results"][0];
+    assert_eq!(hit["sessionMessageCount"], 2);
+    assert_eq!(hit["matchSeq"], 0);
+    let args = hit["evidenceRead"]["command"]["args"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap())
+        .collect::<Vec<_>>();
+    let read = run_isolated(&args, temp.path());
+    assert!(
+        read.status.success(),
+        "{}",
+        String::from_utf8_lossy(&read.stderr)
+    );
+    let evidence: serde_json::Value = serde_json::from_slice(&read.stdout).unwrap();
+    assert_eq!(evidence["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        evidence["messages"][1]["contentText"],
+        "response recovery verified"
+    );
+    assert!(!String::from_utf8_lossy(&read.stdout).contains("private scaffolding"));
+}
+
 #[cfg(unix)]
 #[derive(Debug, Eq, PartialEq)]
 struct TreeSnapshotEntry {

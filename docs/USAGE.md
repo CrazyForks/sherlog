@@ -2,7 +2,7 @@
 
 ## Runtime 与安装状态
 
-当前 checkout 的 production CLI 是 standalone Rust binary，内置 SQLite/FTS5，运行时不需要 Node.js。native release workflow 与 installer 已 source-ready，但本次 cutover 尚未发布新的 native tag/assets；本机全局 `shlog --version` 当前实测仍为旧发布版 `0.4.4`，不是此 checkout 的 Rust build。
+生产 CLI 是已发布的 standalone Rust binary，内置 SQLite/FTS5，运行时不需要 Node.js。下载版本以 GitHub Releases 为准，本机版本以 `command -v shlog` 和 `shlog --version` 为准；本地 build 不代表安装版。
 
 从当前源码构建：
 
@@ -14,23 +14,45 @@ cargo build --release --locked --bin shlog
 ./target/release/shlog --help
 ```
 
-发布 native tag 后，installer 才可用于对应 assets：
+安装已发布的 native CLI：
 
 ```bash
 curl -fsSL https://github.com/catoncat/sherlog/releases/latest/download/install.sh | sh
 ```
 
-声明的 native target 仅有 macOS arm64 与 Linux x64 GNU。Intel macOS、Linux musl、Linux arm64 与 Windows 没有发布 archive。
+声明的 native target 仅有 macOS arm64 与 Linux x64 GNU。本版不提供 Intel macOS、Linux musl、Linux arm64 与 Windows archive。
 
 开发 checkout 中：
 
 ```bash
 cargo run --locked --bin shlog -- status --json
 npm run shlog -- status --json           # Rust command 的开发包装
-cargo run --locked --bin shlog -- status --json
 ```
 
-最后两项只用于仓库开发；Node.js 不是 production CLI dependency。
+上述命令只用于仓库开发；Node.js 不是 production CLI dependency。
+
+## 0.5.4 Codex 历史恢复
+
+先更新 CLI，再对原有范围执行一次 `sync`：
+
+```bash
+brew update
+brew upgrade catoncat/sherlog/sherlog
+shlog --version
+shlog sync --source codex --json
+```
+
+使用 installer 升级现有安装时：
+
+```bash
+curl -fsSL https://github.com/catoncat/sherlog/releases/latest/download/install.sh | SHERLOG_FORCE=1 sh
+```
+
+保留原来的 `--cwd` / `--root` / `--db`。解析版本变化时，这次 sync 会自动重放受影响的文件，不需要删除数据库。后续无变化文件仍跳过，活动文件继续增量同步。旧版 CLI 不应再作为同一数据库的 writer。
+
+Codex 分页续段是独立的可检索段；按 find 返回的 `sessionRef` 读取，不把父会话 UUID 当作所有段的读取入口。
+
+默认 sync 只处理默认热目录。已经归档的 plain JSONL 可用 `shlog sync --source codex --root /path/to/archive` 同步，查询时也保留该 `--root`；`cold add` / `--cold-root` 只影响保留策略，不会读取归档正文。压缩 Codex cold 文件仅保护既有投影，本版不提供压缩正文重建。
 
 ## 固定命令面
 
@@ -74,7 +96,7 @@ shlog find "X" --cwd /Users/you/work/project --sort ended \
 
 ## 从 0.4.x 升级（一次性迁移）
 
-0.4.x 的 v7 index 是 legacy import 格式：`status` 会报告 `index.layout: legacy_v7`，内容命令（find/read/list）会返回 typed `index_schema_upgrade_required`，`nextAction` 指向一次显式 `shlog sync`。执行一次 sync 即完成迁移与 coverage 重建；迁移保留 `*.v7.bak.*` 备份、legacy cold-roots.json 被 tombstone、旧 0.4.4 writer 对 v8 fail-closed。没有自动升级命令；版本升级由 installer/brew/npm 等分发层完成。
+0.4.x 的 v7 index 是 legacy import 格式：`status` 会报告 `index.layout: legacy_v7`，内容命令（find/read/list）会返回 typed `index_schema_upgrade_required`，`nextAction` 指向一次显式 `shlog sync`。执行一次 sync 即完成迁移与 coverage 重建；迁移保留 `*.v7.bak.*` 备份、legacy cold-roots.json 被 tombstone、旧 0.4.4 writer 对 v8 fail-closed。没有自动升级命令；CLI 版本升级由 installer/Homebrew 完成。
 
 ## Source
 
@@ -220,7 +242,7 @@ v8 中注册信息存于 `cold_roots` 表。`cold add` 只登记 presence root�
 
 ## v7 migration
 
-read-only command 可以读兼容 v7 projection，但不会升级它。第一次授权 writer sync 遇到 v7 时会：
+v7 上的内容命令返回 `index_schema_upgrade_required`；`status` 可以报告旧库状态，所有只读命令都不会升级它。第一次授权 writer sync 遇到 v7 时会：
 
 1. 锁住 writer；
 2. 建立一致 backup；

@@ -10,8 +10,8 @@ use crate::identity::SourceId;
 use crate::selector::Selector;
 
 use super::{
-    FullProjectionReason, ProjectedSource, ProjectionMode, ProjectionOutcome, SourceCatalog,
-    SourceFile, SourceMetadataCache, inject_metadata_failure, write_zstd_lines,
+    CachedSourceMetadata, FullProjectionReason, ProjectedSource, ProjectionMode, ProjectionOutcome,
+    SourceCatalog, SourceFile, SourceMetadataCache, inject_metadata_failure, write_zstd_lines,
 };
 
 #[test]
@@ -138,6 +138,56 @@ fn source_allowlists_reject_private_and_format_drift_records() {
                 "response_item",
                 json!({"type":"reasoning","summary":[{"text":"accepted codex reasoning"}]}),
             ),
+            codex_line(
+                "response_item",
+                json!({
+                    "type":"message",
+                    "role":"user",
+                    "content":[{"type":"input_text","text":"accepted response item user"}],
+                    "internal_chat_message_metadata_passthrough":{"content_item_kinds":["user.text"]},
+                }),
+            ),
+            codex_line(
+                "response_item",
+                json!({
+                    "type":"message",
+                    "role":"assistant",
+                    "content":[{"type":"output_text","text":"accepted response item assistant"}],
+                }),
+            ),
+            codex_line(
+                "response_item",
+                json!({
+                    "type":"message",
+                    "role":"user",
+                    "content":[{"type":"input_text","text":"<environment_context>injected context must not leak</environment_context>"}],
+                    "internal_chat_message_metadata_passthrough":{"content_item_kinds":["environments.environment_context"]},
+                }),
+            ),
+            codex_line(
+                "response_item",
+                json!({
+                    "type":"message",
+                    "role":"developer",
+                    "content":[{"type":"input_text","text":"developer scaffolding must not leak"}],
+                }),
+            ),
+            codex_line(
+                "response_item",
+                json!({
+                    "type":"message",
+                    "role":"user",
+                    "content":[{"type":"input_text","text":"<codex_delegation>legacy injected context must not leak</codex_delegation>"}],
+                }),
+            ),
+            codex_line(
+                "response_item",
+                json!({
+                    "type":"message",
+                    "role":"user",
+                    "content":[{"type":"input_text","text":"accepted unclassified user text"}],
+                }),
+            ),
         ],
     );
 
@@ -175,8 +225,20 @@ fn source_allowlists_reject_private_and_format_drift_records() {
         (
             SourceId::Codex,
             temp.path().join("codex"),
-            vec!["accepted codex user", "accepted codex assistant"],
-            vec!["tool result must not leak", "internal codex must not leak"],
+            vec![
+                "accepted codex user",
+                "accepted codex assistant",
+                "accepted response item user",
+                "accepted response item assistant",
+                "accepted unclassified user text",
+            ],
+            vec![
+                "tool result must not leak",
+                "internal codex must not leak",
+                "injected context must not leak",
+                "developer scaffolding must not leak",
+                "legacy injected context must not leak",
+            ],
         ),
         (
             SourceId::ClaudeCode,
@@ -807,4 +869,128 @@ fn append(path: &Path, line: &str) {
 fn append_without_newline(path: &Path, line: &str) {
     let mut file = OpenOptions::new().append(true).open(path).unwrap();
     write!(file, "{line}").unwrap();
+}
+
+#[test]
+fn stale_accepted_fingerprint_scheme_forces_reinventory() {
+    let temp = tempdir().unwrap();
+    let root = temp.path().join("codex/2026/08/15");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("rollout-2026-08-15T00-00-00-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jsonl");
+    write_lines(
+        &path,
+        &[
+            codex_line(
+                "session_meta",
+                json!({"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","cwd":"/safe"}),
+            ),
+            codex_line(
+                "response_item",
+                json!({
+                    "type":"message",
+                    "role":"user",
+                    "content":[{"type":"input_text","text":"current rollout shape"}],
+                    "internal_chat_message_metadata_passthrough":{"content_item_kinds":["user.text"]},
+                }),
+            ),
+        ],
+    );
+
+    let fresh = scan_all(SourceId::Codex, temp.path());
+    let file = fresh
+        .files
+        .into_iter()
+        .find(|file| file.file_path == path)
+        .unwrap();
+    let current = file.accepted_fingerprint.clone();
+
+    // A cached fingerprint produced by the previous interpretation must not be
+    // trusted just because mtime, size, and identity still match.
+    let stale_cache = SourceMetadataCache::from_entries([CachedSourceMetadata {
+        source_id: SourceId::Codex,
+        file_path: path.clone(),
+        mtime_ns: file.mtime_ns,
+        size: file.size,
+        file_identity: file.identity.clone(),
+        path_date: file.path_date.clone(),
+        cwd: file.cwd.clone(),
+        accepted_fingerprint: "accepted-v1:codex:stale".to_owned(),
+    }]);
+    let rescanned = SourceCatalog
+        .scan(
+            &Selector::All {
+                source: SourceId::Codex,
+                root: temp.path().to_string_lossy().into_owned(),
+            },
+            &stale_cache,
+        )
+        .unwrap();
+    let rescanned_file = rescanned
+        .files
+        .into_iter()
+        .find(|file| file.file_path == path)
+        .unwrap();
+    assert_eq!(rescanned_file.accepted_fingerprint, current);
+    assert_ne!(
+        rescanned_file.accepted_fingerprint,
+        "accepted-v1:codex:stale"
+    );
+}
+
+#[test]
+fn response_message_projection_accepts_only_classified_text_parts() {
+    let temp = tempdir().unwrap();
+    let path = temp
+        .path()
+        .join("rollout-2026-08-15T00-00-00-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jsonl");
+    write_lines(
+        &path,
+        &[
+            codex_line(
+                "session_meta",
+                json!({"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","cwd":"/safe"}),
+            ),
+            codex_line(
+                "response_item",
+                json!({
+                    "type":"message", "role":"user", "content":[
+                        {"type":"input_text","text":"injected private context"},
+                        {"type":"input_text","text":"accepted request"},
+                        {"type":"future_private_text","text":"unknown item must not leak"},
+                        {"type":"input_text","text":"unclassified tail must not leak"}
+                    ], "internal_chat_message_metadata_passthrough":{"content_item_kinds":["context", "user.text", "user.text"]}
+                }),
+            ),
+        ],
+    );
+    let baseline = scan_all(SourceId::Codex, temp.path());
+    let projected = expect_projected(project(&baseline.files[0], baseline.files[0].size, None));
+    assert_eq!(projected.documents.len(), 1);
+    assert_eq!(
+        projected.documents[0].message.content_text,
+        "accepted request"
+    );
+    for payload in [
+        json!({"type":"message", "role":"assistant", "content":[{"type":"future_private_text","text":"private"}]}),
+        json!({"type":"message", "role":"user", "content":[{"type":"input_text","text":"private"}], "internal_chat_message_metadata_passthrough":{"content_item_kinds":"malformed"}}),
+        json!({"type":"message", "role":"developer", "content":[{"type":"input_text","text":"private"}]}),
+        json!({"type":"message", "role":"user", "content":[{"type":"input_text","text":"# AGENTS.md instructions for /private"}]}),
+    ] {
+        append(&path, &codex_line("response_item", payload));
+    }
+    let private_append = scan_all(SourceId::Codex, temp.path());
+    assert_eq!(
+        baseline.snapshot.fingerprint,
+        private_append.snapshot.fingerprint
+    );
+    let projected = expect_projected(project(
+        &private_append.files[0],
+        private_append.files[0].size,
+        None,
+    ));
+    assert_eq!(projected.documents.len(), 1);
+    assert_eq!(
+        projected.documents[0].message.content_text,
+        "accepted request"
+    );
 }

@@ -57,26 +57,28 @@ Implementation: `src/sources/codex.rs`.
 
 Accepted metadata/profile input:
 
-- `session_meta`: id and cwd when non-empty;
-- `turn_context`: model and cwd when non-empty;
-- `compacted`: non-empty message -> session `compactText`;
-- `response_item` with payload type `reasoning`: non-empty summary text -> session `reasoningSummaryText`.
+- `session_meta`: id, cwd, and whether `history_base` declares a pagination segment;
+- `turn_context`: model, cwd, and turn id;
+- explicit turn start/end/abort/rollback events: a message-pair boundary only, no body;
+- `compacted.message` -> session `compactText`;
+- `response_item/reasoning.summary` -> session `reasoningSummaryText`.
 
 Accepted message input:
 
-- `event_msg.payload.type = user_message` -> user message;
-- `event_msg.payload.type = agent_message` -> assistant message;
-- non-empty payload message and non-empty record timestamp;
-- messages matching internal approval/evaluation markers are filtered.
+- Legacy `event_msg/user_message` and `event_msg/agent_message`;
+- `response_item/message` with role `user` or `assistant`, non-empty text and record timestamp;
+- only `input_text` / `output_text` content parts. For user parts with `content_item_kinds`, accept only `user.text`; unknown, missing, or malformed classifications are excluded. Without classifications, recognized injected-context envelopes are excluded by prefix;
+- developer/system/tool content, encrypted agent-message envelopes, unknown content types and internal approval/evaluation messages are excluded. Rejected bodies do not enter inventory fingerprints or evidence.
 
-Rejected:
+The two message encodings can mirror one conversational message. Consecutive accepted records with the same role and exact text, from opposite encodings, form one pair: preserve the first record's text, timestamp and raw locator. Pair once, then reset. Same-encoding repetition, different text, different roles and messages across explicit turn/compaction boundaries remain distinct. This bounded pairing state survives an append checkpoint; it is not session-level or global text deduplication.
 
-- other record/payload types, including tool-like events;
-- empty message/profile fields;
-- malformed/non-object lines;
-- internal marker messages.
+### Identity and upgrade
 
-Codex is the only adapter currently implementing true append delta. The checkpoint contains reducer state, next seq, indexed bytes, file identity, and prefix digest. Identity change, invalid reducer, cursor mismatch, prefix rewrite, or session identity change requires full replay.
+A normal rollout uses its session UUID. A `history_base` continuation keeps the base UUID inside the reducer but uses the trailing segment UUID as its searchable identity. If no distinct segment UUID exists, its filename stem is the fallback. Finishing a delta never mutates the base identity. Each segment has its own `sessionRef`, seq numbering and file locator; no cross-file message stitching is implied.
+
+`ACCEPTED_PREFIX` is the single Codex interpretation marker. It versions both accepted-record fingerprints and serialized reducers. A changed marker invalidates inventory caches and makes all older reducers request full replay, including nonempty EOF cursors. Unchanged current files remain no-ops. A valid empty cursor may append its first message and create a session at seq zero without replaying an already understood prefix.
+
+Codex is the only adapter currently implementing true append delta. File identity change, invalid/old reducer, cursor mismatch, prefix rewrite or base-session identity change requires full replay. Tests compare incremental and fresh projections after each record in a mixed-format trace, across pagination append, and during interpretation upgrades. The broader property/state-machine matrix remains future work.
 
 ## Claude Code adapter (experimental)
 

@@ -958,13 +958,21 @@ fn apply_staged(
                     let prior = prior.ok_or_else(|| {
                         "delta projection has no persisted source cursor".to_owned()
                     })?;
-                    if prior.session.as_ref() != Some(&identity) {
+                    if prior.session.is_none() && prior.next_seq == 0 {
+                        // An empty projection still has a valid reducer/cursor.
+                        // Its first message creates the session from seq zero.
+                        transaction
+                            .replace_session(&session, &messages)
+                            .map_err(|error| error.to_string())?;
+                        applied.added = applied.added.saturating_add(1);
+                    } else if prior.session.as_ref() != Some(&identity) {
                         return Err("delta session identity differs from stored cursor".to_owned());
+                    } else {
+                        transaction
+                            .append_session(&session, prior.next_seq, &messages)
+                            .map_err(|error| error.to_string())?;
+                        applied.updated = applied.updated.saturating_add(1);
                     }
-                    transaction
-                        .append_session(&session, prior.next_seq, &messages)
-                        .map_err(|error| error.to_string())?;
-                    applied.updated = applied.updated.saturating_add(1);
                 }
                 ProjectionMode::Full => {
                     transaction

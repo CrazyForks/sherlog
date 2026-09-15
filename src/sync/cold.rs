@@ -69,6 +69,16 @@ pub(crate) fn collect_cold_native_ids(
             if let Some(id) = codex_id_from_cold_path(entry.path()) {
                 ids.insert(id);
             }
+            // A paginated rollout without a distinct trailing segment UUID
+            // uses its stem as identity. Preserve that possible identity
+            // without parsing cold content (conservative presence proof).
+            let name = entry.file_name().to_string_lossy();
+            let plain = name.strip_suffix(".zst").unwrap_or(&name);
+            if let Some(stem) = plain.strip_suffix(".jsonl")
+                && stem.starts_with("rollout-")
+            {
+                ids.insert(stem.to_owned());
+            }
         }
     }
     Ok(ids)
@@ -129,6 +139,8 @@ mod tests {
             BTreeSet::from([
                 "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa".to_owned(),
                 "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb".to_owned(),
+                "rollout-2026-08-15T00-00-00-AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA".to_owned(),
+                "rollout-2026-08-15T00-00-00-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb".to_owned(),
             ])
         );
     }
