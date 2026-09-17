@@ -67,7 +67,7 @@ Codex 分页续段是独立的可检索段；按 find 返回的 `sessionRef` 读
 | `shlog list` | 不做全文检索，按 metadata 列 session | 否 |
 | `shlog stats` | 返回 index 统计与 stored coverage | 否 |
 
-所有命令支持 `--db <path>`；结构化输出使用 `--json`。`find` / `read-*` / `list` / `stats` 只打开 SQLite query-only，不扫描 raw source、不隐式 sync、不隐式 migration。
+所有命令支持 `--db <path>`。默认文本输出面向 agent：`find` / `list` 每条 candidate 一个短块（`[rank] 日期 · source · cwd · seq N · N hits`、标题、`summary:`、`match:`）加一条可原样执行的 `read:` 命令，开头一行 `coverage:` 是各 source 的 stored proof；10 条结果约 2k token。`--json` 是同一结果的完整机器 contract（`evidenceRead`、完整 coverage、`zeroResults`），体积约为文本的 4–5 倍，需要程序化解析字段时才使用。`find` / `read-*` / `list` / `stats` 只打开 SQLite query-only，不扫描 raw source、不隐式 sync、不隐式 migration。
 
 ## Quick start
 
@@ -77,22 +77,27 @@ Codex 分页续段是独立的可检索段；按 find 返回的 `sessionRef` 读
 shlog sync
 ```
 
-搜索后执行结果自带的 evidence read：
+搜索后执行结果自带的 `read:` 行：
 
 ```bash
-shlog find "health check" --json
-shlog read-range codex:<session-id> --seq 12 --query "health check" --before 2 --after 2 --json
-shlog read-page codex:<session-id> --offset 0 --limit 20 --json
+shlog find "health check"
+# [1] 2026-08-15 · codex · /Users/you/work/project · seq 12 · 3 hits
+#   <title>
+#   summary: assistant: …
+#   match: …health check…
+#   read: shlog read-range <session-id> --seq 12 --query 'health check'
+shlog read-range <session-id> --seq 12 --query "health check"
+shlog read-page <session-id> --offset 0 --limit 20
 ```
 
 `find` 默认 relevance。问“最新/最近一次提到 X”时：
 
 ```bash
 shlog find "X" --cwd /Users/you/work/project --sort ended \
-  --exclude-session codex:<current-session-id> -n 5 --json
+  --exclude-session codex:<current-session-id> -n 5
 ```
 
-不要只凭 title/snippet 回答内容问题。优先原样执行 JSON 结果的 `evidenceRead.command`（`executable:"inherit"` + `args`，已闭包 `--db/--json`）；message 太长且关键内容被省略时，在同一 read 命令上加 `--max-message-chars 0`。`read-range --query` 无 message anchor 时返回 typed `anchor_not_found`，按 nextAction 回退 `read-page`，不要伪造 seq 0。
+不要只凭 title/summary/snippet 回答内容问题。原样执行文本输出的 `read:` 行（索引不是默认路径时它自带 `--db`），或 `--json` 结果的 `evidenceRead.command`（`executable:"inherit"` + `args`，已闭包 `--source/--db/--json`）；message 太长且关键内容被省略时，在同一 read 命令上加 `--max-message-chars 0`。`read-range --query` 无 message anchor 时返回 typed `anchor_not_found`，按 nextAction 回退 `read-page`，不要伪造 seq 0。
 
 ## 从 0.4.x 升级（一次性迁移）
 
@@ -119,8 +124,8 @@ dsh          ~/.dsh/sessions
 `find` 省略 `--source` 时跨所有公开 source 搜索；`--source all` 等价。`status`、`sync`、`list`、`stats` 省略时默认 Codex。bare session id 也按 Codex 解释，跨 source 请直接使用 `find` 返回的 `sessionRef`：
 
 ```bash
-shlog find "deployment failure" --source claude-code --json
-shlog read-page claude-code:<native-session-id> --offset 0 --limit 20 --json
+shlog find "deployment failure" --source claude-code
+shlog read-page claude-code:<native-session-id> --offset 0 --limit 20
 ```
 
 未知 source 在扫描/查询前返回 `unsupported_source`。
@@ -133,8 +138,8 @@ CLI shortcut：
 shlog sync --root /Users/you/.codex/sessions
 shlog sync --cwd /Users/you/work/project
 shlog status --cwd /Users/you/work/project --json
-shlog find "health check" --cwd /Users/you/work/project --json
-shlog list --root /Users/you/.codex/sessions --sort ended -n 10 --json
+shlog find "health check" --cwd /Users/you/work/project
+shlog list --root /Users/you/.codex/sessions --sort ended -n 10
 ```
 
 canonical selector JSON：
@@ -199,7 +204,7 @@ shlog status --inventory --json
 - `coveringSelectors`
 - `recommendedAction`: `query | sync`
 
-`find/list` 中的 coverage 只来自 stored SQLite proof，不做 live raw scan；其 `freshness` 当前为 `not_checked`，即使 `complete=true` 也只表示存在 compatible covering record。结果仍可作为 best-effort candidate。若零结果或答案要求 latest/completeness，先运行同 selector 的 `status`：`recommendedAction=query` 时无需 sync，`recommendedAction=sync` 时才同步同范围并重试。
+`find/list` 中的 coverage 只来自 stored SQLite proof，不做 live raw scan；其 `freshness` 当前为 `not_checked`，即使 `complete=true`（文本输出里的 `covered`）也只表示存在 compatible covering record。结果仍可作为 best-effort candidate。若零结果或答案要求 latest/completeness，先运行同 selector 的 `status`：`recommendedAction=query` 时无需 sync，`recommendedAction=sync` 时才同步同范围并重试。
 
 ## Sync
 
@@ -257,8 +262,8 @@ v7 上的内容命令返回 `index_schema_upgrade_required`；`status` 可以报
 `read-range`：
 
 ```bash
-shlog read-range <sessionRef> --seq 12 --before 4 --after 8 --json
-shlog read-range <sessionRef> --query "decision" --before 4 --after 8 --json
+shlog read-range <sessionRef> --seq 12 --before 4 --after 8
+shlog read-range <sessionRef> --query "decision" --before 4 --after 8
 ```
 
 `--seq` 与 `--query` 可同时出现；显式 seq 决定 anchor，query 用于 snippet/elision。默认 before/after 各 2。
@@ -266,7 +271,7 @@ shlog read-range <sessionRef> --query "decision" --before 4 --after 8 --json
 `read-page`：
 
 ```bash
-shlog read-page <sessionRef> --offset 0 --limit 20 --json
+shlog read-page <sessionRef> --offset 0 --limit 20
 ```
 
 两者默认每条 message 最多显示 800 chars；`--max-message-chars 0` 禁用 elision。

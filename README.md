@@ -47,6 +47,8 @@ shlog read-range <sessionRef> --seq <matchSeq>   # read around a match
 shlog read-page <sessionRef> --offset 0 --limit 20  # read from the top
 ```
 
+`find` prints one compact block per candidate — date, source, cwd, anchor, title, digest, matched snippet — and a ready-to-run `read:` line. Ten results are about 2k tokens; add `--json` only when you need the full machine contract (`evidenceRead`, coverage, `zeroResults`), which is roughly 4–5× larger.
+
 If `find` suggests a coverage gap, run the suggested `sync` and retry. For project-scoped work:
 
 ```bash

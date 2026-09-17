@@ -21,7 +21,8 @@ use crate::cli::{
 };
 use crate::cold::{self, cold_roots_path_for_db};
 use crate::config::{
-    EnvSnapshot, ResolvedPaths, migrate_legacy_data_dir_if_needed, resolve_lexical, resolve_paths,
+    EnvSnapshot, ResolvedPaths, default_db_path, migrate_legacy_data_dir_if_needed,
+    resolve_lexical, resolve_paths,
 };
 use crate::coverage::indexed_coverage;
 use crate::error::AppError;
@@ -701,7 +702,11 @@ impl AppServices for NativeAppServices {
                 args.json,
             )
         } else {
-            write_find_text(stdout, &summary, elapsed_ms)
+            write_find_text(
+                stdout,
+                &summary,
+                non_default_db_text(reader.path()).as_deref(),
+            )
         }
     }
 
@@ -815,7 +820,11 @@ impl AppServices for NativeAppServices {
         if args.json {
             write_json(stdout, &summary)
         } else {
-            write_list_text(stdout, &summary)
+            write_list_text(
+                stdout,
+                &summary,
+                non_default_db_text(reader.path()).as_deref(),
+            )
         }
     }
 
@@ -843,6 +852,13 @@ impl AppServices for NativeAppServices {
             write_stats_text(stdout, &summary)
         }
     }
+}
+
+/// Text mode prints `--db` only when the opened index is not what a fresh
+/// `shlog` process would open by default, so pasted `read:` commands stay
+/// closed over the same index without repeating the default path every line.
+fn non_default_db_text(db_path: &Path) -> Option<String> {
+    (db_path != default_db_path()).then(|| db_path.to_string_lossy().into_owned())
 }
 
 fn recall_like_needle(mode: &RecallMode) -> Option<String> {
