@@ -675,6 +675,145 @@ fn query_commands_read_only_sqlite_after_raw_files_disappear() {
     assert_eq!(stats["messageCount"], 2);
 }
 
+fn shell_words(line: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut quoted = false;
+    for character in line.chars() {
+        match character {
+            '\'' => quoted = !quoted,
+            ' ' if !quoted => {
+                if !current.is_empty() {
+                    words.push(std::mem::take(&mut current));
+                }
+            }
+            other => current.push(other),
+        }
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+    words
+}
+
+#[test]
+fn find_text_mode_read_line_reads_back_the_candidate_from_the_same_index() {
+    let directory = TempDir::new().unwrap();
+    let raw_root = directory.path().join("sessions");
+    let session_id = "cafecafe-cafe-4afe-8afe-cafecafecafe";
+    let raw = raw_root
+        .join("2026/08/15")
+        .join(format!("rollout-2026-08-15T00-00-00-{session_id}.jsonl"));
+    write_codex_session(
+        &raw,
+        session_id,
+        &[
+            ("user_message", "帮我看看 dns proxy 服务运行状态"),
+            ("agent_message", "先查 dns-watchdog.sh 的进程和日志"),
+        ],
+    );
+    let paths = resolved_paths(&directory, &raw_root);
+    let db = paths.db_path.to_string_lossy().into_owned();
+    let mut services = NativeAppServices::new(paths, PathBuf::from("/repo"));
+    let (code, _stdout, stderr) = run_cli(
+        &mut services,
+        vec![
+            "shlog".to_owned(),
+            "sync".to_owned(),
+            "--source".to_owned(),
+            "codex".to_owned(),
+            "--db".to_owned(),
+            db.clone(),
+        ],
+    );
+    assert_eq!(code, 0, "stderr={}", String::from_utf8_lossy(&stderr));
+
+    let (code, stdout, stderr) = run_cli(
+        &mut services,
+        vec![
+            "shlog".to_owned(),
+            "find".to_owned(),
+            "dns-watchdog.sh".to_owned(),
+            "--source".to_owned(),
+            "codex".to_owned(),
+            "--exclude-session".to_owned(),
+            "codex:someone-else".to_owned(),
+            "--db".to_owned(),
+            db.clone(),
+        ],
+    );
+    assert_eq!(code, 0, "stderr={}", String::from_utf8_lossy(&stderr));
+    assert!(stderr.is_empty());
+    let text = String::from_utf8(stdout).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines[0], "shlog find \"dns-watchdog.sh\"");
+    assert_eq!(
+        lines[1],
+        "coverage: codex covered (stored proof; freshness via status)"
+    );
+    assert_eq!(lines[2], "excluded: codex:someone-else");
+    assert_eq!(lines[3], "");
+    assert_eq!(lines[4], "[1] 2026-08-15 · codex · /repo · seq 1 · 2 hits");
+    assert_eq!(lines[5], "  帮我看看 dns proxy 服务运行状态");
+    // The digest already shows the matched assistant message, so no separate match line.
+    assert_eq!(
+        lines[6],
+        "  summary: assistant: 先查 dns-watchdog.sh 的进程和日志"
+    );
+    let read_line = lines[7].strip_prefix("  read: ").unwrap();
+    assert_eq!(
+        read_line,
+        format!("shlog read-range {session_id} --seq 1 --query dns-watchdog.sh --db {db}")
+    );
+    assert_eq!(lines.len(), 8, "{text}");
+    assert!(!text.contains("evidenceRead"));
+
+    // Pasting the printed command verbatim must read back the same candidate.
+    let (code, stdout, stderr) = run_cli(&mut services, shell_words(read_line));
+    assert_eq!(code, 0, "stderr={}", String::from_utf8_lossy(&stderr));
+    assert!(stderr.is_empty());
+    let range = String::from_utf8(stdout).unwrap();
+    assert!(
+        range.starts_with(&format!("shlog read-range {session_id}\n")),
+        "{range}"
+    );
+    assert!(
+        range.contains(">> [1] A 先查 dns-watchdog.sh 的进程和日志"),
+        "{range}"
+    );
+}
+
+#[test]
+fn find_text_mode_zero_results_print_refinement_hints() {
+    let directory = TempDir::new().unwrap();
+    let raw_root = directory.path().join("sessions");
+    let paths = resolved_paths(&directory, &raw_root);
+    std::fs::create_dir_all(&paths.data_dir).unwrap();
+    seed_index(&paths.db_path, &raw_root);
+    let db = paths.db_path.to_string_lossy().into_owned();
+    let mut services = NativeAppServices::new(paths, PathBuf::from("/repo"));
+    let (code, stdout, stderr) = run_cli(
+        &mut services,
+        vec![
+            "shlog".to_owned(),
+            "find".to_owned(),
+            "missing-identifier 不存在的词".to_owned(),
+            "--source".to_owned(),
+            "codex".to_owned(),
+            "--db".to_owned(),
+            db,
+        ],
+    );
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+    let text = String::from_utf8(stdout).unwrap();
+    assert!(text.contains("\n没有找到结果\n"), "{text}");
+    assert!(text.contains("\nhint: "), "{text}");
+    assert!(text.contains("\ntry: shlog find "), "{text}");
+    assert!(text.contains("shlog find '不存在的词'\n"), "{text}");
+    assert!(text.contains("\nnext:\n  - Run shlog status"), "{text}");
+}
+
 #[test]
 fn find_exclusions_resolve_qualified_and_experimental_native_session_ids() {
     let directory = TempDir::new().unwrap();

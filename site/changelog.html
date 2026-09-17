@@ -198,6 +198,23 @@
   <main>
     <section>
       <div class="release-header">
+        <span class="release-version">v0.6.0</span>
+        <span class="release-date">2026-09-17</span>
+      </div>
+      <ul class="en">
+        <li><strong>Compact text output for agents.</strong> <code>find</code> and <code>list</code> without <code>--json</code> now print one short block per candidate (date, source, cwd, anchor, cleaned title, the digest that follows the title, the matched snippet) plus a verbatim <code>read:</code> command. Ten results cost about 2k tokens instead of the 9–10k of the JSON payload; <code>--json</code> is unchanged and remains the full machine contract.</li>
+        <li><strong>Coverage and zero-result guidance inline.</strong> Text mode shows one stored-coverage line per source and, on a miss, the refinement hints and suggested queries that were previously JSON-only.</li>
+        <li><strong>Closed read commands.</strong> The printed <code>read:</code> line carries <code>--db</code> whenever the index is not the default one, so pasting it reads back the same candidate.</li>
+      </ul>
+      <ul class="zh">
+        <li><strong>面向 agent 的紧凑文本输出。</strong>不带 <code>--json</code> 的 <code>find</code> / <code>list</code> 每条候选只打印一个短块（日期、source、cwd、锚点、去掉 skill/命令包装的标题、标题之后的摘要、命中片段）和一条可直接执行的 <code>read:</code> 命令。10 条结果约 2k token，而 JSON 载荷为 9–10k；<code>--json</code> 完全不变，仍是完整的机器 contract。</li>
+        <li><strong>coverage 与零结果提示内联。</strong>文本模式每个 source 一行 stored coverage；无结果时直接给出原本只在 JSON 里的 hint 与建议查询。</li>
+        <li><strong>read 命令闭包。</strong>索引不是默认路径时 <code>read:</code> 行自带 <code>--db</code>，粘贴执行即读回同一候选。</li>
+      </ul>
+    </section>
+
+    <section>
+      <div class="release-header">
         <span class="release-version">v0.5.4</span>
         <span class="release-date">2026-09-15</span>
       </div>
@@ -459,8 +476,8 @@
   </main>
 
   <footer>
-    <span class="en">Standalone Rust source &middot; native v0.5.4 &middot; historical npm releases retained below</span>
-    <span class="zh">Standalone Rust 源码 &middot; 原生 v0.5.4 &middot; 下方保留历史 npm 版本记录</span>
+    <span class="en">Standalone Rust source &middot; native v0.6.0 &middot; historical npm releases retained below</span>
+    <span class="zh">Standalone Rust 源码 &middot; 原生 v0.6.0 &middot; 下方保留历史 npm 版本记录</span>
   </footer>
 
   <script>
